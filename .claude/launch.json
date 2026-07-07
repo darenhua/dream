@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "backend", "serve"],
+      "port": 3001
+    },
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["--cwd", "dashboard", "--hot", "src/index.ts"],
+      "port": 3000
+    }
+  ]
+}

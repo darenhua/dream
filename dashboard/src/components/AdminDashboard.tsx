@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Check, ChevronDown, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Loader2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,30 +17,60 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Toggle } from "@/components/ui/toggle";
+import { api, type CategoryRow } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { CATEGORIES, type Conversation } from "../data";
-
-const DERIVE_SCOPES = ["all", "uncategorized", ...CATEGORIES];
+import { type Conversation } from "../data";
 
 interface AdminDashboardProps {
   conversations: Conversation[];
-  onConversationsChange: (conversations: Conversation[]) => void;
+  onChanged: () => void | Promise<void>;
 }
 
-export function AdminDashboard({ conversations, onConversationsChange }: AdminDashboardProps) {
+export function AdminDashboard({ conversations, onChanged }: AdminDashboardProps) {
   const [dailyEnabled, setDailyEnabled] = useState(true);
-  const [deriveScope, setDeriveScope] = useState("all");
+  const [deriveScope, setDeriveScope] = useState<{ label: string; categoryId?: string }>({
+    label: "all",
+  });
+  const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [search, setSearch] = useState("");
   const [uncategorizedOnly, setUncategorizedOnly] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [running, setRunning] = useState<string | null>(null);
+  const [jobResult, setJobResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.categories().then(setCategories).catch(() => setCategories([]));
+  }, [conversations]);
 
   const visible = conversations.filter(c => {
     if (uncategorizedOnly && c.category) return false;
     return c.title.toLowerCase().includes(search.toLowerCase());
   });
 
-  const updateConversation = (id: string, patch: Partial<Conversation>) => {
-    onConversationsChange(conversations.map(c => (c.id === id ? { ...c, ...patch } : c)));
+  const runJob = async (name: string, job: () => Promise<unknown>) => {
+    setRunning(name);
+    setJobResult(null);
+    try {
+      const result = await job();
+      setJobResult(`${name}: ${JSON.stringify(result).slice(0, 200)}`);
+      await onChanged();
+    } catch (e) {
+      setJobResult(`${name} failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const assignCategory = async (convo: Conversation, categoryId: string | null) => {
+    if (convo.categoryId) await api.unlinkConversation(convo.id, convo.categoryId);
+    if (categoryId) await api.linkConversation(convo.id, categoryId);
+    await onChanged();
+  };
+
+  const toggleTopK = async (convo: Conversation, pressed: boolean) => {
+    if (!convo.linkId) return; // top-K only applies to categorized conversations
+    await api.patchLink(convo.linkId, pressed);
+    await onChanged();
   };
 
   return (
@@ -56,17 +86,38 @@ export function AdminDashboard({ conversations, onConversationsChange }: AdminDa
         >
           run daily {dailyEnabled && <Check />} 21:00
         </Button>
-        <Button variant="outline">run categorize</Button>
+        <Button
+          variant="outline"
+          disabled={running !== null}
+          onClick={() => runJob("categorize", api.runCategorize)}
+        >
+          {running === "categorize" && <Loader2 className="animate-spin" />} run categorize
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              run derive ({deriveScope} <ChevronDown />)
+            <Button variant="outline" disabled={running !== null}>
+              {running === "derive" && <Loader2 className="animate-spin" />}
+              run derive ({deriveScope.label} <ChevronDown />)
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            {DERIVE_SCOPES.map(scope => (
-              <DropdownMenuItem key={scope} onClick={() => setDeriveScope(scope)}>
-                {scope}
+            <DropdownMenuItem
+              onClick={() => {
+                setDeriveScope({ label: "all" });
+                runJob("derive", () => api.runDerive());
+              }}
+            >
+              all
+            </DropdownMenuItem>
+            {categories.map(cat => (
+              <DropdownMenuItem
+                key={cat.id}
+                onClick={() => {
+                  setDeriveScope({ label: cat.name, categoryId: cat.id });
+                  runJob("derive", () => api.runDerive(cat.id));
+                }}
+              >
+                {cat.name}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -75,6 +126,12 @@ export function AdminDashboard({ conversations, onConversationsChange }: AdminDa
           import convo json file
         </Button>
       </div>
+
+      {jobResult && (
+        <p className="rounded-lg border border-dashed px-3 py-2 font-mono text-xs text-muted-foreground">
+          {jobResult}
+        </p>
+      )}
 
       <Card>
         <CardHeader>
@@ -121,15 +178,12 @@ export function AdminDashboard({ conversations, onConversationsChange }: AdminDa
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
-                      {CATEGORIES.map(cat => (
-                        <DropdownMenuItem
-                          key={cat}
-                          onClick={() => updateConversation(c.id, { category: cat })}
-                        >
-                          {cat}
+                      {categories.map(cat => (
+                        <DropdownMenuItem key={cat.id} onClick={() => assignCategory(c, cat.id)}>
+                          {cat.name}
                         </DropdownMenuItem>
                       ))}
-                      <DropdownMenuItem onClick={() => updateConversation(c.id, { category: null })}>
+                      <DropdownMenuItem onClick={() => assignCategory(c, null)}>
                         uncategorized
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -138,7 +192,8 @@ export function AdminDashboard({ conversations, onConversationsChange }: AdminDa
                     variant="outline"
                     size="sm"
                     pressed={c.topK}
-                    onPressedChange={pressed => updateConversation(c.id, { topK: pressed })}
+                    disabled={!c.linkId}
+                    onPressedChange={pressed => toggleTopK(c, pressed)}
                   >
                     top-K
                   </Toggle>
@@ -157,9 +212,8 @@ export function AdminDashboard({ conversations, onConversationsChange }: AdminDa
       <ImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        onImport={imported => {
-          onConversationsChange([...imported, ...conversations]);
-          setImportOpen(false);
+        onImported={async () => {
+          await onChanged();
         }}
       />
     </div>
@@ -169,36 +223,32 @@ export function AdminDashboard({ conversations, onConversationsChange }: AdminDa
 interface ImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImport: (conversations: Conversation[]) => void;
+  onImported: () => void | Promise<void>;
 }
 
-function ImportDialog({ open, onOpenChange, onImport }: ImportDialogProps) {
+function ImportDialog({ open, onOpenChange, onImported }: ImportDialogProps) {
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // The raw Claude conversations.json goes straight to the backend (§8.1).
   const handleFile = async (file: File) => {
     setError(null);
+    setReport(null);
+    setBusy(true);
     try {
-      const raw = JSON.parse(await file.text());
-      const entries: unknown[] = Array.isArray(raw) ? raw : (raw.conversations ?? []);
-      const imported = entries
-        .filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
-        .map((e, i) => ({
-          id: `imported-${Date.now()}-${i}`,
-          date: typeof e.date === "string" ? e.date : "07-07",
-          title: typeof e.title === "string" ? e.title : `untitled conversation ${i + 1}`,
-          slug: false,
-          category: null,
-          topK: false,
-        }));
-      if (imported.length === 0) {
-        setError("No conversations found in that file.");
-        return;
-      }
-      onImport(imported);
-    } catch {
-      setError("Could not parse that file as JSON.");
+      const result = await api.importFile(file);
+      setReport(
+        `imported: ${result.new} new · ${result.updated} updated · ${result.unchanged} unchanged` +
+          (result.errors.length ? ` · ${result.errors.length} errors` : ""),
+      );
+      await onImported();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "import failed");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -207,6 +257,7 @@ function ImportDialog({ open, onOpenChange, onImport }: ImportDialogProps) {
       open={open}
       onOpenChange={o => {
         setError(null);
+        setReport(null);
         setDragOver(false);
         onOpenChange(o);
       }}
@@ -234,13 +285,14 @@ function ImportDialog({ open, onOpenChange, onImport }: ImportDialogProps) {
             if (file) handleFile(file);
           }}
         >
-          <Upload className="size-6" />
+          {busy ? <Loader2 className="size-6 animate-spin" /> : <Upload className="size-6" />}
           <span className="text-lg">
             drop
             <br />
             conversations.json
           </span>
         </button>
+        {report && <p className="text-center text-sm">{report}</p>}
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
         <input
           ref={fileInputRef}

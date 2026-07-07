@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import {
   Dialog,
   DialogContent,
@@ -5,19 +7,60 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { Conversation, Item } from "../data";
+import type { Item, TranscriptMessage } from "../data";
 
 interface TranscriptDialogProps {
   item: Item | null;
-  conversations: Conversation[];
   onClose: () => void;
 }
 
-export function TranscriptDialog({ item, conversations, onClose }: TranscriptDialogProps) {
-  const sources = (item?.sources ?? [])
-    .map(id => conversations.find(c => c.id === id))
-    .filter((c): c is Conversation => Boolean(c));
+interface SourceTranscript {
+  id: string;
+  title: string;
+  date: string;
+  transcript: TranscriptMessage[];
+}
+
+export function TranscriptDialog({ item, onClose }: TranscriptDialogProps) {
+  const [sources, setSources] = useState<SourceTranscript[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!item?.sources?.length) {
+      setSources([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all(
+      item.sources.map(async id => {
+        const convo = await api.conversation(id);
+        return {
+          id,
+          title: convo.title ?? "(untitled)",
+          date: (convo.sourceUpdatedAt ?? "").slice(0, 10),
+          transcript: (convo.messages ?? []).map(m => ({
+            role: m.role === "user" ? ("user" as const) : ("coach" as const),
+            text: m.content,
+          })),
+        };
+      }),
+    )
+      .then(result => {
+        if (!cancelled) setSources(result);
+      })
+      .catch(() => {
+        if (!cancelled) setSources([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [item]);
 
   return (
     <Dialog open={item !== null} onOpenChange={open => !open && onClose()}>
@@ -25,7 +68,9 @@ export function TranscriptDialog({ item, conversations, onClose }: TranscriptDia
         <DialogHeader>
           <DialogTitle className="pr-6">{item?.text}</DialogTitle>
           <DialogDescription>
-            Derived from {sources.length} conversation{sources.length === 1 ? "" : "s"}
+            {loading
+              ? "Loading source conversations…"
+              : `Derived from ${sources.length} conversation${sources.length === 1 ? "" : "s"}`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-6 overflow-y-auto">
@@ -34,7 +79,7 @@ export function TranscriptDialog({ item, conversations, onClose }: TranscriptDia
               <h3 className="text-sm font-medium text-muted-foreground">
                 {conversation.date} · {conversation.title}
               </h3>
-              {conversation.transcript?.length ? (
+              {conversation.transcript.length ? (
                 <ol className="flex flex-col gap-2">
                   {conversation.transcript.map((message, i) => (
                     <li
@@ -57,7 +102,7 @@ export function TranscriptDialog({ item, conversations, onClose }: TranscriptDia
               )}
             </section>
           ))}
-          {sources.length === 0 && (
+          {!loading && sources.length === 0 && (
             <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
               No source conversations recorded for this item.
             </p>

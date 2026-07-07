@@ -1,30 +1,21 @@
 import { serve } from "bun";
 import index from "./index.html";
 
+const BACKEND = process.env.BACKEND_URL ?? "http://localhost:3001";
+
 const server = serve({
   routes: {
     // Serve index.html for all unmatched routes.
     "/*": index,
 
-    "/api/hello": {
-      async GET(req) {
-        return Response.json({
-          message: "Hello, world!",
-          method: "GET",
-        });
-      },
-      async PUT(req) {
-        return Response.json({
-          message: "Hello, world!",
-          method: "PUT",
-        });
-      },
-    },
-
-    "/api/hello/:name": async req => {
-      const name = req.params.name;
-      return Response.json({
-        message: `Hello, ${name}!`,
+    // Same-origin proxy to the dream backend — no CORS, prod parity.
+    "/api/*": async req => {
+      const url = new URL(req.url);
+      const target = new URL(url.pathname + url.search, BACKEND);
+      return fetch(target, {
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
       });
     },
   },
@@ -38,4 +29,4 @@ const server = serve({
   },
 });
 
-console.log(`🚀 Server running at ${server.url}`);
+console.log(`🚀 Dashboard running at ${server.url} (API → ${BACKEND})`);
