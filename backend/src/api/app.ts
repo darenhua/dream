@@ -4,6 +4,8 @@ import { categoryRoutes } from "./routes/categories";
 import { configRoutes } from "./routes/config";
 import { conversationRoutes } from "./routes/conversations";
 import { eventRoutes } from "./routes/events";
+import { jobRoutes } from "./routes/jobs";
+import { proposalRoutes } from "./routes/proposals";
 import { rantLinkRoutes } from "./routes/rantLinks";
 
 export const app = new Hono();
@@ -16,3 +18,5 @@ app.route("/api/events", eventRoutes);
 app.route("/api/conversations", conversationRoutes);
 app.route("/api/categories", categoryRoutes);
 app.route("/api/rant-links", rantLinkRoutes);
+app.route("/api/proposals", proposalRoutes);
+app.route("/api/jobs", jobRoutes);
