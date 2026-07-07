@@ -88,6 +88,7 @@ export function reorderGoals(orderedIds: string[]): boolean {
     .all()
     .map(g => g.id);
   if (new Set(orderedIds).size !== orderedIds.length) return false;
+  if (orderedIds.length !== active.length) return false; // must be the exact active set
   if (!orderedIds.every(id => active.includes(id))) return false;
   orderedIds.forEach((id, i) => {
     db.update(goal).set({ sortOrder: i + 1 }).where(eq(goal.id, id)).run();

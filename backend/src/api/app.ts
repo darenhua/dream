@@ -4,9 +4,11 @@ import { categoryRoutes } from "./routes/categories";
 import { configRoutes } from "./routes/config";
 import { conversationRoutes } from "./routes/conversations";
 import { eventRoutes } from "./routes/events";
+import { goalRoutes } from "./routes/goals";
 import { jobRoutes } from "./routes/jobs";
 import { proposalRoutes } from "./routes/proposals";
 import { rantLinkRoutes } from "./routes/rantLinks";
+import { registryRoutes } from "./routes/registry";
 
 export const app = new Hono();
 
@@ -20,3 +22,5 @@ app.route("/api/categories", categoryRoutes);
 app.route("/api/rant-links", rantLinkRoutes);
 app.route("/api/proposals", proposalRoutes);
 app.route("/api/jobs", jobRoutes);
+app.route("/api/goals", goalRoutes);
+app.route("/api/registry", registryRoutes);
