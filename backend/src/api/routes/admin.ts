@@ -1,10 +1,54 @@
+import { count, desc, eq, isNull, and } from "drizzle-orm";
 import { Hono } from "hono";
-import { wipeAllTables } from "../../db";
+import { db, wipeAllTables } from "../../db";
+import { category, conversation, event, goal, registryItem } from "../../db/schema";
 import { seedConfig } from "../../services/config";
 import { emit } from "../../services/events";
+import { liveExperiment } from "../../services/experiments";
 import { ingestFile } from "../../services/ingestion";
+import { pendingCategorizations } from "../../services/categorize";
+import { listProposals } from "../../services/proposals";
 
 export const adminRoutes = new Hono();
+
+// §9/§11 — the cycle checklist as JSON; all green = the cycle is alive.
+adminRoutes.get("/health", c => {
+  const conversations = db.select({ n: count() }).from(conversation).get()?.n ?? 0;
+  const sluggedUnprocessed = pendingCategorizations().length;
+  const activeCategories =
+    db.select({ n: count() }).from(category).where(eq(category.status, "active")).get()?.n ?? 0;
+  const activeGoals =
+    db.select({ n: count() }).from(goal).where(eq(goal.status, "active")).get()?.n ?? 0;
+  const registry = {
+    habits:
+      db.select({ n: count() }).from(registryItem).where(and(eq(registryItem.kind, "habit"), eq(registryItem.status, "active"))).get()?.n ?? 0,
+    environment:
+      db.select({ n: count() }).from(registryItem).where(and(eq(registryItem.kind, "environment"), eq(registryItem.status, "active"))).get()?.n ?? 0,
+    experiences:
+      db.select({ n: count() }).from(registryItem).where(and(eq(registryItem.kind, "experience"), eq(registryItem.status, "active"))).get()?.n ?? 0,
+  };
+  const live = liveExperiment();
+  const lastDaily = db
+    .select()
+    .from(event)
+    .where(eq(event.eventType, "daily_run_completed"))
+    .orderBy(desc(event.createdAt))
+    .limit(1)
+    .get();
+
+  return c.json({
+    ok: true,
+    conversations,
+    sluggedUnprocessed,
+    activeCategories,
+    activeGoals,
+    pendingProposals: listProposals({ status: "pending" }).length,
+    registry,
+    liveExperimentId: live?.id ?? null,
+    liveExperimentTitle: live?.title ?? null,
+    lastDailyRunAt: lastDaily?.createdAt ?? null,
+  });
+});
 
 // §9 — multipart upload of the raw Claude conversations.json. Also accepts the
 // array as a plain JSON body (curl / paste convenience).

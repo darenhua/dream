@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { adminRoutes } from "./routes/admin";
+import { agentRunRoutes } from "./routes/agentRuns";
 import { categoryRoutes } from "./routes/categories";
 import { configRoutes } from "./routes/config";
 import { conversationRoutes } from "./routes/conversations";
@@ -14,8 +15,6 @@ import { userRoutes, writeupRoutes } from "./routes/user";
 
 export const app = new Hono();
 
-app.get("/api/admin/health", c => c.json({ ok: true }));
-
 app.route("/api/admin", adminRoutes);
 app.route("/api/config", configRoutes);
 app.route("/api/events", eventRoutes);
@@ -29,3 +28,4 @@ app.route("/api/registry", registryRoutes);
 app.route("/api/user", userRoutes);
 app.route("/api/writeup", writeupRoutes);
 app.route("/api/experiment", experimentRoutes);
+app.route("/api/agent-runs", agentRunRoutes);
