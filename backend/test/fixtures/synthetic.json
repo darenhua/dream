@@ -1,0 +1,121 @@
+[
+  {
+    "uuid": "synthetic-branched-0001",
+    "name": "branched conversation with slug and attachment",
+    "summary": "",
+    "created_at": "2026-07-01T10:00:00.000000+00:00",
+    "updated_at": "2026-07-01T10:30:00.000000+00:00",
+    "account": { "uuid": "acct-1" },
+    "chat_messages": [
+      {
+        "uuid": "m1",
+        "sender": "human",
+        "text": "I keep avoiding hard conversations.",
+        "content": [{ "type": "text", "text": "I keep avoiding hard conversations." }],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "00000000-0000-4000-8000-000000000000",
+        "created_at": "2026-07-01T10:00:10.000000+00:00",
+        "updated_at": "2026-07-01T10:00:10.000000+00:00"
+      },
+      {
+        "uuid": "m2-abandoned",
+        "sender": "assistant",
+        "text": "ABANDONED BRANCH — this reply was regenerated and must not appear in the active path.",
+        "content": [{ "type": "text", "text": "ABANDONED BRANCH" }],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "m1",
+        "created_at": "2026-07-01T10:00:20.000000+00:00",
+        "updated_at": "2026-07-01T10:00:20.000000+00:00"
+      },
+      {
+        "uuid": "m2-active",
+        "sender": "assistant",
+        "text": "What happens right before you avoid one?",
+        "content": [{ "type": "text", "text": "What happens right before you avoid one?" }],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "m1",
+        "created_at": "2026-07-01T10:01:00.000000+00:00",
+        "updated_at": "2026-07-01T10:01:00.000000+00:00"
+      },
+      {
+        "uuid": "m3",
+        "sender": "human",
+        "text": "Here's the email I never answered.",
+        "content": [{ "type": "text", "text": "Here's the email I never answered." }],
+        "attachments": [
+          {
+            "file_name": "email.txt",
+            "extracted_content": "Subject: Are we still on?\nJust checking in about the collab."
+          }
+        ],
+        "files": [],
+        "parent_message_uuid": "m2-active",
+        "created_at": "2026-07-01T10:02:00.000000+00:00",
+        "updated_at": "2026-07-01T10:02:00.000000+00:00"
+      },
+      {
+        "uuid": "m4",
+        "sender": "assistant",
+        "text": "Not answering was the avoidance itself. The pattern is running away from discomfort.",
+        "content": [
+          { "type": "thinking", "thinking": "internal reasoning that must be dropped" },
+          {
+            "type": "text",
+            "text": "Not answering was the avoidance itself. The pattern is running away from discomfort."
+          }
+        ],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "m3",
+        "created_at": "2026-07-01T10:03:00.000000+00:00",
+        "updated_at": "2026-07-01T10:03:00.000000+00:00"
+      },
+      {
+        "uuid": "m5",
+        "sender": "human",
+        "text": "#DREAM-CATEGORIZE",
+        "content": [{ "type": "text", "text": "#DREAM-CATEGORIZE" }],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "m4",
+        "created_at": "2026-07-01T10:04:00.000000+00:00",
+        "updated_at": "2026-07-01T10:04:00.000000+00:00"
+      },
+      {
+        "uuid": "m6",
+        "sender": "assistant",
+        "text": "Filed. (This reply is after the slug and out of analysis scope.)",
+        "content": [{ "type": "text", "text": "Filed." }],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "m5",
+        "created_at": "2026-07-01T10:05:00.000000+00:00",
+        "updated_at": "2026-07-01T10:05:00.000000+00:00"
+      }
+    ]
+  },
+  {
+    "uuid": "synthetic-broken-0002",
+    "name": "broken parent chain",
+    "summary": "",
+    "created_at": "2026-07-02T10:00:00.000000+00:00",
+    "updated_at": "2026-07-02T10:00:00.000000+00:00",
+    "account": { "uuid": "acct-1" },
+    "chat_messages": [
+      {
+        "uuid": "x1",
+        "sender": "human",
+        "text": "This message points at a parent that does not exist.",
+        "content": [],
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "missing-parent-uuid",
+        "created_at": "2026-07-02T10:00:10.000000+00:00",
+        "updated_at": "2026-07-02T10:00:10.000000+00:00"
+      }
+    ]
+  }
+]
