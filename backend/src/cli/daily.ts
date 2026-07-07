@@ -1,2 +1,5 @@
-// `bun run daily` — invoked by system cron in prod. Wired to runDaily() in Phase 7.
-console.log("runDaily: not implemented yet (Phase 7)");
+// `bun run daily` — the cron entrypoint (§8.9 / N5).
+import { runDaily } from "../services/daily";
+
+const report = await runDaily("daily");
+console.log(JSON.stringify(report, null, 2));

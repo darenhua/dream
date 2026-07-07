@@ -9,6 +9,7 @@ import { jobRoutes } from "./routes/jobs";
 import { proposalRoutes } from "./routes/proposals";
 import { rantLinkRoutes } from "./routes/rantLinks";
 import { registryRoutes } from "./routes/registry";
+import { userRoutes, writeupRoutes } from "./routes/user";
 
 export const app = new Hono();
 
@@ -24,3 +25,5 @@ app.route("/api/proposals", proposalRoutes);
 app.route("/api/jobs", jobRoutes);
 app.route("/api/goals", goalRoutes);
 app.route("/api/registry", registryRoutes);
+app.route("/api/user", userRoutes);
+app.route("/api/writeup", writeupRoutes);
