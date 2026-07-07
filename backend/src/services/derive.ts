@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { db } from "../db";
-import { category } from "../db/schema";
+import { category, rantLink } from "../db/schema";
 import { DeriverOutput } from "../domain/schemas";
 import { runStructured } from "./agentRunner";
 import { getConfig } from "./config";
@@ -12,6 +12,21 @@ import { createProposal, supersedePending } from "./proposals";
 export async function deriveCategory(categoryId: string, trigger: "daily" | "manual") {
   const cat = db.select().from(category).where(eq(category.id, categoryId)).get();
   if (!cat) throw new Error(`category ${categoryId} not found`);
+
+  // No evidence → no derive. Proposals must be justified by linked rants
+  // (via approved categorization or §11.3 manual linking); with an empty
+  // working set there is nothing to derive from, so skip the agent call and
+  // leave any pending proposals standing (nothing fresher supersedes them).
+  const activeRants =
+    db
+      .select({ n: count() })
+      .from(rantLink)
+      .where(and(eq(rantLink.categoryId, categoryId), eq(rantLink.activeForDerive, true)))
+      .get()?.n ?? 0;
+  if (activeRants === 0) {
+    emit("category", categoryId, "derive_skipped_no_evidence", {});
+    return { categoryId, superseded: 0, proposals: 0, status: "skipped_no_evidence" as const };
+  }
 
   const superseded = supersedePending(`category:${categoryId}`);
 
