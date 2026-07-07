@@ -4,6 +4,8 @@ export interface Item {
   id: string;
   text: string;
   active?: boolean;
+  // ids of the conversations this item was derived from
+  sources?: string[];
 }
 
 export const CATEGORY_LABELS: Record<CategoryKey, string> = {
@@ -70,6 +72,11 @@ export const experiment: Experiment = {
   },
 };
 
+export interface TranscriptMessage {
+  role: "user" | "coach";
+  text: string;
+}
+
 export interface Conversation {
   id: string;
   date: string;
@@ -77,6 +84,7 @@ export interface Conversation {
   slug: boolean;
   category: string | null;
   topK: boolean;
+  transcript?: TranscriptMessage[];
 }
 
 export const CATEGORIES = ["dream-coach", "journal", "ideas"];
@@ -87,43 +95,83 @@ const convo = (
   slug: boolean,
   category: string | null,
   topK = false,
-): Conversation => ({ id: `convo-${nextId++}`, date, title, slug, category, topK });
+  transcript: TranscriptMessage[] = [],
+): Conversation => ({ id: `convo-${nextId++}`, date, title, slug, category, topK, transcript });
+
+const u = (text: string): TranscriptMessage => ({ role: "user", text });
+const c = (text: string): TranscriptMessage => ({ role: "coach", text });
 
 export const initialConversations: Conversation[] = [
-  convo("07-05", "fear of wanting rant", true, "dream-coach", true),
-  convo("07-06", "continuity of self system", false, null),
-  convo("07-06", "comparing similar statements", false, null),
-  convo("07-04", "recurring falling dream", true, "dream-coach"),
-  convo("07-03", "late night spiral about deadlines", true, "journal"),
-  convo("07-02", "lucid dreaming attempt log", false, null),
+  convo("07-05", "fear of wanting rant", true, "dream-coach", true, [
+    u("I keep noticing I'm scared to even admit I want things. Like wanting is dangerous."),
+    c("What happens in your body when you let yourself want something out loud?"),
+    u("Tight chest. Then I immediately start hedging — 'it's fine either way'."),
+    c("So the hedge is protection. What would a tiny, unhedged want sound like tonight?"),
+    u("I want to make music people actually hear. There, I said it."),
+  ]),
+  convo("07-06", "continuity of self system", false, null, false, [
+    u("I feel like a different person every morning. Yesterday's plans feel like someone else's."),
+    c("What's one thread that survives the night — however small?"),
+    u("Honestly? The notebook next to my bed. If it's written down, morning-me trusts it."),
+    c("Then the notebook is your continuity system. What should evening-you write tonight?"),
+  ]),
+  convo("07-06", "comparing similar statements", false, null, false, [
+    u("'I should sleep more' and 'I want to feel rested' — they feel completely different."),
+    c("One is a rule, one is a desire. Which one gets you into bed?"),
+    u("The rested one. Rules make me rebel against myself."),
+  ]),
+  convo("07-04", "recurring falling dream", true, "dream-coach", false, [
+    u("Third falling dream this week. I wake up right before hitting the ground, heart racing."),
+    c("What's falling in your waking life right now — anything you're bracing for?"),
+    u("The song deadline I keep pushing. I guess I'm bracing for the flop."),
+    c("The dream ends before impact. Maybe the flop is survivable too. What if you let one rough thing land?"),
+  ]),
+  convo("07-03", "late night spiral about deadlines", true, "journal", false, [
+    u("It's 1am and I'm rewriting the same eight bars instead of sleeping. Again."),
+    c("What are you hoping one more pass will change?"),
+    u("That it stops being embarrassing. But it never feels done."),
+    c("Done isn't a feeling you'll get at 1am. What's a rule you could hand to tomorrow-you instead?"),
+    u("Maybe: when a loop hits 30 seconds, bounce it and walk away."),
+  ]),
+  convo("07-02", "lucid dreaming attempt log", false, null, false, [
+    u("Tried the reality checks all day. No lucid dream, but I remembered two dreams fully."),
+    c("Recall comes before lucidity. What made the difference last night?"),
+    u("Phone stayed outside the bedroom, so I wrote the dream down before checking anything."),
+  ]),
 ];
+
+// proposed item derived from the given conversations (by index into initialConversations)
+const derived = (text: string, ...convIndexes: number[]): Item => ({
+  ...item(text),
+  sources: convIndexes.map(i => initialConversations[i]!.id),
+});
 
 // pending review — 20 total
 export const initialProposed: Record<CategoryKey, Item[]> = {
   goals: [
-    item("Feel rested on weekday mornings"),
-    item("Cut sleep latency to 15 minutes"),
-    item("Keep weekend wake time within 1 hour"),
-    item("Dream recall 3x per week"),
-    item("Stop hitting snooze"),
-    item("Average sleep score above 80"),
-    item("One full recovery day per week"),
+    derived("Feel rested on weekday mornings", 2),
+    derived("Cut sleep latency to 15 minutes", 4),
+    derived("Keep weekend wake time within 1 hour", 1),
+    derived("Dream recall 3x per week", 5, 3),
+    derived("Stop hitting snooze", 1),
+    derived("Average sleep score above 80", 2),
+    derived("One full recovery day per week", 4, 0),
   ],
   habits: [
-    item("No caffeine after 2pm"),
-    item("Stretch for 5 minutes before bed"),
-    item("Dim lights an hour before sleep"),
-    item("Write tomorrow's plan the night before"),
-    item("Breathing exercise when waking at night"),
-    item("Same wake time every day"),
+    derived("No caffeine after 2pm", 4),
+    derived("Stretch for 5 minutes before bed", 5),
+    derived("Dim lights an hour before sleep", 4),
+    derived("Write tomorrow's plan the night before", 1, 4),
+    derived("Breathing exercise when waking at night", 3),
+    derived("Same wake time every day", 1),
   ],
   environment: [
-    item("Lavender scent in bedroom"),
-    item("Heavier blanket in winter"),
-    item("Air purifier on low overnight"),
-    item("No work laptop in bedroom"),
-    item("Warm-toned night lamp only"),
-    item("Keep water glass on nightstand"),
-    item("Declutter nightstand weekly"),
+    derived("Lavender scent in bedroom", 5),
+    derived("Heavier blanket in winter", 3),
+    derived("Air purifier on low overnight", 2),
+    derived("No work laptop in bedroom", 4, 5),
+    derived("Warm-toned night lamp only", 4),
+    derived("Keep water glass on nightstand", 5),
+    derived("Declutter nightstand weekly", 1),
   ],
 };

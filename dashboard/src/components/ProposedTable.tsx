@@ -21,9 +21,10 @@ interface ProposedTableProps {
   items: Item[];
   onAccept: (id: string) => void;
   onReject: (id: string) => void;
+  onRowClick: (item: Item) => void;
 }
 
-export function ProposedTable({ items, onAccept, onReject }: ProposedTableProps) {
+export function ProposedTable({ items, onAccept, onReject, onRowClick }: ProposedTableProps) {
   const columns: ColumnDef<Item>[] = [
     {
       accessorKey: "text",
@@ -34,7 +35,8 @@ export function ProposedTable({ items, onAccept, onReject }: ProposedTableProps)
       id: "actions",
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
-        <div className="flex justify-end gap-2">
+        // stopPropagation keeps Accept/Reject clicks from also opening the transcript dialog
+        <div className="flex justify-end gap-2" onClick={e => e.stopPropagation()}>
           <Button variant="outline" size="sm" onClick={() => onAccept(row.original.id)}>
             <Check /> Accept
           </Button>
@@ -71,7 +73,11 @@ export function ProposedTable({ items, onAccept, onReject }: ProposedTableProps)
         <TableBody>
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map(row => (
-              <TableRow key={row.id}>
+              <TableRow
+                key={row.id}
+                className="cursor-pointer"
+                onClick={() => onRowClick(row.original)}
+              >
                 {row.getVisibleCells().map(cell => (
                   <TableCell key={cell.id}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

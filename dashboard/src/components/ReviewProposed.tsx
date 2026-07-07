@@ -1,9 +1,13 @@
+import { useState } from "react";
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { CategoryKey, Item } from "../data";
+import type { CategoryKey, Conversation, Item } from "../data";
 import { ProposedTable } from "./ProposedTable";
+import { TranscriptDialog } from "./TranscriptDialog";
 
 interface ReviewProposedProps {
   proposed: Record<CategoryKey, Item[]>;
+  conversations: Conversation[];
   onAccept: (category: CategoryKey, id: string) => void;
   onReject: (category: CategoryKey, id: string) => void;
 }
@@ -26,7 +30,9 @@ const SECTIONS: { key: CategoryKey; title: string; description: string }[] = [
   },
 ];
 
-export function ReviewProposed({ proposed, onAccept, onReject }: ReviewProposedProps) {
+export function ReviewProposed({ proposed, conversations, onAccept, onReject }: ReviewProposedProps) {
+  const [selected, setSelected] = useState<Item | null>(null);
+
   return (
     <div className="flex flex-col gap-6">
       {SECTIONS.map(section => (
@@ -40,10 +46,16 @@ export function ReviewProposed({ proposed, onAccept, onReject }: ReviewProposedP
               items={proposed[section.key]}
               onAccept={id => onAccept(section.key, id)}
               onReject={id => onReject(section.key, id)}
+              onRowClick={setSelected}
             />
           </CardContent>
         </Card>
       ))}
+      <TranscriptDialog
+        item={selected}
+        conversations={conversations}
+        onClose={() => setSelected(null)}
+      />
     </div>
   );
 }

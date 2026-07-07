@@ -119,7 +119,12 @@ export function App() {
         {admin ? (
           <AdminDashboard conversations={conversations} onConversationsChange={setConversations} />
         ) : view === "review" ? (
-          <ReviewProposed proposed={proposed} onAccept={acceptProposed} onReject={rejectProposed} />
+          <ReviewProposed
+            proposed={proposed}
+            conversations={conversations}
+            onAccept={acceptProposed}
+            onReject={rejectProposed}
+          />
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             <CategoryCard

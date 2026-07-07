@@ -1,2 +1,10 @@
 conversations.json
 vision-spec.md
+SPEC.md
+.env
+node_modules/
+.DS_Store
+*.db
+*.db-*
+workspace/
+dist/
