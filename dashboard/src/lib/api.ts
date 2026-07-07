@@ -32,6 +32,7 @@ export class ApiError extends Error {
 
 export interface GoalRow {
   id: string;
+  categoryId: string | null;
   title: string;
   identityClause: string | null;
   synthesisMd: string | null;

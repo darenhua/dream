@@ -8,46 +8,57 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, type ExperimentRow, type WriteupRow } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Intention } from "../data";
+import { CategoryMap, type CategoryMapEntry } from "./CategoryMap";
 
 interface ExperimentCardProps {
   experiment: ExperimentRow | null;
   writeup: WriteupRow | null;
+  categories: CategoryMapEntry[];
   onChanged: () => void | Promise<void>;
   className?: string;
 }
 
-export function ExperimentCard({ experiment, writeup, onChanged, className }: ExperimentCardProps) {
+export function ExperimentCard({
+  experiment,
+  writeup,
+  categories,
+  onChanged,
+  className,
+}: ExperimentCardProps) {
   const live = experiment?.isLive ? experiment : null;
 
   return (
     <Card className={className}>
-      <CardContent className="flex flex-col gap-6 md:flex-row">
-        <div className="flex min-w-0 flex-col gap-5 md:basis-[70%]">
-          {live ? <LiveExperiment experiment={live} onChanged={onChanged} /> : <StartFlow last={experiment} onChanged={onChanged} />}
-        </div>
-        <div
-          className={cn(
-            "flex min-w-0 items-center justify-center overflow-hidden rounded-2xl bg-muted/50 p-6 md:basis-[30%]",
-          )}
-        >
-          {/* The daily 3-sentence writeup — the glance bait — lives here. */}
-          <blockquote className="min-w-0 border-l-2 pl-4">
-            {writeup ? (
-              <>
-                <p className="line-clamp-6 break-words text-sm italic leading-relaxed md:text-base">
-                  {writeup.text}
-                </p>
-                <footer className="mt-2 truncate text-sm text-muted-foreground">
-                  — dream coach · {writeup.date}
-                </footer>
-              </>
-            ) : (
-              <p className="text-sm italic text-muted-foreground">
-                No writeup yet — it appears after the first daily run.
-              </p>
+      <CardContent className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6 md:flex-row">
+          <div className="flex min-w-0 flex-col gap-5 md:basis-[70%]">
+            {live ? <LiveExperiment experiment={live} onChanged={onChanged} /> : <StartFlow last={experiment} onChanged={onChanged} />}
+          </div>
+          <div
+            className={cn(
+              "flex min-w-0 items-center justify-center overflow-hidden rounded-2xl bg-muted/50 p-6 md:basis-[30%]",
             )}
-          </blockquote>
+          >
+            {/* The daily 3-sentence writeup — the glance bait — lives here. */}
+            <blockquote className="min-w-0 border-l-2 pl-4">
+              {writeup ? (
+                <>
+                  <p className="line-clamp-6 break-words text-sm italic leading-relaxed md:text-base">
+                    {writeup.text}
+                  </p>
+                  <footer className="mt-2 truncate text-sm text-muted-foreground">
+                    — dream coach · {writeup.date}
+                  </footer>
+                </>
+              ) : (
+                <p className="text-sm italic text-muted-foreground">
+                  No writeup yet — it appears after the first daily run.
+                </p>
+              )}
+            </blockquote>
+          </div>
         </div>
+        <CategoryMap categories={categories} />
       </CardContent>
     </Card>
   );

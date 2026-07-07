@@ -9,6 +9,8 @@ export interface Item {
   active?: boolean;
   // ids of the conversations this item was derived from
   sources?: string[];
+  // name of the category this item was derived in (derive-scoped proposals)
+  category?: string;
 }
 
 export const CATEGORY_LABELS: Record<CategoryKey, string> = {

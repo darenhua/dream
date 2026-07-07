@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-table";
 import { Check, X } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -29,7 +30,16 @@ export function ProposedTable({ items, onAccept, onReject, onRowClick }: Propose
     {
       accessorKey: "text",
       header: "Proposed item",
-      cell: ({ row }) => row.original.text,
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{row.original.text}</span>
+          {row.original.category && (
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              {row.original.category}
+            </Badge>
+          )}
+        </div>
+      ),
     },
     {
       id: "actions",

@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { api, type ExperimentRow, type ProposalRow, type WriteupRow } from "@/lib/api";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { CategoryCard } from "./components/CategoryCard";
+import { type CategoryMapEntry } from "./components/CategoryMap";
 import { EditSheet } from "./components/EditSheet";
 import { ExperimentCard } from "./components/ExperimentCard";
 import { ReviewProposed } from "./components/ReviewProposed";
@@ -94,9 +95,10 @@ export function App() {
   const [experiment, setExperiment] = useState<ExperimentRow | null>(null);
   const [writeup, setWriteup] = useState<WriteupRow | null>(null);
   const [experienceCount, setExperienceCount] = useState(0);
+  const [categoryMap, setCategoryMap] = useState<CategoryMapEntry[]>([]);
 
   const refresh = useCallback(async () => {
-    const [goals, habits, environment, experiences, proposals, convos, exp, wu] =
+    const [goals, habits, environment, experiences, proposals, convos, exp, wu, cats] =
       await Promise.all([
         api.goals(),
         api.registry("habit"),
@@ -106,6 +108,7 @@ export function App() {
         api.conversations(),
         api.currentExperiment(),
         api.writeupToday(),
+        api.categories(),
       ]);
 
     // current items = active; the pool = backlog goals / removed registry items
@@ -131,6 +134,10 @@ export function App() {
     });
     setExperienceCount(experiences.length);
 
+    const catNameById = new Map(cats.map(c => [c.id, c.name]));
+    const categoryOf = (scopeKey: string) =>
+      scopeKey.startsWith("category:") ? catNameById.get(scopeKey.slice("category:".length)) : undefined;
+
     const buckets: Record<ReviewKey, Item[]> = {
       goals: [],
       habits: [],
@@ -139,9 +146,41 @@ export function App() {
     };
     for (const p of proposals) {
       const mapped = proposalToReview(p);
-      if (mapped) buckets[mapped.section].push(mapped.item);
+      if (mapped) {
+        mapped.item.category = categoryOf(p.scopeKey);
+        buckets[mapped.section].push(mapped.item);
+      }
     }
     setProposed(buckets);
+
+    // The garden map: category → its goals + its filed rants.
+    const entries: CategoryMapEntry[] = cats.map(cat => ({
+      id: cat.id,
+      name: cat.name,
+      description: cat.description,
+      goals: goals
+        .filter(g => g.categoryId === cat.id)
+        .map(g => ({ id: g.id, title: g.title, status: g.status })),
+      rants: convos
+        .filter(c => c.links.some(l => l.categoryId === cat.id))
+        .map(c => ({
+          id: c.id,
+          title: c.title ?? "(untitled)",
+          date: (c.sourceUpdatedAt ?? "").slice(0, 10),
+          active: c.links.find(l => l.categoryId === cat.id)!.activeForDerive,
+        })),
+    }));
+    const unfiled = goals.filter(g => !g.categoryId);
+    if (unfiled.length > 0) {
+      entries.push({
+        id: "uncategorized",
+        name: "uncategorized",
+        description: "goals not yet attached to a category",
+        goals: unfiled.map(g => ({ id: g.id, title: g.title, status: g.status })),
+        rants: [],
+      });
+    }
+    setCategoryMap(entries);
 
     setConversations(
       convos.map(c => ({
@@ -280,6 +319,7 @@ export function App() {
             <ExperimentCard
               experiment={experiment}
               writeup={writeup}
+              categories={categoryMap}
               onChanged={refresh}
               className="order-1 md:order-5 md:col-span-4"
             />
