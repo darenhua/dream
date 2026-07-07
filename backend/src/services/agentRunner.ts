@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -9,25 +10,48 @@ import { env } from "../lib/env";
 import { getConfig } from "./config";
 import { emit } from "./events";
 
-// Amendment 9: plain SDK + native structured outputs (schema enforced server-side),
-// zod re-validation client-side, one retry on invalid output.
+// Amendments 9 + 10: plain SDK + native structured outputs (schema enforced
+// server-side), zod re-validation client-side, one retry on invalid output.
+// Provider is env-switched: USE_BEDROCK=true → AWS Bedrock (classic
+// bedrock-runtime; Sonnet 4.6 is not on the Mantle surface), else the
+// first-party API with ANTHROPIC_API_KEY.
 
-const MODEL_ALIASES: Record<string, string> = {
+const MODEL_ALIASES_API: Record<string, string> = {
   sonnet: "claude-sonnet-4-6",
   opus: "claude-opus-4-8",
   haiku: "claude-haiku-4-5",
 };
 
+// Bedrock on-demand needs cross-region inference-profile IDs (bare "anthropic."
+// IDs 400). Suffix forms differ per model generation — verified live 2026-07-08
+// (us-west-2): 4.6+/4.8 have no suffix, pre-4.6 keep the dated "-v1:0".
+// Swap "us." for "global." to use global routing (no CRIS premium).
+const MODEL_ALIASES_BEDROCK: Record<string, string> = {
+  sonnet: "us.anthropic.claude-sonnet-4-6",
+  opus: "us.anthropic.claude-opus-4-8",
+  haiku: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+};
+
 export function resolveModel(): string {
   const configured = getConfig<string>("MODEL");
-  return MODEL_ALIASES[configured] ?? configured;
+  const aliases = env.USE_BEDROCK ? MODEL_ALIASES_BEDROCK : MODEL_ALIASES_API;
+  return aliases[configured] ?? configured; // raw IDs pass through untouched
 }
 
-const client = new Anthropic({
-  apiKey: env.ANTHROPIC_API_KEY,
-  timeout: 120_000, // user's network can be flaky — fail into agent_run.error, don't hang
-  maxRetries: 2,
-});
+// AnthropicBedrock resolves credentials via the standard AWS chain (env vars,
+// ~/.aws/credentials, SSO). It does NOT read the region from ~/.aws/config —
+// pass it explicitly or requests silently target us-east-1.
+const client: Anthropic | AnthropicBedrock = env.USE_BEDROCK
+  ? new AnthropicBedrock({
+      awsRegion: env.AWS_REGION,
+      timeout: 120_000, // user's network can be flaky — fail into agent_run.error, don't hang
+      maxRetries: 2,
+    })
+  : new Anthropic({
+      apiKey: env.ANTHROPIC_API_KEY,
+      timeout: 120_000,
+      maxRetries: 2,
+    });
 
 type AgentName = "categorizer" | "deriver" | "daily_writeup";
 
