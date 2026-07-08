@@ -66,3 +66,7 @@ export function getWriteup(date: string) {
 export function latestWriteup() {
   return db.select().from(dailyWriteup).orderBy(desc(dailyWriteup.date)).limit(1).get() ?? null;
 }
+
+export function listWriteups(limit = 30) {
+  return db.select().from(dailyWriteup).orderBy(desc(dailyWriteup.date)).limit(limit).all();
+}

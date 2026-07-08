@@ -103,6 +103,23 @@ export interface WriteupRow {
   text: string;
 }
 
+export interface EventRow {
+  id: string;
+  entityType: string;
+  entityId: string | null;
+  eventType: string;
+  payloadJson: string | null;
+  createdAt: string;
+}
+
+export interface ExperimentHistoryRow {
+  id: string;
+  title: string;
+  status: "done" | "composted";
+  endedAt: string | null;
+  outcomeMd: string | null;
+}
+
 export const api = {
   visit: () => request<{ ok: boolean }>("/user/visit", { method: "POST" }),
 
@@ -120,6 +137,10 @@ export const api = {
     request(`/registry/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
 
   proposals: () => request<ProposalRow[]>("/proposals?status=pending"),
+  allProposals: (status?: string) =>
+    request<(ProposalRow & { createdAt: string; denialNote: string | null })[]>(
+      `/proposals${status ? `?status=${status}` : ""}`,
+    ),
   approveProposal: (id: string) =>
     request<{ ok: boolean; notes: string[] }>(`/proposals/${id}/approve`, { method: "POST" }),
   denyProposal: (id: string, note?: string) =>
@@ -132,6 +153,28 @@ export const api = {
       `/conversations/${id}`,
     ),
   categories: () => request<CategoryRow[]>("/categories?status=active"),
+  allCategories: () => request<(CategoryRow & { topKOverride: number | null })[]>("/categories"),
+  createCategory: (fields: { name: string; description?: string; topKOverride?: number | null }) =>
+    request<CategoryRow>("/categories", { method: "POST", body: JSON.stringify(fields) }),
+  patchCategory: (
+    id: string,
+    patch: { name?: string; description?: string; status?: string; topKOverride?: number | null },
+  ) => request(`/categories/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  createGoal: (fields: { title: string; identityClause?: string; categoryId?: string | null }) =>
+    request<{ goal: GoalRow; note?: string }>("/goals", {
+      method: "POST",
+      body: JSON.stringify(fields),
+    }),
+  createRegistry: (fields: { kind: string; title: string; note?: string; valence?: string }) =>
+    request<RegistryRow>("/registry", { method: "POST", body: JSON.stringify(fields) }),
+
+  events: (limit = 50) => request<EventRow[]>(`/events?limit=${limit}`),
+  experimentHistory: () => request<ExperimentHistoryRow[]>("/experiment/history"),
+  writeupHistory: () => request<WriteupRow[]>("/writeup/history"),
+
+  reset: () => request("/admin/reset", { method: "POST", body: JSON.stringify({ confirm: "RESET" }) }),
+  seedConfig: () => request("/admin/seed-config", { method: "POST", body: "{}" }),
   linkConversation: (conversationId: string, categoryId: string) =>
     request(`/conversations/${conversationId}/links`, {
       method: "POST",
@@ -158,6 +201,7 @@ export const api = {
   runDerive: (categoryId?: string) =>
     request("/jobs/derive", { method: "POST", body: JSON.stringify(categoryId ? { categoryId } : {}) }),
   runDaily: () => request("/jobs/daily", { method: "POST", body: "{}" }),
+  runWriteup: () => request("/jobs/writeup", { method: "POST", body: "{}" }),
 
   currentExperiment: () =>
     request<{ experiment: ExperimentRow | null }>("/experiment/current").then(r => r.experiment),

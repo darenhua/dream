@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2, Upload } from "lucide-react";
+import { ChevronDown, Loader2, Play, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,12 @@ import { Toggle } from "@/components/ui/toggle";
 import { api, type CategoryRow } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { type Conversation } from "../data";
+import { CategoriesManager } from "./admin/CategoriesManager";
+import { DangerZone } from "./admin/DangerZone";
+import { EventsFeed } from "./admin/EventsFeed";
+import { HistoryPanel } from "./admin/HistoryPanel";
+import { ProposalLedger } from "./admin/ProposalLedger";
+import { QuickAdd } from "./admin/QuickAdd";
 
 interface AdminDashboardProps {
   conversations: Conversation[];
@@ -27,7 +33,6 @@ interface AdminDashboardProps {
 }
 
 export function AdminDashboard({ conversations, onChanged }: AdminDashboardProps) {
-  const [dailyEnabled, setDailyEnabled] = useState(true);
   const [deriveScope, setDeriveScope] = useState<{ label: string; categoryId?: string }>({
     label: "all",
   });
@@ -37,6 +42,14 @@ export function AdminDashboard({ conversations, onChanged }: AdminDashboardProps
   const [importOpen, setImportOpen] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
   const [jobResult, setJobResult] = useState<string | null>(null);
+  // Bumped after every mutation so the self-fetching panels (ledger, events,
+  // history) reload without prop-drilling all their data through App.
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const handleChanged = async () => {
+    await onChanged();
+    setRefreshTick(t => t + 1);
+  };
 
   useEffect(() => {
     api.categories().then(setCategories).catch(() => setCategories([]));
@@ -53,7 +66,7 @@ export function AdminDashboard({ conversations, onChanged }: AdminDashboardProps
     try {
       const result = await job();
       setJobResult(`${name}: ${JSON.stringify(result).slice(0, 200)}`);
-      await onChanged();
+      await handleChanged();
     } catch (e) {
       setJobResult(`${name} failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -78,13 +91,18 @@ export function AdminDashboard({ conversations, onChanged }: AdminDashboardProps
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Button
           variant="outline"
-          className={cn(
-            dailyEnabled &&
-              "border-green-300 bg-green-200/70 hover:bg-green-200 dark:border-green-800 dark:bg-green-900/40 dark:hover:bg-green-900/60",
-          )}
-          onClick={() => setDailyEnabled(v => !v)}
+          disabled={running !== null}
+          onClick={() => runJob("daily", api.runDaily)}
         >
-          run daily {dailyEnabled && <Check />} 21:00
+          {running === "daily" ? <Loader2 className="animate-spin" /> : <Play />} run daily now
+          <span className="text-muted-foreground">(categorize → derive → writeup)</span>
+        </Button>
+        <Button
+          variant="outline"
+          disabled={running !== null}
+          onClick={() => runJob("writeup", api.runWriteup)}
+        >
+          {running === "writeup" && <Loader2 className="animate-spin" />} run writeup
         </Button>
         <Button
           variant="outline"
@@ -209,11 +227,18 @@ export function AdminDashboard({ conversations, onChanged }: AdminDashboardProps
         </CardContent>
       </Card>
 
+      <CategoriesManager onChanged={handleChanged} />
+      <QuickAdd categories={categories} onChanged={handleChanged} />
+      <ProposalLedger refreshKey={refreshTick} />
+      <EventsFeed refreshKey={refreshTick} />
+      <HistoryPanel refreshKey={refreshTick} />
+      <DangerZone onChanged={handleChanged} />
+
       <ImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
         onImported={async () => {
-          await onChanged();
+          await handleChanged();
         }}
       />
     </div>

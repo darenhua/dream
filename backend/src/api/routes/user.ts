@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { setConfig } from "../../services/config";
 import { emit } from "../../services/events";
-import { getWriteup, latestWriteup, todayLocal } from "../../services/writeup";
+import { getWriteup, latestWriteup, listWriteups, todayLocal } from "../../services/writeup";
 
 export const userRoutes = new Hono();
 
@@ -13,6 +13,12 @@ userRoutes.post("/visit", c => {
 });
 
 export const writeupRoutes = new Hono();
+
+// §9 amendment (dashboard history view): recent writeups, newest first.
+writeupRoutes.get("/history", c => {
+  const { limit } = c.req.query();
+  return c.json(listWriteups(limit ? Number(limit) : 30));
+});
 
 writeupRoutes.get("/today", c => {
   // Today's if it exists, else the latest — the glance never shows a hole.
