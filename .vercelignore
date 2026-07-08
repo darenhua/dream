@@ -1,0 +1,11 @@
+# Only the dashboard is deployed. Everything personal or server-side stays out.
+backend
+scripts
+conversations.json
+SPEC.md
+vision-spec.md
+*.md
+.claude
+.cursor
+dashboard/node_modules
+dashboard/dist

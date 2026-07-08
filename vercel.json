@@ -1,0 +1,8 @@
+{
+  "installCommand": "cd dashboard && bun install",
+  "buildCommand": "cd dashboard && bun run build",
+  "outputDirectory": "dashboard/dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "http://100.48.129.170:3001/api/:path*" }
+  ]
+}
