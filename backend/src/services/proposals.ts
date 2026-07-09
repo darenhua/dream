@@ -1,19 +1,16 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { category, goal, goalEvidence, proposal, registryItem } from "../db/schema";
-import type { CategorizerOutputT, DeriverProposalT } from "../domain/schemas";
+import { extraction, extractionLink, goal, goalEvidence, proposal } from "../db/schema";
+import type { DeriverProposalT } from "../domain/schemas";
+import { createEnvironmentItem, patchEnvironmentItem } from "./environment";
 import { emit } from "./events";
+import { createExperience } from "./experiences";
+import { enqueueExperiment } from "./experiments";
 import { createGoal, setGoalStatus } from "./goals";
-import { createLink } from "./rantLinks";
+import { createHabit, patchHabit } from "./habits";
 
 type ProposalKind = typeof proposal.$inferSelect.kind;
-
-// Categorization payload: ONE proposal per conversation bundling the agent's
-// categorizations + registry catches (matches the dashboard's one-row filing UI).
-export interface CategorizationPayload extends CategorizerOutputT {
-  conversation_id: string;
-  source_conversation_ids: string[];
-}
+type EntityType = "goal" | "habit" | "environment_item" | "experience" | "experiment" | "experiment_task";
 
 export function createProposal(
   kind: ProposalKind,
@@ -30,7 +27,8 @@ export function createProposal(
   return row;
 }
 
-// §7.10 — the entire "no queue debt" mechanic: one UPDATE before each derive.
+// Survives only for manual re-derive of a conversation: its still-pending
+// proposals are replaced by the fresh run's view.
 export function supersedePending(scopeKey: string): number {
   const rows = db
     .update(proposal)
@@ -43,7 +41,7 @@ export function supersedePending(scopeKey: string): number {
 }
 
 export function listProposals(opts: { status?: string; limit?: number }) {
-  return db
+  const rows = db
     .select()
     .from(proposal)
     .where(
@@ -52,20 +50,46 @@ export function listProposals(opts: { status?: string; limit?: number }) {
     .orderBy(desc(proposal.createdAt))
     .limit(opts.limit ?? 100)
     .all()
-    .map(p => ({ ...p, payload: JSON.parse(p.payloadJson) }));
+    .map(p => ({ ...p, payload: JSON.parse(p.payloadJson) as Record<string, unknown> }));
+
+  // The review card renders the user's own curated words as the justification.
+  const citedIds = [...new Set(rows.flatMap(p => (p.payload.extraction_ids as string[] | undefined) ?? []))];
+  const cited = citedIds.length
+    ? db.select().from(extraction).where(inArray(extraction.id, citedIds)).all()
+    : [];
+  const byId = new Map(cited.map(x => [x.id, x]));
+  return rows.map(p => ({
+    ...p,
+    citedExtractions: ((p.payload.extraction_ids as string[] | undefined) ?? [])
+      .map(id => byId.get(id))
+      .filter(Boolean),
+  }));
 }
 
-function addEvidence(goalId: string, conversationIds: string[] | undefined, note: string | null) {
-  for (const conversationId of conversationIds ?? []) {
-    db.insert(goalEvidence).values({ goalId, conversationId, note }).run();
-  }
-  if (!conversationIds?.length && note) {
-    db.insert(goalEvidence).values({ goalId, note }).run();
+// Permanent provenance: the receipts trail from every ratified entity back
+// through extractions to the conversations that birthed it.
+function writeProvenance(
+  extractionIds: string[] | undefined,
+  entityType: EntityType,
+  entityId: string,
+  proposalId: string,
+) {
+  for (const extractionId of extractionIds ?? []) {
+    db.insert(extractionLink)
+      .values({ extractionId, entityType, entityId, proposalId })
+      .onConflictDoNothing()
+      .run();
   }
 }
 
-// §8.8 — the apply-switch: transactional apply per kind + events. Agents never
-// mutate ratified state; this function, on human approval, is the only door.
+// Goal evidence keeps working alongside: extraction provenance is the precise
+// grounding, goal_evidence carries free-text notes (denials, outcomes).
+function addGoalEvidence(goalId: string, note: string | null) {
+  if (note) db.insert(goalEvidence).values({ goalId, note }).run();
+}
+
+// The apply-switch: the single door through which agent output becomes
+// ratified state, on human approval, transactionally.
 export function approveProposal(id: string): { ok: boolean; notes: string[]; error?: string } {
   const row = db.select().from(proposal).where(eq(proposal.id, id)).get();
   if (!row) return { ok: false, notes: [], error: "proposal not found" };
@@ -76,7 +100,7 @@ export function approveProposal(id: string): { ok: boolean; notes: string[]; err
   const notes: string[] = [];
   try {
     db.transaction(() => {
-      applyProposal(row.kind, JSON.parse(row.payloadJson), row.scopeKey, notes);
+      applyProposal(row.kind, JSON.parse(row.payloadJson), row.id, notes);
       db.update(proposal)
         .set({ status: "approved", resolvedAt: new Date().toISOString() })
         .where(eq(proposal.id, id))
@@ -89,52 +113,11 @@ export function approveProposal(id: string): { ok: boolean; notes: string[]; err
   return { ok: true, notes };
 }
 
-function applyProposal(kind: ProposalKind, payload: any, scopeKey: string, notes: string[]) {
-  const scopeCategoryId = scopeKey.startsWith("category:") ? scopeKey.slice("category:".length) : null;
-
+function applyProposal(kind: ProposalKind, payload: any, proposalId: string, notes: string[]) {
   switch (kind) {
-    case "categorization": {
-      const p = payload as CategorizationPayload;
-      for (const cat of p.categorizations) {
-        let categoryId = cat.category_id ?? null;
-        if (!categoryId && cat.new_category) {
-          // Amendment 7 — approving a new-category suggestion creates it first.
-          const existing = db
-            .select()
-            .from(category)
-            .where(eq(category.name, cat.new_category.name))
-            .get();
-          categoryId = existing
-            ? existing.id
-            : db
-                .insert(category)
-                .values({ name: cat.new_category.name, description: cat.new_category.description })
-                .returning({ id: category.id })
-                .get().id;
-          if (!existing) notes.push(`created category "${cat.new_category.name}"`);
-        }
-        if (!categoryId) continue;
-        createLink(p.conversation_id, categoryId, "agent");
-      }
-      for (const add of p.registry_adds) {
-        db.insert(registryItem)
-          .values({
-            kind: add.kind,
-            title: add.title,
-            note: add.note ?? null,
-            valence: add.kind === "habit" ? (add.valence ?? null) : null,
-            status: "active",
-            sourceConversationId: p.conversation_id,
-          })
-          .run();
-      }
-      break;
-    }
-
     case "goal_create": {
       const p = payload as Extract<DeriverProposalT, { kind: "goal_create" }>;
       const { goal: created, note } = createGoal({
-        categoryId: scopeCategoryId,
         title: p.title,
         identityClause: p.identity_clause,
         synthesisMd: p.synthesis_md,
@@ -142,7 +125,7 @@ function applyProposal(kind: ProposalKind, payload: any, scopeKey: string, notes
         origin: "derived",
       });
       if (note) notes.push(note);
-      addEvidence(created.id, p.source_conversation_ids, null);
+      writeProvenance(p.extraction_ids, "goal", created.id, proposalId);
       break;
     }
 
@@ -154,7 +137,8 @@ function applyProposal(kind: ProposalKind, payload: any, scopeKey: string, notes
       if (p.synthesis_md) patch.synthesisMd = p.synthesis_md;
       const updated = db.update(goal).set(patch).where(eq(goal.id, p.goal_id)).returning().get();
       if (!updated) throw new Error(`goal ${p.goal_id} not found`);
-      addEvidence(p.goal_id, p.source_conversation_ids, p.reason ?? null);
+      writeProvenance(p.extraction_ids, "goal", p.goal_id, proposalId);
+      addGoalEvidence(p.goal_id, p.reason ?? null);
       break;
     }
 
@@ -167,7 +151,8 @@ function applyProposal(kind: ProposalKind, payload: any, scopeKey: string, notes
         .returning()
         .get();
       if (!updated) throw new Error(`goal ${p.goal_id} not found`);
-      addEvidence(p.goal_id, p.source_conversation_ids, p.reason ?? null);
+      writeProvenance(p.extraction_ids, "goal", p.goal_id, proposalId);
+      addGoalEvidence(p.goal_id, p.reason ?? null);
       break;
     }
 
@@ -176,34 +161,102 @@ function applyProposal(kind: ProposalKind, payload: any, scopeKey: string, notes
       const result = setGoalStatus(p.goal_id, p.status);
       if (!result) throw new Error(`goal ${p.goal_id} not found`);
       if (result.note) notes.push(result.note);
-      addEvidence(p.goal_id, p.source_conversation_ids, p.reason ?? null);
+      writeProvenance(p.extraction_ids, "goal", p.goal_id, proposalId);
+      addGoalEvidence(p.goal_id, p.reason ?? null);
       break;
     }
 
-    case "registry_add": {
-      const p = payload as Extract<DeriverProposalT, { kind: "registry_add" }>;
-      db.insert(registryItem)
-        .values({
-          kind: p.registry_kind,
-          title: p.title,
-          note: p.note ?? null,
-          valence: p.registry_kind === "habit" ? (p.valence ?? null) : null,
-          status: "active",
-          sourceConversationId: p.source_conversation_ids?.[0] ?? null,
-        })
-        .run();
+    case "habit_add": {
+      const p = payload as Extract<DeriverProposalT, { kind: "habit_add" }>;
+      // Derive maps the current self: an approved habit_add is a habit the
+      // user already has. Habits-to-build are born inside experiments only.
+      const created = createHabit({
+        title: p.title,
+        note: p.note ?? null,
+        valence: p.valence,
+        status: "established",
+        origin: "derived",
+        goalIds: p.goal_ids,
+      });
+      writeProvenance(p.extraction_ids, "habit", created.id, proposalId);
       break;
     }
 
-    case "registry_prune": {
-      const p = payload as Extract<DeriverProposalT, { kind: "registry_prune" }>;
-      const item = db.select().from(registryItem).where(eq(registryItem.id, p.registry_item_id)).get();
-      if (!item) throw new Error(`registry item ${p.registry_item_id} not found`);
-      if (item.kind === "experience") throw new Error("experiences are append-only (§7.6)");
-      db.update(registryItem)
-        .set({ status: "removed" })
-        .where(eq(registryItem.id, p.registry_item_id))
-        .run();
+    case "habit_update": {
+      const p = payload as Extract<DeriverProposalT, { kind: "habit_update" }>;
+      const patch: Record<string, string> = {};
+      if (p.title) patch.title = p.title;
+      if (p.note) patch.note = p.note;
+      if (p.valence) patch.valence = p.valence;
+      if (p.status) patch.status = p.status;
+      const updated = patchHabit(p.habit_id, patch);
+      if (!updated) throw new Error(`habit ${p.habit_id} not found`);
+      writeProvenance(p.extraction_ids, "habit", p.habit_id, proposalId);
+      break;
+    }
+
+    case "habit_prune": {
+      const p = payload as Extract<DeriverProposalT, { kind: "habit_prune" }>;
+      const updated = patchHabit(p.habit_id, { status: "lapsed" });
+      if (!updated) throw new Error(`habit ${p.habit_id} not found`);
+      writeProvenance(p.extraction_ids, "habit", p.habit_id, proposalId);
+      break;
+    }
+
+    case "environment_add": {
+      const p = payload as Extract<DeriverProposalT, { kind: "environment_add" }>;
+      const created = createEnvironmentItem({
+        title: p.title,
+        subKind: p.sub_kind,
+        note: p.note ?? null,
+        origin: "derived",
+        goalIds: p.goal_ids,
+      });
+      writeProvenance(p.extraction_ids, "environment_item", created.id, proposalId);
+      break;
+    }
+
+    case "environment_update": {
+      const p = payload as Extract<DeriverProposalT, { kind: "environment_update" }>;
+      const patch: Record<string, string> = {};
+      if (p.title) patch.title = p.title;
+      if (p.note) patch.note = p.note;
+      if (p.sub_kind) patch.subKind = p.sub_kind;
+      const updated = patchEnvironmentItem(p.environment_item_id, patch);
+      if (!updated) throw new Error(`environment item ${p.environment_item_id} not found`);
+      writeProvenance(p.extraction_ids, "environment_item", p.environment_item_id, proposalId);
+      break;
+    }
+
+    case "environment_prune": {
+      const p = payload as Extract<DeriverProposalT, { kind: "environment_prune" }>;
+      const updated = patchEnvironmentItem(p.environment_item_id, { status: "removed" });
+      if (!updated) throw new Error(`environment item ${p.environment_item_id} not found`);
+      writeProvenance(p.extraction_ids, "environment_item", p.environment_item_id, proposalId);
+      break;
+    }
+
+    case "experience_add": {
+      const p = payload as Extract<DeriverProposalT, { kind: "experience_add" }>;
+      const created = createExperience({
+        title: p.title,
+        note: p.note ?? null,
+        state: p.state,
+        origin: "derived",
+      });
+      writeProvenance(p.extraction_ids, "experience", created.id, proposalId);
+      break;
+    }
+
+    case "experiment_propose": {
+      const p = payload as Extract<DeriverProposalT, { kind: "experiment_propose" }>;
+      const created = enqueueExperiment({
+        title: p.title,
+        hypothesisMd: p.hypothesis_md,
+        goalIds: p.goal_ids,
+        proposalId,
+      });
+      writeProvenance(p.extraction_ids, "experiment", created.id, proposalId);
       break;
     }
 
@@ -222,7 +275,7 @@ export function denyProposal(id: string, note?: string): { ok: boolean; error?: 
     .where(eq(proposal.id, id))
     .run();
 
-  // A denial reason on a goal-scoped proposal is itself evidence (§7.5).
+  // A denial reason on a goal-scoped proposal is itself evidence.
   const payload = JSON.parse(row.payloadJson);
   if (note && payload.goal_id) {
     db.insert(goalEvidence).values({ goalId: payload.goal_id, note: `denied: ${note}` }).run();

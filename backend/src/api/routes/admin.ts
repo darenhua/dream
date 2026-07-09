@@ -1,31 +1,38 @@
-import { count, desc, eq, isNull, and } from "drizzle-orm";
+import { count, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db, wipeAllTables } from "../../db";
-import { category, conversation, event, goal, registryItem } from "../../db/schema";
+import { conversation, environmentItem, event, experience, experiment, goal, habit } from "../../db/schema";
+import { isConnected } from "../../services/calendarSync";
 import { seedConfig } from "../../services/config";
+import { pendingDerives } from "../../services/derive";
+import { pendingDistills } from "../../services/distill";
 import { emit } from "../../services/events";
-import { liveExperiment } from "../../services/experiments";
+import { liveExperiment, listQueue } from "../../services/experiments";
 import { ingestFile } from "../../services/ingestion";
-import { pendingCategorizations } from "../../services/categorize";
+import { distillPending } from "../../services/distill";
 import { listProposals } from "../../services/proposals";
+import { authRow } from "../../services/google/auth";
 
 export const adminRoutes = new Hono();
 
-// §9/§11 — the cycle checklist as JSON; all green = the cycle is alive.
+// The cycle checklist as JSON; all green = the loop is alive.
 adminRoutes.get("/health", c => {
   const conversations = db.select({ n: count() }).from(conversation).get()?.n ?? 0;
-  const sluggedUnprocessed = pendingCategorizations().length;
-  const activeCategories =
-    db.select({ n: count() }).from(category).where(eq(category.status, "active")).get()?.n ?? 0;
+  const rows = db.select().from(conversation).all();
+  const pipeline = {
+    awaitingDistill: pendingDistills().length,
+    awaitingReview: rows.filter(r => r.distilledAt && !r.extractionsReviewedAt).length,
+    awaitingDerive: pendingDerives().length,
+    derived: rows.filter(r => r.derivedAt).length,
+  };
   const activeGoals =
     db.select({ n: count() }).from(goal).where(eq(goal.status, "active")).get()?.n ?? 0;
   const registry = {
     habits:
-      db.select({ n: count() }).from(registryItem).where(and(eq(registryItem.kind, "habit"), eq(registryItem.status, "active"))).get()?.n ?? 0,
+      db.select({ n: count() }).from(habit).where(inArray(habit.status, ["established", "building"])).get()?.n ?? 0,
     environment:
-      db.select({ n: count() }).from(registryItem).where(and(eq(registryItem.kind, "environment"), eq(registryItem.status, "active"))).get()?.n ?? 0,
-    experiences:
-      db.select({ n: count() }).from(registryItem).where(and(eq(registryItem.kind, "experience"), eq(registryItem.status, "active"))).get()?.n ?? 0,
+      db.select({ n: count() }).from(environmentItem).where(eq(environmentItem.status, "active")).get()?.n ?? 0,
+    experiences: db.select({ n: count() }).from(experience).get()?.n ?? 0,
   };
   const live = liveExperiment();
   const lastDaily = db
@@ -39,13 +46,15 @@ adminRoutes.get("/health", c => {
   return c.json({
     ok: true,
     conversations,
-    sluggedUnprocessed,
-    activeCategories,
+    pipeline,
     activeGoals,
     pendingProposals: listProposals({ status: "pending" }).length,
     registry,
+    experimentQueue: listQueue().length,
     liveExperimentId: live?.id ?? null,
     liveExperimentTitle: live?.title ?? null,
+    calendarConnected: isConnected(),
+    dreamCalendarId: authRow()?.dreamCalendarId ?? null,
     lastDailyRunAt: lastDaily?.createdAt ?? null,
   });
 });
@@ -71,7 +80,10 @@ adminRoutes.post("/import", async c => {
   }
 
   try {
-    return c.json(ingestFile(payload));
+    const report = ingestFile(payload);
+    // Fire-and-forget: the read-back gate fills without waiting for cron.
+    distillPending("manual").catch(() => {});
+    return c.json(report);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

@@ -1,14 +1,47 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../../db";
-import { conversation, goal, goalEvidence } from "../../db/schema";
-import { createGoal, listGoals, reorderGoals, setGoalStatus } from "../../services/goals";
+import {
+  conversation,
+  environmentItem,
+  extraction,
+  extractionLink,
+  goal,
+  goalEnvironment,
+  goalEvidence,
+  goalHabit,
+  habit,
+} from "../../db/schema";
+import { attemptCounts, createGoal, listGoals, reorderGoals, setGoalStatus } from "../../services/goals";
 
 export const goalRoutes = new Hono();
 
 goalRoutes.get("/", c => {
   const { status } = c.req.query();
-  return c.json(listGoals(status || undefined));
+  const attempts = attemptCounts();
+  const habitLinks = db
+    .select({ goalId: goalHabit.goalId, id: habit.id, title: habit.title, status: habit.status })
+    .from(goalHabit)
+    .innerJoin(habit, eq(goalHabit.habitId, habit.id))
+    .all();
+  const envLinks = db
+    .select({
+      goalId: goalEnvironment.goalId,
+      id: environmentItem.id,
+      title: environmentItem.title,
+      subKind: environmentItem.subKind,
+    })
+    .from(goalEnvironment)
+    .innerJoin(environmentItem, eq(goalEnvironment.environmentItemId, environmentItem.id))
+    .all();
+  return c.json(
+    listGoals(status || undefined).map(g => ({
+      ...g,
+      attemptCount: attempts.get(g.id) ?? 0, // the heatmap signal
+      habits: habitLinks.filter(l => l.goalId === g.id).map(({ goalId, ...h }) => h),
+      environmentItems: envLinks.filter(l => l.goalId === g.id).map(({ goalId, ...e }) => e),
+    })),
+  );
 });
 
 goalRoutes.get("/:id", c => {
@@ -27,15 +60,24 @@ goalRoutes.get("/:id", c => {
     .where(eq(goalEvidence.goalId, row.id))
     .orderBy(desc(goalEvidence.createdAt))
     .all();
-  return c.json({ ...row, evidence });
+  // The provenance trail: every extraction that ever fed this goal.
+  const linkedIds = db
+    .select({ extractionId: extractionLink.extractionId })
+    .from(extractionLink)
+    .where(and(eq(extractionLink.entityType, "goal"), eq(extractionLink.entityId, row.id)))
+    .all()
+    .map(r => r.extractionId);
+  const extractions = linkedIds.length
+    ? db.select().from(extraction).where(inArray(extraction.id, linkedIds)).all()
+    : [];
+  return c.json({ ...row, attemptCount: attemptCounts().get(row.id) ?? 0, evidence, extractions });
 });
 
-// Manual create — origin: manual (§9 admin).
+// Manual create — origin: manual.
 goalRoutes.post("/", async c => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.title) return c.json({ error: "title required" }, 400);
   const { goal: created, note } = createGoal({
-    categoryId: body.categoryId ?? null,
     title: body.title,
     identityClause: body.identityClause ?? null,
     synthesisMd: body.synthesisMd ?? null,

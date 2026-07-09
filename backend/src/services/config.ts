@@ -3,34 +3,82 @@ import { db } from "../db";
 import { config } from "../db/schema";
 import { emit } from "./events";
 
-const PREAMBLE = `You are a component of a personal growth system for one user. You only propose; a human ratifies everything. Be concrete, brief, kind. Never shame. Prefer fewer, higher-confidence proposals, ordered by importance.`;
+const PREAMBLE = `You are a component of a personal growth system for one user. You only propose; a human ratifies everything. Be concrete, brief, kind. Never shame. Prefer fewer, higher-confidence outputs, ordered by importance.`;
 
-const PROMPT_CATEGORIZER = `Read the transcript (content after the categorize marker is out of scope). From categories.md, assign this conversation to 1-3 categories with a one-sentence justification each, grounded in the transcript. If nothing fits, propose exactly one new category (name + description). Also extract explicitly mentioned habits, environment factors, or formative experiences as registry_add items (max 3, kind-tagged). Respond with JSON only, no prose around it: {"categorizations":[{"category_id"?: string, "new_category"?: {"name": string, "description": string}, "justification": string}], "registry_adds":[{"kind": "habit"|"environment"|"experience", "title": string, "note"?: string, "valence"?: "good"|"bad"}]}`;
+const PROMPT_DISTILLER = `Read the transcript in conversation.md (messages are numbered; content after the marker slug is out of scope and already truncated). Extract every distinct passage where the user expresses one of:
+- goal_talk: a direction they want for themselves, who they want to become
+- habit_talk: a recurring behavior they have, want, or struggle with
+- environment_talk: physical setups, obligations they've signed up for, or social structures around them
+- experience_talk: one-time experiences they had or want to have
+- experiment_idea: a concrete actionable change they're considering trying
+- feeling: a significant emotional state or reaction worth remembering
 
-const PROMPT_DERIVER = `Read state.md (current goals, syntheses, recent approved changes), budget.md, and the rant transcripts in rants/. Propose only changes justified by evidence newer than the last approved change for this category; if none, return {"proposals":[]}. Allowed kinds: goal_create (title, identity_clause "I am becoming someone who...", synthesis_md citing rants), goal_update / synthesis_update (rewrite incorporating new evidence), goal_status (with reason), registry_add, registry_prune (contradicted by recent evidence). Every proposal must include source_conversation_ids: the ids of the rant conversations that justify it (listed in each rant file's header). Respect budget.md: at most the stated max proposals, importance-ordered. Respond with JSON only: {"proposals":[{"kind": string, "title": string, ...kind-specific fields, "source_conversation_ids": string[]}]}`;
+Rules: distill each passage in the user's own first-person register — no coaching-speak, no reinterpretation, no inference beyond what the text says. Each extraction cites the message index span it draws from (start_idx/end_idx from the numbered transcript). Prefer fewer, denser extractions over exhaustive fragments; merge adjacent sentences about the same thing into one extraction. If the user says nothing extractable, return an empty list. These extractions become permanent evidence the user will review word-by-word: never fabricate, never misquote.`;
 
-const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), today's new evidence titles, pending-proposal count, goals, current experiment. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if proposals pend, a "caught this before you forgot it" teaser, else a gentle note on the current experiment. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
+const PROMPT_DERIVER = `You are interpreting ONE newly-reviewed rant against everything already known.
 
-const PROMPT_EXPERIMENT_PACKAGE = `You are my experiment designer. Below is my full current state: prioritized goals with identity framing, my known habits (anchors for new behavior), my environment, and past experiments with outcomes. First, interview me briefly about my current bandwidth (tiny/normal/lots) and anything relevant this week. Then propose ONE experiment: a cohesive change targeting my top goals, sized to my bandwidth, using up to three levers (a new experience; habit changes; environment changes). Every action must be a when-then implementation intention anchored to an existing habit where possible. If the top goal lacks an obvious lever, prefer the smallest first move — a single positive experience — over an ambitious habit. When I confirm, output ONLY this JSON:
-{"title": string, "reasoning_md": string, "goal_ids": string[], "levers_json": {"experience"?: string, "habit_changes"?: string[], "environment_changes"?: string[]}, "actions_json": [{"when": string, "then": string}], "bandwidth": "tiny"|"normal"|"lots"}
+Files: trigger.md (the new rant's confirmed extractions — the occasion for this run), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
 
----
+The new extractions are the occasion; the whole corpus is the evidence. Propose state changes ONLY when justified. Convergence rules:
+- STRONGLY prefer goal_update / synthesis_update / habit_update / linking evidence into an existing entity over creating a new one. Create only what is genuinely new.
+- habit_add is ONLY for habits the user ALREADY has (mapping the current self). Habits the user WANTS are not habits yet — they surface inside experiment_propose, or not at all.
+- experiment_propose captures concrete actionable changes the user is considering (usually from experiment_idea extractions): title, hypothesis_md explaining why this change aimed at these goal_ids would work, grounded in the evidence.
+- Every proposal MUST cite extraction_ids that justify it — from the new rant, old rants, or both (cross-rant citation is expected and good).
+- If nothing is justified, return {"proposals":[]} — silence is a valid, common answer.
+Respect budget.md: at most the stated max proposals, importance-ordered.`;
 
-[STATE]`;
+const PROMPT_SCHEDULE_AGENT = `You are the scheduling half of the user's experiment loop. A queued experiment candidate has been picked; your job is to converge, over a short conversation, on ONE concrete executable plan.
 
-// §7.12 — the attention budget and prompts live here, visible and editable.
+Your context shows: the candidate (title, hypothesis, target goals, the user's own words that birthed it), the current self-map (goals, habits, environment), experiment history with outcomes and improvement notes, and the computed free-time report for the coming days.
+
+Rules:
+- Every task and habit block must be placed INSIDE reported free time. Never overlap sleep, work, or existing busy events.
+- Habit blocks anchor to existing established habits where possible (after X, I do Y).
+- If you don't know the user's current bandwidth, ask before proposing. Size the plan to it — when in doubt, smaller.
+- Learn from history: if a previous attempt at these goals failed, the notes say why; design around that.
+- Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.`;
+
+const PROMPT_GENERATOR = `Write a self-contained prompt the user will paste into a fresh Claude conversation. That Claude's job is to interview the user toward their next experiment idea — it must NOT design the experiment itself; the conversation it hosts becomes a rant that re-enters this system and is distilled like any other.
+
+The prompt you write must: (1) brief that Claude on the user's full current state exactly as given in the context files (prioritized goals with identity clauses and syntheses, habits, environment, experiment history with outcomes and improvement notes, the attempt heatmap, and the free-time report); (2) instruct it to interview the user about what change would actually help right now — bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding; (3) instruct it to help the user talk through ONE concrete experiment-worthy idea in their own words; (4) remind the user at the end to type the marker slug so the conversation enters the system on next import. Output the prompt as plain markdown, nothing else.`;
+
+const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), the pipeline counts (rants awaiting read-back, pending proposals), goals, and the current experiment or queue. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if anything awaits the user (read-backs or proposals), a "caught this before you forgot it" teaser, else a gentle note on the current experiment or queue. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
+
+const PROMPT_TASK_COPY = `# Task: {{TASK_TITLE}}
+
+I'm working on an experiment called "{{EXPERIMENT_TITLE}}" and I want to talk through how to actually execute one specific piece of it.
+
+## The experiment's hypothesis
+{{HYPOTHESIS}}
+
+## The task
+{{TASK_DETAIL}}
+
+## What I said that led here (my own words, extracted from past conversations)
+{{EXTRACTIONS}}
+
+Help me figure out how to actually do this task: what it constitutes, how to make it easier, what could get in the way, and the smallest version that still counts.`;
+
+// The attention budget and prompts live here, visible and editable via /api/config.
 export const CONFIG_DEFAULTS: Record<string, unknown> = {
   MAX_ACTIVE_GOALS: 5,
   MAX_PROPOSALS_PER_DERIVE: 7,
-  TOP_K_RANTS: 10,
-  SLUG_CATEGORIZE: "#DREAM-CATEGORIZE",
+  SLUG_MARKER: "#DREAM-CATEGORIZE", // kept so historical rants import unchanged
   MODEL: "sonnet",
   LAST_VISIT_AT: null,
+  TIMEZONE: "America/New_York",
+  SLEEP_WINDOW: { start: "23:30", end: "07:30" },
+  WORK_WINDOW: { start: "09:30", end: "18:00", days: [1, 2, 3, 4, 5] },
+  DINNER_WINDOW: null, // e.g. { start: "19:00", end: "20:00" }
+  EXPERIMENT_DEFAULT_DURATION_DAYS: 7,
+  GCAL_SYNC_MIN_INTERVAL_MIN: 10,
   "PROMPT.preamble": PREAMBLE,
-  "PROMPT.categorizer": PROMPT_CATEGORIZER,
+  "PROMPT.distiller": PROMPT_DISTILLER,
   "PROMPT.deriver": PROMPT_DERIVER,
+  "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
+  "PROMPT.prompt_generator": PROMPT_GENERATOR,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
-  "PROMPT.experiment_package": PROMPT_EXPERIMENT_PACKAGE,
+  "PROMPT.task_copy": PROMPT_TASK_COPY,
 };
 
 export function getConfig<T>(key: string): T {

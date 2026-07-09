@@ -25,17 +25,29 @@ runMigrations();
 export function wipeAllTables() {
   sqlite.exec("PRAGMA foreign_keys = OFF;");
   const tables = [
+    // children first
+    "chat_message",
+    "chat_session",
+    "calendar_event",
+    "anchor_event",
+    "extraction_link",
+    "experiment_task",
+    "experiment_goal",
+    "goal_habit",
+    "goal_environment",
+    "experience",
+    "environment_item",
+    "habit",
     "daily_writeup",
     "proposal",
+    "extraction",
     "agent_run",
     "event",
     "goal_evidence",
     "experiment",
-    "registry_item",
     "goal",
-    "rant_link",
-    "category",
     "conversation",
+    "google_auth",
     "config",
   ];
   for (const t of tables) sqlite.exec(`DELETE FROM ${t};`);

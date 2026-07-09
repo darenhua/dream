@@ -1,146 +1,339 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { experiment, goalEvidence } from "../db/schema";
-import { ExperimentDraft, type ExperimentDraftT } from "../domain/schemas";
+import {
+  chatSession,
+  experiment,
+  experimentGoal,
+  experimentTask,
+  extraction,
+  extractionLink,
+  goalEvidence,
+} from "../db/schema";
+import type { SchedulePlanT } from "../domain/schemas";
 import { getConfig } from "./config";
 import { emit } from "./events";
-import {
-  budgetMd,
-  experimentHistoryMd,
-  goalsAllMd,
-  registriesMd,
-} from "./projector";
+import { createExperience } from "./experiences";
+import { createHabit, graduateExperimentHabits, lapseExperimentHabits } from "./habits";
 
-// §7.7 — service-enforced invariant: ≤1 row in {committed, running}.
-export function liveExperiment() {
+// The experiment FSM: queued → scheduling → running → succeeded | failed.
+// Candidates enter the queue only via approved experiment_propose proposals;
+// there is no draft, no composting, and no system nudge at any duration.
+
+type ExperimentRow = typeof experiment.$inferSelect;
+
+export function liveExperiment(): ExperimentRow | null {
   return (
     db
       .select()
       .from(experiment)
-      .where(inArray(experiment.status, ["committed", "running"]))
+      .where(inArray(experiment.status, ["scheduling", "running"]))
       .get() ?? null
   );
 }
 
-export function currentExperiment() {
-  // Live one, else the latest by creation — the dashboard card never blanks.
-  const live = liveExperiment();
-  const row =
-    live ??
-    db.select().from(experiment).orderBy(desc(experiment.createdAt)).limit(1).get() ??
-    null;
-  if (!row) return null;
-  const daysRunning = row.committedAt
-    ? Math.floor((Date.now() - new Date(row.committedAt).getTime()) / 86_400_000)
-    : null;
-  return { ...row, daysRunning, isLive: row.status === "committed" || row.status === "running" };
-}
-
-// §8.6.1 — refuses while an experiment is live; ending one unblocks this.
-export function getPromptPackage(): { ok: true; markdown: string } | { ok: false; error: string } {
-  const live = liveExperiment();
-  if (live) {
-    return {
-      ok: false,
-      error: `an experiment is live ("${live.title}") — end or compost it first`,
-    };
-  }
-  const template = getConfig<string>("PROMPT.experiment_package");
-  const state = [goalsAllMd(), registriesMd(), experimentHistoryMd(), budgetMd()].join("\n\n---\n\n");
-  return { ok: true, markdown: template.replace("[STATE]", `\n\n${state}`) };
-}
-
-// §8.6.2 — zod-validates the pasted JSON; field-level errors for the dashboard.
-export function createDraft(
-  pasted: unknown,
-): { ok: true; experiment: typeof experiment.$inferSelect } | { ok: false; fieldErrors: Record<string, string[]> } {
-  const parsed = ExperimentDraft.safeParse(pasted);
-  if (!parsed.success) {
-    const fieldErrors: Record<string, string[]> = {};
-    for (const issue of parsed.error.issues) {
-      const key = issue.path.join(".") || "(root)";
-      (fieldErrors[key] ??= []).push(issue.message);
-    }
-    return { ok: false, fieldErrors };
-  }
-  const d: ExperimentDraftT = parsed.data;
+// Called by the proposal apply-switch on approval.
+export function enqueueExperiment(fields: {
+  title: string;
+  hypothesisMd: string;
+  goalIds: string[];
+  proposalId: string;
+}): ExperimentRow {
   const row = db
     .insert(experiment)
     .values({
-      title: d.title,
-      reasoningMd: d.reasoning_md,
-      goalIds: JSON.stringify(d.goal_ids),
-      leversJson: JSON.stringify(d.levers_json),
-      actionsJson: JSON.stringify(d.actions_json),
-      bandwidth: d.bandwidth,
-      status: "draft",
+      title: fields.title,
+      hypothesisMd: fields.hypothesisMd,
+      status: "queued",
+      proposalId: fields.proposalId,
+      queuedAt: new Date().toISOString(),
     })
     .returning()
     .get();
-  emit("experiment", row.id, "experiment_drafted", { title: row.title });
-  return { ok: true, experiment: row };
+  for (const goalId of fields.goalIds) {
+    db.insert(experimentGoal).values({ experimentId: row.id, goalId }).onConflictDoNothing().run();
+  }
+  emit("experiment", row.id, "experiment_queued", { title: row.title });
+  return row;
 }
 
-// §8.6.3 — draft → committed → running in one call; committed is an event boundary.
-export function commitExperiment(id: string): { ok: boolean; error?: string } {
-  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
-  if (!row) return { ok: false, error: "experiment not found" };
-  if (row.status !== "draft") return { ok: false, error: `experiment is ${row.status}, not draft` };
-  if (liveExperiment()) return { ok: false, error: "another experiment is already live (≤1 rule)" };
-
-  const now = new Date().toISOString();
-  db.update(experiment)
-    .set({ status: "committed", committedAt: now })
-    .where(eq(experiment.id, id))
-    .run();
-  emit("experiment", id, "experiment_committed", {});
-  db.update(experiment).set({ status: "running" }).where(eq(experiment.id, id)).run();
-  emit("experiment", id, "experiment_running", {});
-  return { ok: true };
+export function listQueue() {
+  return db
+    .select()
+    .from(experiment)
+    .where(inArray(experiment.status, ["queued", "scheduling"]))
+    .orderBy(asc(experiment.queuedAt))
+    .all();
 }
 
-// §8.6.4 — done and composted are the same single call; composting is never
-// more work than finishing (the zombie-experiment defense).
-export function endExperiment(
-  id: string,
-  verdict: "done" | "composted",
-  outcomeMd?: string,
-  compostWhy?: string,
-): { ok: boolean; error?: string } {
-  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
-  if (!row) return { ok: false, error: "experiment not found" };
-  if (row.status !== "committed" && row.status !== "running") {
-    return { ok: false, error: `experiment is ${row.status}, not live` };
-  }
-
-  const note = verdict === "composted" ? (compostWhy ?? outcomeMd) : outcomeMd;
-  db.update(experiment)
-    .set({
-      status: verdict,
-      endedAt: new Date().toISOString(),
-      outcomeMd: note ?? null,
-    })
-    .where(eq(experiment.id, id))
-    .run();
-
-  // The optional one-liner becomes evidence on the linked goals (§8.6.4).
-  if (note) {
-    const goalIds = JSON.parse(row.goalIds) as string[];
-    for (const goalId of goalIds) {
-      db.insert(goalEvidence)
-        .values({ goalId, note: `experiment "${row.title}" ${verdict}: ${note}` })
-        .run();
-    }
-  }
-  emit("experiment", id, "experiment_ended", { verdict, note });
-  return { ok: true };
+export function currentExperiment() {
+  // The running one, else the queue head — the feed card never blanks needlessly.
+  const running = db.select().from(experiment).where(eq(experiment.status, "running")).get();
+  const row = running ?? listQueue()[0] ?? null;
+  if (!row) return null;
+  const daysRunning = row.startedAt
+    ? Math.floor((Date.now() - new Date(row.startedAt).getTime()) / 86_400_000)
+    : null;
+  return {
+    ...row,
+    daysRunning,
+    isRunning: row.status === "running",
+    tasks: listTasks(row.id),
+    goalIds: goalIdsFor(row.id),
+  };
 }
 
 export function experimentHistory() {
   return db
     .select()
     .from(experiment)
-    .where(inArray(experiment.status, ["done", "composted"]))
+    .where(inArray(experiment.status, ["succeeded", "failed"]))
     .orderBy(desc(experiment.endedAt))
     .all();
+}
+
+export function getExperiment(id: string) {
+  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
+  if (!row) return null;
+  return { ...row, tasks: listTasks(id), goalIds: goalIdsFor(id) };
+}
+
+function goalIdsFor(experimentId: string): string[] {
+  return db
+    .select({ goalId: experimentGoal.goalId })
+    .from(experimentGoal)
+    .where(eq(experimentGoal.experimentId, experimentId))
+    .all()
+    .map(r => r.goalId);
+}
+
+export function listTasks(experimentId: string) {
+  return db
+    .select()
+    .from(experimentTask)
+    .where(eq(experimentTask.experimentId, experimentId))
+    .orderBy(asc(experimentTask.createdAt))
+    .all();
+}
+
+// queued → scheduling. Guard: one experiment at a time, including one being
+// scheduled — picking opens the schedule-agent chat session.
+export function pickExperiment(id: string): { ok: true; sessionId: string } | { ok: false; error: string } {
+  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
+  if (!row) return { ok: false, error: "experiment not found" };
+  if (row.status !== "queued") return { ok: false, error: `experiment is ${row.status}, not queued` };
+  const live = liveExperiment();
+  if (live) {
+    return {
+      ok: false,
+      error: `"${live.title}" is ${live.status} — one experiment at a time; end or cancel it first`,
+    };
+  }
+  db.update(experiment).set({ status: "scheduling" }).where(eq(experiment.id, id)).run();
+  const session = db.insert(chatSession).values({ purpose: "schedule", experimentId: id }).returning().get();
+  emit("experiment", id, "experiment_scheduling", { sessionId: session.id });
+  return { ok: true, sessionId: session.id };
+}
+
+// scheduling → queued (bailing out of the chat is free).
+export function cancelScheduling(id: string): { ok: boolean; error?: string } {
+  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
+  if (!row) return { ok: false, error: "experiment not found" };
+  if (row.status !== "scheduling") return { ok: false, error: `experiment is ${row.status}, not scheduling` };
+  db.update(experiment).set({ status: "queued" }).where(eq(experiment.id, id)).run();
+  db.update(chatSession)
+    .set({ status: "cancelled" })
+    .where(eq(chatSession.experimentId, id))
+    .run();
+  emit("experiment", id, "experiment_scheduling_cancelled", {});
+  return { ok: true };
+}
+
+// scheduling → running: the plan the chat converged on becomes real —
+// building habits, tasks, planned experiences. Calendar pushes are the
+// caller's job (scheduleChat.confirm) so this stays testable without GCal.
+export function commitPlan(
+  experimentId: string,
+  plan: SchedulePlanT,
+): { ok: true; experiment: ExperimentRow } | { ok: false; error: string } {
+  const row = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
+  if (!row) return { ok: false, error: "experiment not found" };
+  if (row.status !== "scheduling") return { ok: false, error: `experiment is ${row.status}, not scheduling` };
+
+  let updated: ExperimentRow;
+  db.transaction(() => {
+    updated = db
+      .update(experiment)
+      .set({
+        status: "running",
+        startedAt: new Date().toISOString(),
+        hypothesisMd: plan.hypothesis_md || row.hypothesisMd,
+        bandwidth: plan.bandwidth ?? null,
+        plannedDurationDays: plan.planned_duration_days ?? getConfig<number>("EXPERIMENT_DEFAULT_DURATION_DAYS"),
+        planJson: JSON.stringify(plan),
+      })
+      .where(eq(experiment.id, experimentId))
+      .returning()
+      .get();
+
+    for (const t of plan.tasks) {
+      const task = db
+        .insert(experimentTask)
+        .values({
+          experimentId,
+          kind: t.kind,
+          title: t.title,
+          detail: t.detail ?? null,
+          status: "scheduled",
+          scheduledFor: t.start,
+        })
+        .returning()
+        .get();
+      if (t.kind === "experience") {
+        createExperience({
+          title: t.title,
+          note: t.detail ?? null,
+          state: "planned",
+          plannedFor: t.start,
+          experimentTaskId: task.id,
+          origin: "experiment",
+        });
+      }
+      // Task-level provenance inherits the extractions the agent cited.
+      for (const extractionId of t.extraction_ids ?? []) {
+        db.insert(extractionLink)
+          .values({ extractionId, entityType: "experiment_task", entityId: task.id })
+          .onConflictDoNothing()
+          .run();
+      }
+    }
+
+    for (const h of plan.habit_blocks) {
+      createHabit({
+        title: h.title,
+        note: h.note ?? null,
+        valence: h.valence,
+        status: "building", // graduates to established only on experiment success
+        rrule: h.rrule,
+        preferredTime: h.preferred_time,
+        durationMinutes: h.duration_minutes,
+        experimentId,
+        origin: "experiment",
+      });
+    }
+  });
+
+  emit("experiment", experimentId, "experiment_running", {
+    tasks: plan.tasks.length,
+    habitBlocks: plan.habit_blocks.length,
+  });
+  return { ok: true, experiment: updated! };
+}
+
+// running → succeeded | failed. Blame-free either way: verdict + optional
+// self-reported notes; failing with honest improvement notes IS the design.
+export function endExperiment(
+  id: string,
+  verdict: "succeeded" | "failed",
+  outcomeMd?: string,
+): { ok: boolean; error?: string } {
+  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
+  if (!row) return { ok: false, error: "experiment not found" };
+  if (row.status !== "running") return { ok: false, error: `experiment is ${row.status}, not running` };
+
+  db.transaction(() => {
+    db.update(experiment)
+      .set({ status: verdict, endedAt: new Date().toISOString(), outcomeMd: outcomeMd ?? null })
+      .where(eq(experiment.id, id))
+      .run();
+
+    // Only complete success means the habits truly took.
+    if (verdict === "succeeded") graduateExperimentHabits(id);
+    else lapseExperimentHabits(id);
+
+    // Open tasks resolve blamelessly on failure; on success they stay as the
+    // user left them (done/skipped is the user's own record).
+    if (verdict === "failed") {
+      db.update(experimentTask)
+        .set({ status: "skipped" })
+        .where(
+          and(
+            eq(experimentTask.experimentId, id),
+            inArray(experimentTask.status, ["pending", "scheduled"]),
+          ),
+        )
+        .run();
+    }
+
+    // The outcome note becomes evidence on every linked goal.
+    if (outcomeMd) {
+      for (const goalId of goalIdsFor(id)) {
+        db.insert(goalEvidence)
+          .values({ goalId, note: `experiment "${row.title}" ${verdict}: ${outcomeMd}` })
+          .run();
+      }
+    }
+  });
+
+  emit("experiment", id, "experiment_ended", { verdict, outcomeMd });
+  return { ok: true };
+}
+
+// queued → archived: the shame-free escape hatch for candidates that no
+// longer speak to you.
+export function archiveExperiment(id: string): { ok: boolean; error?: string } {
+  const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
+  if (!row) return { ok: false, error: "experiment not found" };
+  if (row.status !== "queued") return { ok: false, error: `experiment is ${row.status}, not queued` };
+  db.update(experiment).set({ status: "archived" }).where(eq(experiment.id, id)).run();
+  emit("experiment", id, "experiment_archived", {});
+  return { ok: true };
+}
+
+export function patchTask(taskId: string, status: "pending" | "scheduled" | "done" | "skipped") {
+  const existing = db.select().from(experimentTask).where(eq(experimentTask.id, taskId)).get();
+  if (!existing) return null;
+  const updated = db
+    .update(experimentTask)
+    .set({ status })
+    .where(eq(experimentTask.id, taskId))
+    .returning()
+    .get();
+  emit("experiment_task", taskId, "task_status_changed", { from: existing.status, to: status });
+  return updated;
+}
+
+// The per-task copy-prompt: full context from the task's provenance trail,
+// pasteable into a fresh Claude thread to talk through execution.
+export function taskCopyPrompt(taskId: string): string | null {
+  const task = db.select().from(experimentTask).where(eq(experimentTask.id, taskId)).get();
+  if (!task) return null;
+  const exp = db.select().from(experiment).where(eq(experiment.id, task.experimentId)).get();
+  const linkedIds = db
+    .select({ extractionId: extractionLink.extractionId })
+    .from(extractionLink)
+    .where(and(eq(extractionLink.entityType, "experiment_task"), eq(extractionLink.entityId, taskId)))
+    .all()
+    .map(r => r.extractionId);
+  // Fall back to the experiment's own provenance when the task has none.
+  const fallbackIds = linkedIds.length
+    ? []
+    : db
+        .select({ extractionId: extractionLink.extractionId })
+        .from(extractionLink)
+        .where(and(eq(extractionLink.entityType, "experiment"), eq(extractionLink.entityId, task.experimentId)))
+        .all()
+        .map(r => r.extractionId);
+  const ids = linkedIds.length ? linkedIds : fallbackIds;
+  const cited = ids.length ? db.select().from(extraction).where(inArray(extraction.id, ids)).all() : [];
+
+  const template = getConfig<string>("PROMPT.task_copy");
+  return template
+    .replaceAll("{{TASK_TITLE}}", task.title)
+    .replaceAll("{{EXPERIMENT_TITLE}}", exp?.title ?? "")
+    .replaceAll("{{HYPOTHESIS}}", exp?.hypothesisMd ?? "_(none recorded)_")
+    .replaceAll("{{TASK_DETAIL}}", task.detail ?? task.title)
+    .replaceAll(
+      "{{EXTRACTIONS}}",
+      cited.length ? cited.map(x => `- (${x.kind}) ${x.text}`).join("\n") : "_(no linked passages)_",
+    );
 }

@@ -24,7 +24,7 @@ export function ingestFile(payload: unknown): IngestReport {
   }
 
   const report: IngestReport = { new: 0, updated: 0, unchanged: 0, errors: [] };
-  const slug = getConfig<string>("SLUG_CATEGORIZE");
+  const slug = getConfig<string>("SLUG_MARKER");
 
   for (const raw of payload) {
     const externalId = typeof raw?.uuid === "string" ? raw.uuid : null;
