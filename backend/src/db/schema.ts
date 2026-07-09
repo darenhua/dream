@@ -210,7 +210,7 @@ export const goalEnvironment = sqliteTable(
 );
 
 // queued → scheduling → running → succeeded | failed. Blame-free by design:
-// failing is one call with optional notes; there is no composting concept.
+// failing is one call with optional improvement notes for the next attempt.
 export const experiment = sqliteTable("experiment", {
   id: id(),
   title: text("title").notNull(),

@@ -66,7 +66,8 @@ export function ingestFile(payload: unknown): IngestReport {
 
       if (existing) {
         // Content changed: re-detect slug; a conversation gaining a slug enters the
-        // work queue now. categorize_processed_at is deliberately left untouched (§8.1).
+        // distill queue now. Pipeline timestamps are deliberately left untouched —
+        // reprocessing an already-distilled conversation is an explicit admin action.
         db.update(conversation)
           .set({
             title: parsed.title,

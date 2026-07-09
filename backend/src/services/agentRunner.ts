@@ -92,7 +92,7 @@ function persistRun(fields: typeof agentRun.$inferInsert): string {
   return row.id;
 }
 
-// Structured-output run (categorizer, deriver).
+// Structured-output run (distiller, deriver).
 export async function runStructured<S extends z.ZodType>(
   agentName: AgentName,
   workspacePath: string,

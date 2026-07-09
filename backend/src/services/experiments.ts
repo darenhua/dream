@@ -17,7 +17,7 @@ import { createHabit, graduateExperimentHabits, lapseExperimentHabits } from "./
 
 // The experiment FSM: queued → scheduling → running → succeeded | failed.
 // Candidates enter the queue only via approved experiment_propose proposals;
-// there is no draft, no composting, and no system nudge at any duration.
+// there is no draft state and no system nudge at any duration.
 
 type ExperimentRow = typeof experiment.$inferSelect;
 
