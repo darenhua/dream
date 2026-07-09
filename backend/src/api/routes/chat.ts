@@ -1,7 +1,22 @@
 import { Hono } from "hono";
-import { cancelSession, confirmSession, getSession, postMessage } from "../../services/scheduleChat";
+import {
+  cancelSession,
+  confirmSession,
+  findOpenSession,
+  getSession,
+  postMessage,
+} from "../../services/scheduleChat";
 
 export const chatRoutes = new Hono();
+
+// Find the open session for a scheduling experiment (resume after tab close).
+chatRoutes.get("/sessions", c => {
+  const experimentId = c.req.query("experimentId");
+  if (!experimentId) return c.json({ error: "experimentId required" }, 400);
+  const session = findOpenSession(experimentId);
+  if (!session) return c.json({ error: "no open session" }, 404);
+  return c.json(session);
+});
 
 chatRoutes.get("/sessions/:id", c => {
   const session = getSession(c.req.param("id"));

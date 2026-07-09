@@ -19,13 +19,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 function summarize(p: LedgerRow): string {
   const pl = p.payload ?? {};
-  if (p.kind === "categorization") {
-    const names = (pl.categorizations ?? [])
-      .map((c: any) => c.new_category?.name ?? "existing")
-      .join(", ");
-    return `file rant → ${names || "?"}`;
-  }
-  return pl.title ?? pl.reason ?? pl.synthesis_md?.slice(0, 60) ?? "(no summary)";
+  return pl.title ?? pl.reason ?? pl.hypothesis_md?.slice(0, 60) ?? pl.synthesis_md?.slice(0, 60) ?? "(no summary)";
 }
 
 // Tier 3: the full proposal ledger — denied and superseded proposals stop vanishing.

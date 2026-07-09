@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { calendarEvent, chatMessage, chatSession, experimentTask, habit } from "../db/schema";
 import { SchedulePlanTurn, type SchedulePlanT } from "../domain/schemas";
@@ -16,6 +16,15 @@ import { scheduleContextMd } from "./projector";
 // The opener is implicit — shown to the agent, never stored or displayed.
 const OPENER =
   "The session just opened. Propose an initial plan sized conservatively, or ask me what you need to know first (bandwidth, preferences).";
+
+export function findOpenSession(experimentId: string) {
+  const session = db
+    .select()
+    .from(chatSession)
+    .where(and(eq(chatSession.experimentId, experimentId), eq(chatSession.status, "open")))
+    .get();
+  return session ? getSession(session.id) : null;
+}
 
 export function getSession(sessionId: string) {
   const session = db.select().from(chatSession).where(eq(chatSession.id, sessionId)).get();
