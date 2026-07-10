@@ -116,16 +116,19 @@ export interface ExperienceRow {
 export type ProposalKind =
   | "goal_create"
   | "goal_update"
-  | "goal_status"
   | "synthesis_update"
   | "habit_add"
   | "habit_update"
-  | "habit_prune"
   | "environment_add"
   | "environment_update"
-  | "environment_prune"
   | "experience_add"
   | "experiment_propose";
+
+// Extraction joined to its source conversation — the rant-source list.
+export type CitedExtraction = ExtractionRow & {
+  conversationTitle: string | null;
+  conversationDate: string | null;
+};
 
 export interface ProposalRow {
   id: string;
@@ -135,7 +138,7 @@ export interface ProposalRow {
   payload: any;
   createdAt: string;
   denialNote: string | null;
-  citedExtractions: ExtractionRow[];
+  citedExtractions: CitedExtraction[];
 }
 
 export type ExperimentStatus = "queued" | "scheduling" | "running" | "succeeded" | "failed" | "archived";
@@ -168,6 +171,12 @@ export interface CurrentExperiment extends ExperimentRow {
   isRunning: boolean;
   tasks: TaskRow[];
   goalIds: string[];
+}
+
+export interface ExperimentDetail extends ExperimentRow {
+  tasks: TaskRow[];
+  goalIds: string[];
+  extractions: CitedExtraction[];
 }
 
 export interface ChatMessageRow {
@@ -300,6 +309,12 @@ export const api = {
   // --- proposals ---
   proposals: () => request<ProposalRow[]>("/proposals?status=pending"),
   allProposals: (status?: string) => request<ProposalRow[]>(`/proposals${status ? `?status=${status}` : ""}`),
+  proposal: (id: string) => request<ProposalRow>(`/proposals/${id}`),
+  reviseProposal: (id: string, conversationId: string, instruction?: string) =>
+    request<ProposalRow>(`/proposals/${id}/revise`, {
+      method: "POST",
+      body: JSON.stringify({ conversationId, instruction }),
+    }),
   approveProposal: (id: string) =>
     request<{ ok: boolean; notes: string[] }>(`/proposals/${id}/approve`, { method: "POST" }),
   denyProposal: (id: string, note?: string) =>
@@ -339,6 +354,7 @@ export const api = {
   currentExperiment: () =>
     request<{ experiment: CurrentExperiment | null }>("/experiments/current").then(r => r.experiment),
   experimentHistory: () => request<ExperimentRow[]>("/experiments/history"),
+  experiment: (id: string) => request<ExperimentDetail>(`/experiments/${id}`),
   pickExperiment: (id: string) =>
     request<{ ok: boolean; sessionId: string; error?: string }>(`/experiments/${id}/pick`, {
       method: "POST",

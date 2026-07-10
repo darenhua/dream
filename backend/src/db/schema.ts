@@ -349,18 +349,17 @@ export const proposal = sqliteTable(
   "proposal",
   {
     id: id(),
+    // ADD + UPDATE only: removals and goal-status changes are manual CRUD.
+    // The one derived status change lives inside habit_update (lapsed ⇄ established).
     kind: text("kind", {
       enum: [
         "goal_create",
         "goal_update",
-        "goal_status",
         "synthesis_update",
         "habit_add",
         "habit_update",
-        "habit_prune",
         "environment_add",
         "environment_update",
-        "environment_prune",
         "experience_add",
         "experiment_propose",
       ],
@@ -382,7 +381,7 @@ export const proposal = sqliteTable(
 export const agentRun = sqliteTable("agent_run", {
   id: id(),
   agentName: text("agent_name", {
-    enum: ["distiller", "deriver", "schedule_agent", "prompt_generator", "daily_writeup"],
+    enum: ["distiller", "deriver", "proposal_reviser", "schedule_agent", "prompt_generator", "daily_writeup"],
   }).notNull(),
   trigger: text("trigger", { enum: ["daily", "manual"] }).notNull(),
   workspacePath: text("workspace_path"),

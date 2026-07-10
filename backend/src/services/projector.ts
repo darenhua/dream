@@ -160,6 +160,48 @@ export function projectDerive(conversationId: string, dir: string) {
   write(dir, "budget.md", budgetMd());
 }
 
+// --- proposal reviser: one pending proposal + the rant the user pointed at ---
+
+export function projectRevision(
+  proposalRow: { id: string; kind: string; payloadJson: string },
+  addedConversationId: string,
+  instruction: string | undefined,
+  dir: string,
+) {
+  const markers = linkMarkers();
+  const payload = JSON.parse(proposalRow.payloadJson) as { extraction_ids?: string[] };
+  const cited = payload.extraction_ids?.length
+    ? db.select().from(extraction).where(inArray(extraction.id, payload.extraction_ids)).all()
+    : [];
+  write(
+    dir,
+    "proposal.md",
+    `# The pending proposal (kind: ${proposalRow.kind})\n\n` +
+      "```json\n" +
+      JSON.stringify(JSON.parse(proposalRow.payloadJson), null, 2) +
+      "\n```\n\n" +
+      `## Its current citations\n\n${cited.length ? cited.map(x => extractionMd(x, markers)).join("\n") : "_(none)_"}\n`,
+  );
+
+  const added = db.select().from(conversation).where(eq(conversation.id, addedConversationId)).get();
+  const addedExtractions = db
+    .select()
+    .from(extraction)
+    .where(eq(extraction.conversationId, addedConversationId))
+    .orderBy(asc(extraction.createdAt))
+    .all()
+    .filter(x => x.confirmedAt);
+  write(
+    dir,
+    "added-rant.md",
+    `# The rant the user says is also relevant: ${added?.title ?? "(untitled)"} (${(added?.sourceUpdatedAt ?? "").slice(0, 10)})\n\n` +
+      (instruction ? `The user's note: "${instruction}"\n\n` : "") +
+      `Its confirmed extractions:\n\n${addedExtractions.map(x => extractionMd(x, markers)).join("\n")}\n`,
+  );
+
+  write(dir, "state.md", stateMd());
+}
+
 // --- current-state renderings (shared by deriver / prompt generator / schedule agent) ---
 
 export function goalsMd(): string {

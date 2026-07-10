@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, type CurrentExperiment, type ExperimentRow, type TaskRow } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { cn } from "@/lib/utils";
+import { DetailModal } from "./DetailModal";
 
 // The experiments queue on the main feed: the current (running) experiment is
 // the highlighted member; the rest wait their turn. New candidates only ever
@@ -25,6 +26,12 @@ export function ExperimentQueue({
   const { data: queue } = useApiData(() => api.experimentQueue(), [tick]);
   const [picking, setPicking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  // Same DetailModal as proposals — schedule objects render once they exist.
+  const { data: openDetail } = useApiData(
+    () => (openId ? api.experiment(openId) : Promise.resolve(null)),
+    [openId, tick],
+  );
 
   const rest = (queue ?? []).filter(e => e.id !== current?.id);
 
@@ -51,7 +58,7 @@ export function ExperimentQueue({
       <CardContent className="flex flex-col gap-4">
         {current ? (
           current.isRunning ? (
-            <RunningExperimentCard experiment={current} onChanged={onChanged} />
+            <RunningExperimentCard experiment={current} onChanged={onChanged} onOpen={() => setOpenId(current.id)} />
           ) : (
             <QueueRow
               experiment={current}
@@ -59,6 +66,7 @@ export function ExperimentQueue({
               picking={picking === current.id}
               onPick={() => pick(current.id)}
               onArchived={onChanged}
+              onOpen={() => setOpenId(current.id)}
               onResume={
                 current.status === "scheduling"
                   ? async () => {
@@ -86,6 +94,7 @@ export function ExperimentQueue({
                 picking={picking === e.id}
                 onPick={() => pick(e.id)}
                 onArchived={onChanged}
+                onOpen={() => setOpenId(e.id)}
               />
             ))}
           </div>
@@ -94,6 +103,27 @@ export function ExperimentQueue({
         {error && <p className="text-sm text-destructive">{error}</p>}
         <ExperimentPromptButton />
       </CardContent>
+
+      {openId && openDetail && (
+        <DetailModal
+          open
+          onClose={() => setOpenId(null)}
+          kindLabel={openDetail.status === "running" ? "running experiment" : `experiment · ${openDetail.status}`}
+          title={openDetail.title}
+          detail={openDetail.hypothesisMd}
+          extractions={openDetail.extractions}
+          schedule={
+            openDetail.status === "running" || openDetail.tasks.length
+              ? {
+                  tasks: openDetail.tasks,
+                  plannedDurationDays: openDetail.plannedDurationDays,
+                  startedAt: openDetail.startedAt,
+                  bandwidth: openDetail.bandwidth,
+                }
+              : undefined
+          }
+        />
+      )}
     </Card>
   );
 }
@@ -105,6 +135,7 @@ function QueueRow({
   onPick,
   onArchived,
   onResume,
+  onOpen,
 }: {
   experiment: ExperimentRow | CurrentExperiment;
   highlighted?: boolean;
@@ -112,6 +143,7 @@ function QueueRow({
   onPick: () => void;
   onArchived: () => void;
   onResume?: () => void;
+  onOpen: () => void;
 }) {
   const scheduling = experiment.status === "scheduling";
   return (
@@ -122,7 +154,9 @@ function QueueRow({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">{experiment.title}</span>
+        <button className="min-w-0 text-left text-sm font-medium hover:underline" onClick={onOpen}>
+          {experiment.title}
+        </button>
         <div className="flex items-center gap-1">
           {scheduling ? (
             <Button size="sm" variant="secondary" onClick={onResume} disabled={!onResume}>
@@ -155,9 +189,11 @@ function QueueRow({
 function RunningExperimentCard({
   experiment,
   onChanged,
+  onOpen,
 }: {
   experiment: CurrentExperiment;
   onChanged: () => void;
+  onOpen: () => void;
 }) {
   const [ending, setEnding] = useState<"succeeded" | "failed" | null>(null);
   const [note, setNote] = useState("");
@@ -172,7 +208,9 @@ function RunningExperimentCard({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-orange-300 bg-orange-50/50 p-4 dark:border-orange-800 dark:bg-orange-950/50">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 className="font-medium">{experiment.title}</h3>
+        <button className="min-w-0 text-left font-medium hover:underline" onClick={onOpen}>
+          {experiment.title}
+        </button>
         <Badge variant="outline">
           day {(experiment.daysRunning ?? 0) + 1}
           {experiment.plannedDurationDays ? ` of ~${experiment.plannedDurationDays}` : ""}

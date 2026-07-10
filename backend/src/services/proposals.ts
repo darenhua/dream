@@ -1,12 +1,12 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { extraction, extractionLink, goal, goalEvidence, proposal } from "../db/schema";
+import { conversation, extraction, extractionLink, goal, goalEvidence, proposal } from "../db/schema";
 import type { DeriverProposalT } from "../domain/schemas";
 import { createEnvironmentItem, patchEnvironmentItem } from "./environment";
 import { emit } from "./events";
 import { createExperience } from "./experiences";
 import { enqueueExperiment } from "./experiments";
-import { createGoal, setGoalStatus } from "./goals";
+import { createGoal } from "./goals";
 import { createHabit, patchHabit } from "./habits";
 
 type ProposalKind = typeof proposal.$inferSelect.kind;
@@ -40,6 +40,36 @@ export function supersedePending(scopeKey: string): number {
   return rows.length;
 }
 
+// Cited extractions joined to their conversations — the modal's rant-source
+// list comes straight from this shape.
+export type CitedExtraction = typeof extraction.$inferSelect & {
+  conversationTitle: string | null;
+  conversationDate: string | null;
+};
+
+function hydrateCitations(
+  rows: (typeof proposal.$inferSelect & { payload: Record<string, unknown> })[],
+) {
+  const citedIds = [...new Set(rows.flatMap(p => (p.payload.extraction_ids as string[] | undefined) ?? []))];
+  const cited = citedIds.length
+    ? db
+        .select({ x: extraction, conversationTitle: conversation.title, conversationDate: conversation.sourceUpdatedAt })
+        .from(extraction)
+        .innerJoin(conversation, eq(extraction.conversationId, conversation.id))
+        .where(inArray(extraction.id, citedIds))
+        .all()
+    : [];
+  const byId = new Map<string, CitedExtraction>(
+    cited.map(r => [r.x.id, { ...r.x, conversationTitle: r.conversationTitle, conversationDate: r.conversationDate }]),
+  );
+  return rows.map(p => ({
+    ...p,
+    citedExtractions: ((p.payload.extraction_ids as string[] | undefined) ?? [])
+      .map(id => byId.get(id))
+      .filter((x): x is CitedExtraction => Boolean(x)),
+  }));
+}
+
 export function listProposals(opts: { status?: string; limit?: number }) {
   const rows = db
     .select()
@@ -51,19 +81,13 @@ export function listProposals(opts: { status?: string; limit?: number }) {
     .limit(opts.limit ?? 100)
     .all()
     .map(p => ({ ...p, payload: JSON.parse(p.payloadJson) as Record<string, unknown> }));
+  return hydrateCitations(rows);
+}
 
-  // The review card renders the user's own curated words as the justification.
-  const citedIds = [...new Set(rows.flatMap(p => (p.payload.extraction_ids as string[] | undefined) ?? []))];
-  const cited = citedIds.length
-    ? db.select().from(extraction).where(inArray(extraction.id, citedIds)).all()
-    : [];
-  const byId = new Map(cited.map(x => [x.id, x]));
-  return rows.map(p => ({
-    ...p,
-    citedExtractions: ((p.payload.extraction_ids as string[] | undefined) ?? [])
-      .map(id => byId.get(id))
-      .filter(Boolean),
-  }));
+export function getProposal(id: string) {
+  const row = db.select().from(proposal).where(eq(proposal.id, id)).get();
+  if (!row) return null;
+  return hydrateCitations([{ ...row, payload: JSON.parse(row.payloadJson) }])[0]!;
 }
 
 // Permanent provenance: the receipts trail from every ratified entity back
@@ -156,16 +180,6 @@ function applyProposal(kind: ProposalKind, payload: any, proposalId: string, not
       break;
     }
 
-    case "goal_status": {
-      const p = payload as Extract<DeriverProposalT, { kind: "goal_status" }>;
-      const result = setGoalStatus(p.goal_id, p.status);
-      if (!result) throw new Error(`goal ${p.goal_id} not found`);
-      if (result.note) notes.push(result.note);
-      writeProvenance(p.extraction_ids, "goal", p.goal_id, proposalId);
-      addGoalEvidence(p.goal_id, p.reason ?? null);
-      break;
-    }
-
     case "habit_add": {
       const p = payload as Extract<DeriverProposalT, { kind: "habit_add" }>;
       // Derive maps the current self: an approved habit_add is a habit the
@@ -195,14 +209,6 @@ function applyProposal(kind: ProposalKind, payload: any, proposalId: string, not
       break;
     }
 
-    case "habit_prune": {
-      const p = payload as Extract<DeriverProposalT, { kind: "habit_prune" }>;
-      const updated = patchHabit(p.habit_id, { status: "lapsed" });
-      if (!updated) throw new Error(`habit ${p.habit_id} not found`);
-      writeProvenance(p.extraction_ids, "habit", p.habit_id, proposalId);
-      break;
-    }
-
     case "environment_add": {
       const p = payload as Extract<DeriverProposalT, { kind: "environment_add" }>;
       const created = createEnvironmentItem({
@@ -223,14 +229,6 @@ function applyProposal(kind: ProposalKind, payload: any, proposalId: string, not
       if (p.note) patch.note = p.note;
       if (p.sub_kind) patch.subKind = p.sub_kind;
       const updated = patchEnvironmentItem(p.environment_item_id, patch);
-      if (!updated) throw new Error(`environment item ${p.environment_item_id} not found`);
-      writeProvenance(p.extraction_ids, "environment_item", p.environment_item_id, proposalId);
-      break;
-    }
-
-    case "environment_prune": {
-      const p = payload as Extract<DeriverProposalT, { kind: "environment_prune" }>;
-      const updated = patchEnvironmentItem(p.environment_item_id, { status: "removed" });
       if (!updated) throw new Error(`environment item ${p.environment_item_id} not found`);
       writeProvenance(p.extraction_ids, "environment_item", p.environment_item_id, proposalId);
       break;

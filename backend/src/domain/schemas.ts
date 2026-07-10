@@ -60,13 +60,6 @@ export const DeriverProposal = z.discriminatedUnion("kind", [
     extraction_ids: extractionIds,
   }),
   z.object({
-    kind: z.literal("goal_status"),
-    goal_id: z.string(),
-    status: z.enum(["active", "backlog", "dormant", "succeeded", "irrelevant"]),
-    reason: z.string(),
-    extraction_ids: extractionIds,
-  }),
-  z.object({
     kind: z.literal("habit_add"),
     title: z.string().describe("a habit the user ALREADY has — mapping the current self, not aspiration"),
     note: z.string().optional(),
@@ -80,14 +73,11 @@ export const DeriverProposal = z.discriminatedUnion("kind", [
     title: z.string().optional(),
     note: z.string().optional(),
     valence: z.enum(["good", "bad"]).optional(),
-    status: z.enum(["established", "lapsed"]).optional(),
+    status: z
+      .enum(["established", "lapsed"])
+      .optional()
+      .describe("the ONE derived status change: the user's own words say they stopped (or resumed) following through"),
     reason: z.string(),
-    extraction_ids: extractionIds,
-  }),
-  z.object({
-    kind: z.literal("habit_prune"),
-    habit_id: z.string(),
-    reason: z.string().describe("contradicted by recent evidence"),
     extraction_ids: extractionIds,
   }),
   z.object({
@@ -104,12 +94,6 @@ export const DeriverProposal = z.discriminatedUnion("kind", [
     title: z.string().optional(),
     note: z.string().optional(),
     sub_kind: z.enum(["physical_setup", "obligation", "social"]).optional(),
-    reason: z.string(),
-    extraction_ids: extractionIds,
-  }),
-  z.object({
-    kind: z.literal("environment_prune"),
-    environment_item_id: z.string(),
     reason: z.string(),
     extraction_ids: extractionIds,
   }),
@@ -134,6 +118,11 @@ export type DeriverProposalT = z.infer<typeof DeriverProposal>;
 
 export const DeriverOutput = z.object({ proposals: z.array(DeriverProposal) });
 export type DeriverOutputT = z.infer<typeof DeriverOutput>;
+
+// Reviser: re-grounds ONE pending proposal against a rant the user manually
+// pointed at. Same kind, revised content, full citations.
+export const ReviserOutput = z.object({ proposal: DeriverProposal });
+export type ReviserOutputT = z.infer<typeof ReviserOutput>;
 
 // Schedule agent: one turn of the in-dashboard scheduling chat. The agent
 // re-emits the FULL plan each turn; kept flat for structured-output limits.

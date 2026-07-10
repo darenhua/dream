@@ -20,12 +20,18 @@ const PROMPT_DERIVER = `You are interpreting ONE newly-reviewed rant against eve
 Files: trigger.md (the new rant's confirmed extractions — the occasion for this run), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
 
 The new extractions are the occasion; the whole corpus is the evidence. Propose state changes ONLY when justified. Convergence rules:
-- STRONGLY prefer goal_update / synthesis_update / habit_update / linking evidence into an existing entity over creating a new one. Create only what is genuinely new.
+- You only ADD and UPDATE. You never remove anything and never change a goal's status — retiring, succeeding, or removing items is the human's manual action. If evidence contradicts an existing item, say so inside an update's reason/note text.
+- The ONE status you may propose: habit_update with status "lapsed" when the user's own words say they've stopped following through on an existing habit (or back to "established" if their words say it recovered).
+- STRONGLY prefer goal_update / synthesis_update / habit_update over creating a new entity. Create only what is genuinely new.
 - habit_add is ONLY for habits the user ALREADY has (mapping the current self). Habits the user WANTS are not habits yet — they surface inside experiment_propose, or not at all.
 - experiment_propose captures concrete actionable changes the user is considering (usually from experiment_idea extractions): title, hypothesis_md explaining why this change aimed at these goal_ids would work, grounded in the evidence.
 - Every proposal MUST cite extraction_ids that justify it — from the new rant, old rants, or both (cross-rant citation is expected and good).
 - If nothing is justified, return {"proposals":[]} — silence is a valid, common answer.
 Respect budget.md: at most the stated max proposals, importance-ordered.`;
+
+const PROMPT_PROPOSAL_REVISER = `The user is reviewing one pending proposal (proposal.md) and has manually pointed at another rant (added-rant.md) saying it is also relevant — possibly with a note explaining why.
+
+Revise this ONE proposal: same kind, same target entity (if it updates one), but incorporate what the added rant's extractions actually say — richer synthesis, corrected framing, whatever the fuller evidence supports. Keep everything that was right. Cite extraction_ids for EVERY extraction that now justifies the proposal: the previously-cited ones that still apply plus the newly relevant ones from the added rant. Do not invent extraction ids; only cite ids that appear in the context files.`;
 
 const PROMPT_SCHEDULE_AGENT = `You are the scheduling half of the user's experiment loop. A queued experiment candidate has been picked; your job is to converge, over a short conversation, on ONE concrete executable plan.
 
@@ -75,6 +81,7 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.preamble": PREAMBLE,
   "PROMPT.distiller": PROMPT_DISTILLER,
   "PROMPT.deriver": PROMPT_DERIVER,
+  "PROMPT.proposal_reviser": PROMPT_PROPOSAL_REVISER,
   "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
   "PROMPT.prompt_generator": PROMPT_GENERATOR,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,

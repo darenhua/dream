@@ -53,7 +53,13 @@ const client: Anthropic | AnthropicBedrock = env.USE_BEDROCK
       maxRetries: 2,
     });
 
-type AgentName = "distiller" | "deriver" | "schedule_agent" | "prompt_generator" | "daily_writeup";
+type AgentName =
+  | "distiller"
+  | "deriver"
+  | "proposal_reviser"
+  | "schedule_agent"
+  | "prompt_generator"
+  | "daily_writeup";
 
 // Agents get read-only file context only (§8.5): the projected workspace is
 // inlined into the prompt; the files stay on disk as the audit trail (A4).

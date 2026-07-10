@@ -15,13 +15,17 @@ import {
   habit,
 } from "../src/db/schema";
 import { seedConfig, setConfig } from "../src/services/config";
+import { patchEnvironmentItem } from "../src/services/environment";
+import { setGoalStatus } from "../src/services/goals";
 import {
   approveProposal,
   createProposal,
   denyProposal,
+  getProposal,
   listProposals,
   supersedePending,
 } from "../src/services/proposals";
+import { applyRevision, revisionGuard } from "../src/services/revise";
 
 function makeConversation(title = "a rant") {
   return db
@@ -143,29 +147,12 @@ describe("apply-switch per kind, with provenance", () => {
     expect(db.select().from(goal).where(eq(goal.id, g.id)).get()!.synthesisMd).toBe("new synthesis");
   });
 
-  test("goal_status → terminal states succeed; activation respects the cap", () => {
+  test("goal status changes are NOT derivable — manual CRUD only", () => {
+    // The kind no longer exists in the deriver vocabulary; the manual path
+    // (PATCH /goals/:id → setGoalStatus) is the only door.
     const g = makeGoal();
-    const p = createProposal(
-      "goal_status",
-      { kind: "goal_status", goal_id: g.id, status: "succeeded", reason: "habit truly built", extraction_ids: [x1.id] },
-      `conversation:${convo.id}`,
-      null,
-    );
-    expect(approveProposal(p.id).ok).toBe(true);
-    expect(db.select().from(goal).where(eq(goal.id, g.id)).get()!.status).toBe("succeeded");
-
-    setConfig("MAX_ACTIVE_GOALS", 1);
-    makeGoal("hog", "active");
-    const backlogGoal = makeGoal("wants in", "backlog");
-    const p2 = createProposal(
-      "goal_status",
-      { kind: "goal_status", goal_id: backlogGoal.id, status: "active", reason: "r", extraction_ids: [x1.id] },
-      `conversation:${convo.id}`,
-      null,
-    );
-    const r2 = approveProposal(p2.id);
-    expect(r2.ok).toBe(true);
-    expect(r2.notes.join(" ")).toContain("backlog");
+    const result = setGoalStatus(g.id, "succeeded");
+    expect(result!.goal.status).toBe("succeeded");
   });
 
   test("habit_add → established habit (mapping the current self) + goal ideal-set links", () => {
@@ -192,24 +179,31 @@ describe("apply-switch per kind, with provenance", () => {
     ).toBeTruthy();
   });
 
-  test("habit_update + habit_prune (statuses only, nothing deleted)", () => {
+  test("habit_update carries the ONE derived status change (lapsed) — rows survive", () => {
     const h = db
       .insert(habit)
-      .values({ title: "doomscrolling", valence: "bad", status: "established", origin: "manual" })
+      .values({ title: "evening walks", valence: "good", status: "established", origin: "manual" })
       .returning()
       .get();
     const p = createProposal(
-      "habit_prune",
-      { kind: "habit_prune", habit_id: h.id, reason: "contradicted", extraction_ids: [x1.id] },
+      "habit_update",
+      {
+        kind: "habit_update",
+        habit_id: h.id,
+        status: "lapsed",
+        reason: "you said you haven't walked in three weeks",
+        extraction_ids: [x1.id],
+      },
       `conversation:${convo.id}`,
       null,
     );
     expect(approveProposal(p.id).ok).toBe(true);
     const after = db.select().from(habit).where(eq(habit.id, h.id)).get()!;
-    expect(after.status).toBe("lapsed"); // row survives
+    expect(after.status).toBe("lapsed"); // status only; the row survives
+    expect(linksFor("habit", h.id)).toHaveLength(1);
   });
 
-  test("environment_add (obligation) + environment_prune", () => {
+  test("environment_add (obligation); removal is manual CRUD, not derivable", () => {
     const p = createProposal(
       "environment_add",
       {
@@ -226,14 +220,8 @@ describe("apply-switch per kind, with provenance", () => {
     expect(e.subKind).toBe("obligation");
     expect(linksFor("environment_item", e.id)).toHaveLength(1);
 
-    const p2 = createProposal(
-      "environment_prune",
-      { kind: "environment_prune", environment_item_id: e.id, reason: "quit the class", extraction_ids: [x1.id] },
-      `conversation:${convo.id}`,
-      null,
-    );
-    expect(approveProposal(p2.id).ok).toBe(true);
-    expect(db.select().from(environmentItem).where(eq(environmentItem.id, e.id)).get()!.status).toBe("removed");
+    // manual removal path stays available
+    expect(patchEnvironmentItem(e.id, { status: "removed" })!.status).toBe("removed");
   });
 
   test("experience_add is append-only evidence of a life", () => {
@@ -325,11 +313,22 @@ describe("lifecycle", () => {
     expect(pending[0]!.scopeKey).toBe(`conversation:${otherConvo.id}`);
   });
 
+  test("citedExtractions join their conversations (the modal's rant-source list)", () => {
+    const p = createProposal(
+      "goal_create",
+      { kind: "goal_create", title: "t", identity_clause: "i", synthesis_md: "s", extraction_ids: [x1.id] },
+      `conversation:${convo.id}`,
+      null,
+    );
+    const hydrated = getProposal(p.id)!;
+    expect(hydrated.citedExtractions[0]!.conversationTitle).toBe("a rant");
+  });
+
   test("deny stores note as goal evidence and cannot re-resolve", () => {
     const g = makeGoal();
     const p = createProposal(
-      "goal_status",
-      { kind: "goal_status", goal_id: g.id, status: "irrelevant", reason: "r", extraction_ids: [x1.id] },
+      "goal_update",
+      { kind: "goal_update", goal_id: g.id, title: "new framing", reason: "r", extraction_ids: [x1.id] },
       `conversation:${convo.id}`,
       null,
     );
@@ -338,5 +337,71 @@ describe("lifecycle", () => {
     expect(evidence.some(e => e.note?.startsWith("denied:"))).toBe(true);
     expect(denyProposal(p.id).ok).toBe(false);
     expect(approveProposal(p.id).ok).toBe(false);
+  });
+});
+
+describe("proposal revision (agent-assisted re-grounding)", () => {
+  function pendingProposal() {
+    return createProposal(
+      "goal_create",
+      { kind: "goal_create", title: "own my mornings", identity_clause: "i", synthesis_md: "s", extraction_ids: [x1.id] },
+      `conversation:${convo.id}`,
+      null,
+    );
+  }
+
+  test("guard: pending only, and the added rant must have confirmed extractions", () => {
+    const p = pendingProposal();
+    const unreviewed = makeConversation("not read back yet");
+    makeExtraction(unreviewed.id, "goal_talk", false); // unconfirmed
+    const denied = revisionGuard(p.id, unreviewed.id);
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.error).toContain("read-back");
+
+    denyProposal(p.id);
+    const otherConvo = makeConversation("reviewed rant");
+    makeExtraction(otherConvo.id);
+    expect(revisionGuard(p.id, otherConvo.id).ok).toBe(false); // no longer pending
+  });
+
+  test("applyRevision: same kind enforced, citations validated, payload updated in place", () => {
+    const p = pendingProposal();
+    const otherConvo = makeConversation("reviewed rant");
+    const x2 = makeExtraction(otherConvo.id);
+
+    // kind mismatch rejected
+    const wrongKind = applyRevision(p, {
+      proposal: { kind: "habit_add", title: "x", extraction_ids: [x2.id] } as never,
+    });
+    expect(wrongKind.ok).toBe(false);
+
+    // unconfirmed citation rejected
+    const draft = makeExtraction(otherConvo.id, "goal_talk", false);
+    const badCite = applyRevision(p, {
+      proposal: {
+        kind: "goal_create",
+        title: "t",
+        identity_clause: "i",
+        synthesis_md: "s",
+        extraction_ids: [draft.id],
+      },
+    });
+    expect(badCite.ok).toBe(false);
+
+    // good revision lands on the same row, still pending
+    const good = applyRevision(p, {
+      proposal: {
+        kind: "goal_create",
+        title: "own my mornings (and my evenings feed them)",
+        identity_clause: "i2",
+        synthesis_md: "richer synthesis drawing on both rants",
+        extraction_ids: [x1.id, x2.id],
+      },
+    });
+    expect(good.ok).toBe(true);
+    const after = getProposal(p.id)!;
+    expect(after.status).toBe("pending");
+    expect(after.payload.title).toContain("evenings");
+    expect(after.citedExtractions).toHaveLength(2);
   });
 });
