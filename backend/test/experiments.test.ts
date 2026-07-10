@@ -15,6 +15,7 @@ import {
   pickExperiment,
   taskCopyPrompt,
 } from "../src/services/experiments";
+import { goalDetail, habitDetail } from "../src/services/entityDetail";
 import { attemptCounts } from "../src/services/goals";
 import type { SchedulePlanT } from "../src/domain/schemas";
 
@@ -157,6 +158,26 @@ describe("experiment FSM", () => {
     expect(currentExperiment()!.id).toBe(a.id);
     expect(currentExperiment()!.isRunning).toBe(true);
     expect(listQueue().map(e => e.id)).toEqual([b.id]);
+  });
+
+  test("entity detail: goal shows attempt archaeology; habit shows lineage", () => {
+    const g = makeGoal();
+    const exp = queued("t", [g.id]);
+    pickExperiment(exp.id);
+    commitPlan(exp.id, PLAN);
+    endExperiment(exp.id, "failed", "charger crept back — kitchen next time");
+
+    const gd = goalDetail(g.id)!;
+    expect(gd.attemptCount).toBe(1);
+    expect(gd.experiments).toHaveLength(1);
+    expect(gd.experiments[0]!.status).toBe("failed");
+    expect(gd.experiments[0]!.outcomeMd).toContain("kitchen");
+
+    const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
+    const hd = habitDetail(h.id)!;
+    expect(hd.bornInExperiment!.id).toBe(exp.id);
+    expect(hd.bornInExperiment!.outcomeMd).toContain("kitchen");
+    expect(hd.status).toBe("lapsed");
   });
 
   test("task copy-prompt renders experiment context", () => {

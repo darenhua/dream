@@ -1,17 +1,8 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../../db";
-import {
-  conversation,
-  environmentItem,
-  extraction,
-  extractionLink,
-  goal,
-  goalEnvironment,
-  goalEvidence,
-  goalHabit,
-  habit,
-} from "../../db/schema";
+import { environmentItem, goalEnvironment, goalHabit, habit } from "../../db/schema";
+import { goalDetail } from "../../services/entityDetail";
 import { attemptCounts, createGoal, listGoals, reorderGoals, setGoalStatus } from "../../services/goals";
 
 export const goalRoutes = new Hono();
@@ -44,33 +35,11 @@ goalRoutes.get("/", c => {
   );
 });
 
+// Everything the data model knows about one goal — the mirror + its relations.
 goalRoutes.get("/:id", c => {
-  const row = db.select().from(goal).where(eq(goal.id, c.req.param("id"))).get();
-  if (!row) return c.json({ error: "goal not found" }, 404);
-  const evidence = db
-    .select({
-      id: goalEvidence.id,
-      conversationId: goalEvidence.conversationId,
-      note: goalEvidence.note,
-      createdAt: goalEvidence.createdAt,
-      conversationTitle: conversation.title,
-    })
-    .from(goalEvidence)
-    .leftJoin(conversation, eq(goalEvidence.conversationId, conversation.id))
-    .where(eq(goalEvidence.goalId, row.id))
-    .orderBy(desc(goalEvidence.createdAt))
-    .all();
-  // The provenance trail: every extraction that ever fed this goal.
-  const linkedIds = db
-    .select({ extractionId: extractionLink.extractionId })
-    .from(extractionLink)
-    .where(and(eq(extractionLink.entityType, "goal"), eq(extractionLink.entityId, row.id)))
-    .all()
-    .map(r => r.extractionId);
-  const extractions = linkedIds.length
-    ? db.select().from(extraction).where(inArray(extraction.id, linkedIds)).all()
-    : [];
-  return c.json({ ...row, attemptCount: attemptCounts().get(row.id) ?? 0, evidence, extractions });
+  const detail = goalDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "goal not found" }, 404);
+  return c.json(detail);
 });
 
 // Manual create — origin: manual.

@@ -2,7 +2,6 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   chatSession,
-  conversation,
   experiment,
   experimentGoal,
   experimentTask,
@@ -12,6 +11,7 @@ import {
 } from "../db/schema";
 import type { SchedulePlanT } from "../domain/schemas";
 import { getConfig } from "./config";
+import { experimentRelations, extractionsFor } from "./entityDetail";
 import { emit } from "./events";
 import { createExperience } from "./experiences";
 import { createHabit, graduateExperimentHabits, lapseExperimentHabits } from "./habits";
@@ -38,6 +38,7 @@ export function enqueueExperiment(fields: {
   hypothesisMd: string;
   goalIds: string[];
   proposalId: string;
+  proposedChanges?: unknown[];
 }): ExperimentRow {
   const row = db
     .insert(experiment)
@@ -46,6 +47,7 @@ export function enqueueExperiment(fields: {
       hypothesisMd: fields.hypothesisMd,
       status: "queued",
       proposalId: fields.proposalId,
+      proposedChangesJson: fields.proposedChanges ? JSON.stringify(fields.proposedChanges) : null,
       queuedAt: new Date().toISOString(),
     })
     .returning()
@@ -95,24 +97,15 @@ export function experimentHistory() {
 export function getExperiment(id: string) {
   const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
   if (!row) return null;
-  return { ...row, tasks: listTasks(id), goalIds: goalIdsFor(id), extractions: linkedExtractions(id) };
-}
-
-// The experiment's provenance, conversation-joined — same shape the proposal
-// modal consumes, so one DetailModal serves both.
-function linkedExtractions(experimentId: string) {
-  return db
-    .select({
-      x: extraction,
-      conversationTitle: conversation.title,
-      conversationDate: conversation.sourceUpdatedAt,
-    })
-    .from(extractionLink)
-    .innerJoin(extraction, eq(extractionLink.extractionId, extraction.id))
-    .innerJoin(conversation, eq(extraction.conversationId, conversation.id))
-    .where(and(eq(extractionLink.entityType, "experiment"), eq(extractionLink.entityId, experimentId)))
-    .all()
-    .map(r => ({ ...r.x, conversationTitle: r.conversationTitle, conversationDate: r.conversationDate }));
+  const relations = experimentRelations(id);
+  return {
+    ...row,
+    proposedChanges: row.proposedChangesJson ? (JSON.parse(row.proposedChangesJson) as unknown[]) : null,
+    tasks: listTasks(id),
+    goalIds: goalIdsFor(id),
+    extractions: extractionsFor("experiment", id),
+    ...relations,
+  };
 }
 
 function goalIdsFor(experimentId: string): string[] {

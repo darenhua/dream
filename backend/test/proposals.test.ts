@@ -247,6 +247,16 @@ describe("apply-switch per kind, with provenance", () => {
         title: "phone out of the bedroom",
         hypothesis_md: "removing the phone removes the morning scroll",
         goal_ids: [g.id],
+        changes: [
+          {
+            kind: "environment_change",
+            title: "charger lives in the kitchen",
+            detail: "move the charger tonight; phone docks there at 22:00",
+            easier: "start weeknights only",
+            why: "you said the scroll can't happen if the phone isn't there",
+            extraction_ids: [x1.id],
+          },
+        ],
         extraction_ids: [x1.id],
       },
       `conversation:${convo.id}`,
@@ -257,6 +267,10 @@ describe("apply-switch per kind, with provenance", () => {
     expect(exp.status).toBe("queued");
     expect(exp.queuedAt).toBeTruthy();
     expect(exp.proposalId).toBe(p.id);
+    // the derived checklist persists on the queued candidate
+    const changes = JSON.parse(exp.proposedChangesJson!) as { title: string; easier: string }[];
+    expect(changes[0]!.title).toBe("charger lives in the kitchen");
+    expect(changes[0]!.easier).toBeTruthy();
     expect(
       db
         .select()

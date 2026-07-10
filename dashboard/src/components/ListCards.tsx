@@ -13,20 +13,90 @@ import {
 import { api, type EnvironmentRow, type ExperienceRow, type HabitRow } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { cn } from "@/lib/utils";
+import { DetailModal } from "./DetailModal";
+
+type OpenEntity = { type: "habit" | "environment" | "experience"; id: string } | null;
 
 // The self-map cards: habits (established + building), environment, and the
-// append-only experiences log.
+// append-only experiences log. Every item clicks into the shared detail modal.
 export function ListCards({ tick, onChanged }: { tick: number; onChanged: () => void }) {
   const { data: habits } = useApiData(() => api.habits(), [tick]);
   const { data: environment } = useApiData(() => api.environment(), [tick]);
   const { data: experiences } = useApiData(() => api.experiences(), [tick]);
+  const [open, setOpen] = useState<OpenEntity>(null);
 
   return (
     <>
-      <HabitsCard habits={habits ?? []} onChanged={onChanged} />
-      <EnvironmentCard items={environment ?? []} onChanged={onChanged} />
-      <ExperiencesCard experiences={experiences ?? []} onChanged={onChanged} />
+      <HabitsCard habits={habits ?? []} onChanged={onChanged} onOpen={id => setOpen({ type: "habit", id })} />
+      <EnvironmentCard
+        items={environment ?? []}
+        onChanged={onChanged}
+        onOpen={id => setOpen({ type: "environment", id })}
+      />
+      <ExperiencesCard
+        experiences={experiences ?? []}
+        onChanged={onChanged}
+        onOpen={id => setOpen({ type: "experience", id })}
+      />
+      {open && <EntityModalHost entity={open} tick={tick} onClose={() => setOpen(null)} />}
     </>
+  );
+}
+
+// Fetches the right detail endpoint and maps it onto the shared modal.
+function EntityModalHost({ entity, tick, onClose }: { entity: NonNullable<OpenEntity>; tick: number; onClose: () => void }) {
+  const { data } = useApiData(() => {
+    if (entity.type === "habit") return api.habit(entity.id);
+    if (entity.type === "environment") return api.environmentItem(entity.id);
+    return api.experience(entity.id);
+  }, [entity.type, entity.id, tick]);
+  if (!data) return null;
+
+  if (entity.type === "habit") {
+    const h = data as Awaited<ReturnType<typeof api.habit>>;
+    return (
+      <DetailModal
+        open
+        onClose={onClose}
+        kindLabel={`habit · ${h.status}${h.valence === "bad" ? " · bad" : ""}`}
+        title={h.title}
+        detail={h.note}
+        relations={{
+          goals: h.goals,
+          experiments: h.bornInExperiment ? [h.bornInExperiment] : undefined,
+        }}
+        calendar={h.calendarEvents}
+        extractions={h.extractions}
+      />
+    );
+  }
+  if (entity.type === "environment") {
+    const e = data as Awaited<ReturnType<typeof api.environmentItem>>;
+    return (
+      <DetailModal
+        open
+        onClose={onClose}
+        kindLabel={`environment · ${e.subKind} · ${e.status}`}
+        title={e.title}
+        detail={e.note}
+        relations={{ goals: e.goals }}
+        calendar={e.calendarEvents}
+        extractions={e.extractions}
+      />
+    );
+  }
+  const x = data as Awaited<ReturnType<typeof api.experience>>;
+  return (
+    <DetailModal
+      open
+      onClose={onClose}
+      kindLabel={`experience · ${x.state}${x.hadAt ? ` · ${x.hadAt.slice(0, 10)}` : ""}`}
+      title={x.title}
+      detail={x.note}
+      relations={{ experiments: x.fromExperiment ? [x.fromExperiment] : undefined }}
+      calendar={x.calendarEvents}
+      extractions={x.extractions}
+    />
   );
 }
 
@@ -34,7 +104,15 @@ function pill(extra?: string) {
   return cn("flex items-center justify-between rounded-full bg-muted px-3 py-1.5 text-sm", extra);
 }
 
-function HabitsCard({ habits, onChanged }: { habits: HabitRow[]; onChanged: () => void }) {
+function HabitsCard({
+  habits,
+  onChanged,
+  onOpen,
+}: {
+  habits: HabitRow[];
+  onChanged: () => void;
+  onOpen: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const current = habits.filter(h => h.status === "established" || h.status === "building");
   const lapsed = habits.filter(h => h.status === "lapsed");
@@ -51,20 +129,24 @@ function HabitsCard({ habits, onChanged }: { habits: HabitRow[]; onChanged: () =
         </CardHeader>
         <CardContent className="flex flex-1 flex-col gap-1.5 px-4">
           {current.map(h => (
-            <div
+            <button
               key={h.id}
-              className={pill(
-                h.status === "building"
-                  ? "bg-orange-100 dark:bg-orange-950" // being built by the running experiment
-                  : h.valence === "bad"
-                    ? "bg-red-50 dark:bg-red-950"
-                    : "bg-emerald-100 dark:bg-emerald-950",
+              className={cn(
+                pill(
+                  h.status === "building"
+                    ? "bg-orange-100 dark:bg-orange-950" // being built by the running experiment
+                    : h.valence === "bad"
+                      ? "bg-red-50 dark:bg-red-950"
+                      : "bg-emerald-100 dark:bg-emerald-950",
+                ),
+                "w-full cursor-pointer text-left hover:opacity-80",
               )}
               title={h.note ?? undefined}
+              onClick={() => onOpen(h.id)}
             >
               <span className="min-w-0 truncate">{h.title}</span>
               {h.status === "building" && <span className="ml-2 text-xs opacity-70">building</span>}
-            </div>
+            </button>
           ))}
           {current.length === 0 && (
             <p className="rounded-lg border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
@@ -118,7 +200,15 @@ function HabitsCard({ habits, onChanged }: { habits: HabitRow[]; onChanged: () =
   );
 }
 
-function EnvironmentCard({ items, onChanged }: { items: EnvironmentRow[]; onChanged: () => void }) {
+function EnvironmentCard({
+  items,
+  onChanged,
+  onOpen,
+}: {
+  items: EnvironmentRow[];
+  onChanged: () => void;
+  onOpen: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const active = items.filter(e => e.status === "active");
   const removed = items.filter(e => e.status === "removed");
@@ -135,12 +225,17 @@ function EnvironmentCard({ items, onChanged }: { items: EnvironmentRow[]; onChan
         </CardHeader>
         <CardContent className="flex flex-1 flex-col gap-1.5 px-4">
           {active.map(e => (
-            <div key={e.id} className={pill()} title={e.note ?? undefined}>
+            <button
+              key={e.id}
+              className={cn(pill(), "w-full cursor-pointer text-left hover:opacity-80")}
+              title={e.note ?? undefined}
+              onClick={() => onOpen(e.id)}
+            >
               <span className="min-w-0 truncate">{e.title}</span>
               <span className="ml-2 text-xs opacity-60">
                 {e.subKind === "obligation" ? "must" : e.subKind === "social" ? "people" : "setup"}
               </span>
-            </div>
+            </button>
           ))}
           {active.length === 0 && (
             <p className="rounded-lg border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
@@ -196,9 +291,11 @@ function EnvironmentCard({ items, onChanged }: { items: EnvironmentRow[]; onChan
 function ExperiencesCard({
   experiences,
   onChanged,
+  onOpen,
 }: {
   experiences: ExperienceRow[];
   onChanged: () => void;
+  onOpen: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const planned = experiences.filter(e => e.state === "planned");
@@ -254,13 +351,13 @@ function ExperiencesCard({
           <section className="flex flex-col gap-2">
             <h3 className="text-xs font-medium uppercase text-muted-foreground">lived</h3>
             {had.map(e => (
-              <div key={e.id} className="rounded-lg border p-2">
+              <button key={e.id} className="rounded-lg border p-2 text-left hover:bg-muted/50" onClick={() => onOpen(e.id)}>
                 <p className="text-sm">{e.title}</p>
                 <p className="text-xs text-muted-foreground">
                   {e.hadAt?.slice(0, 10)}
                   {e.note ? ` — ${e.note}` : ""}
                 </p>
-              </div>
+              </button>
             ))}
             {had.length === 0 && <p className="text-sm text-muted-foreground">none logged yet.</p>}
           </section>

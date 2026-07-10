@@ -111,6 +111,13 @@ export function ExperimentQueue({
           kindLabel={openDetail.status === "running" ? "running experiment" : `experiment · ${openDetail.status}`}
           title={openDetail.title}
           detail={openDetail.hypothesisMd}
+          checklist={openDetail.proposedChanges}
+          relations={{
+            goals: openDetail.goals,
+            habits: openDetail.habitsBorn.map(h => ({ id: h.id, title: h.title, status: h.status })),
+            experiences: openDetail.experiences.map(x => ({ id: x.id, title: x.title, status: x.state })),
+          }}
+          calendar={openDetail.calendarEvents}
           extractions={openDetail.extractions}
           schedule={
             openDetail.status === "running" || openDetail.tasks.length

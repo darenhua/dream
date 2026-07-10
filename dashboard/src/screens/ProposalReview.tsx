@@ -99,7 +99,14 @@ export function ProposalReview({ onChanged, onBack }: { onChanged: () => void; o
           onClose={() => setOpenId(null)}
           kindLabel={PROPOSAL_KIND_LABELS[openProposal.kind] ?? openProposal.kind}
           title={summarize(openProposal).title}
-          detail={summarize(openProposal).detail}
+          // The modal shows the whole mirror: full synthesis for goals,
+          // hypothesis for experiments — never the row's one-liner.
+          detail={
+            openProposal.payload.synthesis_md ??
+            openProposal.payload.hypothesis_md ??
+            summarize(openProposal).detail
+          }
+          checklist={openProposal.kind === "experiment_propose" ? openProposal.payload.changes : undefined}
           extractions={openProposal.citedExtractions}
           revision={{ proposalId: openProposal.id, onRevised: bump }}
         />

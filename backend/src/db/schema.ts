@@ -223,6 +223,7 @@ export const experiment = sqliteTable("experiment", {
   proposalId: text("proposal_id").references(() => proposal.id),
   bandwidth: text("bandwidth"), // free text captured during the scheduling chat
   plannedDurationDays: integer("planned_duration_days"), // stored, never enforced
+  proposedChangesJson: text("proposed_changes_json"), // the derived checklist (from experiment_propose)
   planJson: text("plan_json"), // the committed SchedulePlan artifact
   queuedAt: text("queued_at"),
   startedAt: text("started_at"),

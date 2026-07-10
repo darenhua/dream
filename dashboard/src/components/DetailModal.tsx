@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Loader2, Plus, Quote, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,14 +12,24 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { api, type CitedExtraction, type TaskRow } from "@/lib/api";
+import {
+  api,
+  type CalendarEventRow,
+  type CitedExtraction,
+  type EntityRef,
+  type EvidenceNote,
+  type ExperimentRef,
+  type ProposedChange,
+  type TaskRow,
+} from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { cn } from "@/lib/utils";
 import { EXTRACTION_KIND_LABELS } from "../data";
 
 // One modal for proposals AND entities: it takes props and renders whichever
-// objects exist — extractions always; schedule objects once approved/committed;
-// the revision surface only for pending proposals.
+// objects exist — the rant explorer always; the checklist, relations, schedule,
+// and evidence sections whenever the data model has them; the revision surface
+// only for pending proposals.
 
 export interface ScheduleInfo {
   tasks?: TaskRow[];
@@ -28,12 +38,25 @@ export interface ScheduleInfo {
   bandwidth?: string | null;
 }
 
+export interface Relations {
+  goals?: EntityRef[];
+  experiments?: ExperimentRef[]; // attempt archaeology: status + outcome notes
+  habits?: EntityRef[];
+  environment?: EntityRef[];
+  experiences?: EntityRef[];
+}
+
 export interface DetailModalProps {
   open: boolean;
   onClose: () => void;
   kindLabel: string;
   title: string;
-  detail?: string | null;
+  detail?: string | null; // the mirror — rendered whole, never truncated
+  checklist?: ProposedChange[] | null;
+  relations?: Relations;
+  evidence?: EvidenceNote[];
+  calendar?: CalendarEventRow[];
+  pendingProposals?: { id: string; kind: string; title: string }[];
   extractions: CitedExtraction[];
   schedule?: ScheduleInfo;
   revision?: { proposalId: string; onRevised: () => void };
@@ -52,6 +75,11 @@ export function DetailModal({
   kindLabel,
   title,
   detail,
+  checklist,
+  relations,
+  evidence,
+  calendar,
+  pendingProposals,
   extractions,
   schedule,
   revision,
@@ -85,11 +113,29 @@ export function DetailModal({
             <Badge variant="outline">{kindLabel}</Badge>
           </div>
           <DialogTitle className="pr-6 text-left">{title}</DialogTitle>
-          {detail && <DialogDescription className="text-left">{detail}</DialogDescription>}
+          {detail && (
+            <DialogDescription className="whitespace-pre-wrap text-left text-sm text-foreground/80">
+              {detail}
+            </DialogDescription>
+          )}
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+          {checklist && checklist.length > 0 && <ChecklistSection changes={checklist} />}
+          {relations && <RelationsSection relations={relations} />}
           {schedule && <ScheduleSection schedule={schedule} />}
+          {calendar && calendar.length > 0 && <CalendarSection events={calendar} />}
+          {evidence && evidence.length > 0 && <EvidenceSection notes={evidence} />}
+          {pendingProposals && pendingProposals.length > 0 && (
+            <section className="rounded-lg border border-amber-300 p-3 text-sm dark:border-amber-800">
+              <p className="mb-1 text-xs font-medium uppercase text-muted-foreground">awaiting your review</p>
+              {pendingProposals.map(p => (
+                <p key={p.id} className="text-muted-foreground">
+                  {p.kind}: {p.title}
+                </p>
+              ))}
+            </section>
+          )}
 
           {/* extraction explorer: rant-source links on the left, the active
               rant's extractions beside them */}
@@ -152,6 +198,170 @@ export function DetailModal({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// The scoped-out steps: what each change constitutes, the smallest version
+// that counts, and why it matters — the experiment as detailed steps.
+function ChecklistSection({ changes }: { changes: ProposedChange[] }) {
+  const KIND_LABEL: Record<ProposedChange["kind"], string> = {
+    habit_change: "habit change",
+    experience: "experience to gain",
+    environment_change: "environment change",
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <p className="text-xs font-medium uppercase text-muted-foreground">the changes, scoped out</p>
+      {changes.map((c, i) => (
+        <div key={i} className="flex flex-col gap-1.5 rounded-lg border p-3">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">{KIND_LABEL[c.kind]}</Badge>
+            <span className="text-sm font-medium">{c.title}</span>
+          </div>
+          <p className="text-sm">{c.detail}</p>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium">smaller still counts:</span> {c.easier}
+          </p>
+          <p className="text-sm italic text-muted-foreground">
+            <span className="font-medium not-italic">why it matters:</span> {c.why}
+          </p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+const STATUS_CHIP: Record<string, string> = {
+  active: "bg-emerald-100 dark:bg-emerald-950",
+  running: "bg-orange-100 dark:bg-orange-950",
+  building: "bg-orange-100 dark:bg-orange-950",
+  queued: "bg-muted",
+  scheduling: "bg-orange-100 dark:bg-orange-950",
+  established: "bg-emerald-100 dark:bg-emerald-950",
+  succeeded: "bg-emerald-200 dark:bg-emerald-900",
+  failed: "bg-muted",
+  lapsed: "bg-muted",
+  backlog: "bg-muted",
+  dormant: "bg-muted",
+};
+
+function chip(label: string, status: string, key: string) {
+  return (
+    <span key={key} className={cn("rounded-full px-2.5 py-1 text-xs", STATUS_CHIP[status] ?? "bg-muted")}>
+      {label} <span className="opacity-60">· {status}</span>
+    </span>
+  );
+}
+
+// Every relation the data model holds, rendered only when present.
+function RelationsSection({ relations }: { relations: Relations }) {
+  const rows: { label: string; content: ReactNode }[] = [];
+  if (relations.goals?.length) {
+    rows.push({
+      label: "the goals this serves",
+      content: <div className="flex flex-wrap gap-1.5">{relations.goals.map(g => chip(g.title, g.status, g.id))}</div>,
+    });
+  }
+  if (relations.experiments?.length) {
+    rows.push({
+      label: "attempts on this goal",
+      content: (
+        <div className="flex flex-col gap-1.5">
+          {relations.experiments.map(e => (
+            <div key={e.id} className="rounded-lg border p-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{e.title}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {e.status}
+                  {e.endedAt ? ` · ${e.endedAt.slice(0, 10)}` : e.startedAt ? ` · since ${e.startedAt.slice(0, 10)}` : ""}
+                </span>
+              </div>
+              {e.outcomeMd && <p className="mt-1 text-xs text-muted-foreground">{e.outcomeMd}</p>}
+            </div>
+          ))}
+        </div>
+      ),
+    });
+  }
+  if (relations.habits?.length) {
+    rows.push({
+      label: "habits",
+      content: <div className="flex flex-wrap gap-1.5">{relations.habits.map(h => chip(h.title, h.status, h.id))}</div>,
+    });
+  }
+  if (relations.environment?.length) {
+    rows.push({
+      label: "environment",
+      content: (
+        <div className="flex flex-wrap gap-1.5">{relations.environment.map(e => chip(e.title, e.status, e.id))}</div>
+      ),
+    });
+  }
+  if (relations.experiences?.length) {
+    rows.push({
+      label: "experiences",
+      content: (
+        <div className="flex flex-wrap gap-1.5">{relations.experiences.map(e => chip(e.title, e.status, e.id))}</div>
+      ),
+    });
+  }
+  if (!rows.length) return null;
+  return (
+    <section className="flex flex-col gap-3">
+      {rows.map(r => (
+        <div key={r.label} className="flex flex-col gap-1.5">
+          <p className="text-xs font-medium uppercase text-muted-foreground">{r.label}</p>
+          {r.content}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function describeRrule(rrule: string | null): string {
+  if (!rrule) return "one-time";
+  return rrule
+    .replace("FREQ=", "")
+    .replace("BYDAY=", "")
+    .toLowerCase()
+    .split(";")
+    .join(" ");
+}
+
+// When this shows up in the week: live calendar blocks, needs_reschedule flagged.
+function CalendarSection({ events }: { events: CalendarEventRow[] }) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      <p className="text-xs font-medium uppercase text-muted-foreground">on the calendar</p>
+      {events.map(e => (
+        <div key={e.id} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-sm">
+          <span className="min-w-0 truncate">{e.title}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {describeRrule(e.rrule)} · {e.startAt.slice(11, 16)}
+            {e.status === "needs_reschedule" && (
+              <Badge variant="outline" className="ml-1">
+                waiting for a better day
+              </Badge>
+            )}
+          </span>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+// The dated notes trail: denials, outcomes, volunteered commentary.
+function EvidenceSection({ notes }: { notes: EvidenceNote[] }) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      <p className="text-xs font-medium uppercase text-muted-foreground">evidence notes</p>
+      {notes.map(n => (
+        <p key={n.id} className="text-sm text-muted-foreground">
+          <span className="font-mono text-xs">{n.createdAt.slice(0, 10)}</span> — {n.note}
+          {n.conversationTitle && <span className="text-xs"> ({n.conversationTitle})</span>}
+        </p>
+      ))}
+    </section>
   );
 }
 

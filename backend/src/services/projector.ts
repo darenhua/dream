@@ -364,9 +364,22 @@ export function scheduleContextMd(experimentId: string, freeTimeReport: string):
     ? db.select().from(extraction).where(inArray(extraction.id, linkedRows)).all()
     : [];
 
+  const changes = exp.proposedChangesJson
+    ? (JSON.parse(exp.proposedChangesJson) as { kind: string; title: string; detail: string; easier: string; why: string }[])
+    : [];
+  const checklistMd = changes.length
+    ? changes
+        .map(
+          c =>
+            `### ${c.title} (${c.kind})\n\n- what: ${c.detail}\n- easier: ${c.easier}\n- why: ${c.why}`,
+        )
+        .join("\n\n")
+    : "_(no derived checklist — design from the hypothesis and evidence)_";
+
   return [
     `# Candidate experiment: ${exp.title}`,
     `id: \`${exp.id}\`\n\n${exp.hypothesisMd ?? ""}`,
+    `## The derived checklist (your starting material — schedule THESE changes)\n\n${checklistMd}`,
     `## Target goals\n\n${
       goals.length
         ? goals.map(g => `- ${g.title}${g.identityClause ? ` — ${g.identityClause}` : ""} (id: \`${g.id}\`)`).join("\n")

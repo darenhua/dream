@@ -253,7 +253,12 @@ function applyProposal(kind: ProposalKind, payload: any, proposalId: string, not
         hypothesisMd: p.hypothesis_md,
         goalIds: p.goal_ids,
         proposalId,
+        proposedChanges: p.changes,
       });
+      // Per-change provenance rides along with the experiment's own.
+      for (const change of p.changes) {
+        writeProvenance(change.extraction_ids, "experiment", created.id, proposalId);
+      }
       writeProvenance(p.extraction_ids, "experiment", created.id, proposalId);
       break;
     }

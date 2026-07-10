@@ -173,9 +173,72 @@ export interface CurrentExperiment extends ExperimentRow {
   goalIds: string[];
 }
 
+// The experiment checklist: an experiment IS a set of scoped-out changes.
+export interface ProposedChange {
+  kind: "habit_change" | "experience" | "environment_change";
+  title: string;
+  detail: string;
+  easier: string;
+  why: string;
+  extraction_ids?: string[];
+}
+
+export interface EntityRef {
+  id: string;
+  title: string;
+  status: string;
+}
+
+export interface ExperimentRef extends EntityRef {
+  startedAt: string | null;
+  endedAt: string | null;
+  outcomeMd: string | null;
+}
+
 export interface ExperimentDetail extends ExperimentRow {
+  proposedChanges: ProposedChange[] | null;
   tasks: TaskRow[];
   goalIds: string[];
+  goals: EntityRef[];
+  habitsBorn: HabitRow[];
+  experiences: ExperienceRow[];
+  calendarEvents: CalendarEventRow[];
+  extractions: CitedExtraction[];
+}
+
+export interface EvidenceNote {
+  id: string;
+  note: string | null;
+  createdAt: string;
+  conversationTitle: string | null;
+}
+
+export interface GoalDetail extends Omit<GoalRow, "habits" | "environmentItems"> {
+  experiments: ExperimentRef[];
+  idealHabits: HabitRow[];
+  idealEnvironment: EnvironmentRow[];
+  schedule: CalendarEventRow[];
+  evidence: EvidenceNote[];
+  pendingProposals: { id: string; kind: string; title: string }[];
+  extractions: CitedExtraction[];
+}
+
+export interface HabitDetail extends HabitRow {
+  goals: EntityRef[];
+  bornInExperiment: ExperimentRef | null;
+  calendarEvents: CalendarEventRow[];
+  extractions: CitedExtraction[];
+}
+
+export interface EnvironmentDetail extends EnvironmentRow {
+  goals: EntityRef[];
+  calendarEvents: CalendarEventRow[];
+  extractions: CitedExtraction[];
+}
+
+export interface ExperienceDetail extends ExperienceRow {
+  fromExperiment: (ExperimentRef & { taskTitle: string }) | null;
+  calendarEvents: CalendarEventRow[];
   extractions: CitedExtraction[];
 }
 
@@ -322,6 +385,7 @@ export const api = {
 
   // --- goals ---
   goals: (status?: string) => request<GoalRow[]>(`/goals${status ? `?status=${status}` : ""}`),
+  goal: (id: string) => request<GoalDetail>(`/goals/${id}`),
   patchGoalStatus: (id: string, status: string) =>
     request(`/goals/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   createGoal: (fields: { title: string; identityClause?: string }) =>
@@ -331,6 +395,7 @@ export const api = {
 
   // --- registries ---
   habits: (status?: string) => request<HabitRow[]>(`/habits${status ? `?status=${status}` : ""}`),
+  habit: (id: string) => request<HabitDetail>(`/habits/${id}`),
   patchHabit: (id: string, patch: Partial<Pick<HabitRow, "title" | "note" | "valence" | "status">>) =>
     request<HabitRow>(`/habits/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   createHabit: (fields: { title: string; note?: string; valence?: string; status?: string }) =>
@@ -338,12 +403,14 @@ export const api = {
 
   environment: (status?: string) =>
     request<EnvironmentRow[]>(`/environment${status ? `?status=${status}` : ""}`),
+  environmentItem: (id: string) => request<EnvironmentDetail>(`/environment/${id}`),
   patchEnvironment: (id: string, patch: Partial<Pick<EnvironmentRow, "title" | "note" | "status">>) =>
     request<EnvironmentRow>(`/environment/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   createEnvironment: (fields: { title: string; subKind: string; note?: string }) =>
     request<EnvironmentRow>("/environment", { method: "POST", body: JSON.stringify(fields) }),
 
   experiences: (state?: string) => request<ExperienceRow[]>(`/experiences${state ? `?state=${state}` : ""}`),
+  experience: (id: string) => request<ExperienceDetail>(`/experiences/${id}`),
   createExperience: (fields: { title: string; note?: string; state?: string }) =>
     request<ExperienceRow>("/experiences", { method: "POST", body: JSON.stringify(fields) }),
   experienceHad: (id: string, note?: string) =>

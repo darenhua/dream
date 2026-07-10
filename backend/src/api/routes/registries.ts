@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { environmentDetail, experienceDetail, habitDetail } from "../../services/entityDetail";
 import {
   createEnvironmentItem,
   listEnvironment,
@@ -19,6 +20,12 @@ import { linkEnvironmentToGoal } from "../../services/environment";
 export const habitRoutes = new Hono();
 
 habitRoutes.get("/", c => c.json(listHabits(c.req.query("status") || undefined)));
+
+habitRoutes.get("/:id", c => {
+  const detail = habitDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "habit not found" }, 404);
+  return c.json(detail);
+});
 
 habitRoutes.post("/", async c => {
   const body = await c.req.json().catch(() => ({}));
@@ -67,6 +74,12 @@ environmentRoutes.get("/", c =>
   ),
 );
 
+environmentRoutes.get("/:id", c => {
+  const detail = environmentDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "environment item not found" }, 404);
+  return c.json(detail);
+});
+
 environmentRoutes.post("/", async c => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.title || !body.subKind) return c.json({ error: "title and subKind required" }, 400);
@@ -99,6 +112,12 @@ environmentRoutes.post("/:id/goals/:goalId", c => {
 export const experienceRoutes = new Hono();
 
 experienceRoutes.get("/", c => c.json(listExperiences(c.req.query("state") || undefined)));
+
+experienceRoutes.get("/:id", c => {
+  const detail = experienceDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "experience not found" }, 404);
+  return c.json(detail);
+});
 
 experienceRoutes.post("/", async c => {
   const body = await c.req.json().catch(() => ({}));

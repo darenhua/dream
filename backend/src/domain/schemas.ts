@@ -109,8 +109,23 @@ export const DeriverProposal = z.discriminatedUnion("kind", [
     title: z.string(),
     hypothesis_md: z
       .string()
-      .describe("why this particular change, aimed at these goals, would work — grounded in the extractions"),
+      .describe(
+        "why these particular changes, aimed at these goals, work TOGETHER — and why they matter to this user right now, in their own terms",
+      ),
     goal_ids: z.array(z.string()).min(1),
+    // The scoped-out checklist: an experiment IS a set of concrete changes.
+    changes: z
+      .array(
+        z.object({
+          kind: z.enum(["habit_change", "experience", "environment_change"]),
+          title: z.string(),
+          detail: z.string().describe("what this change concretely constitutes — detailed steps"),
+          easier: z.string().describe("how to make it easier / the smallest version that still counts"),
+          why: z.string().describe("why this change matters for the user, connected to what they said"),
+          extraction_ids: z.array(z.string()).optional().describe("the passages this specific change draws from"),
+        }),
+      )
+      .min(1),
     extraction_ids: extractionIds,
   }),
 ]);

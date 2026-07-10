@@ -13,6 +13,7 @@ import {
 import { api, type GoalRow } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { cn } from "@/lib/utils";
+import { DetailModal } from "./DetailModal";
 
 // Attempt heatmap: light green first try → dark forest after many. Scale caps
 // at 5 — past that, the color has said what it needs to say.
@@ -32,6 +33,11 @@ function heatClass(attempts: number): string {
 export function GoalsCard({ tick, onChanged }: { tick: number; onChanged: () => void }) {
   const { data: goals } = useApiData(() => api.goals(), [tick]);
   const [editing, setEditing] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const { data: detail } = useApiData(
+    () => (openId ? api.goal(openId) : Promise.resolve(null)),
+    [openId, tick],
+  );
   const active = (goals ?? []).filter(g => g.status === "active");
   const pool = (goals ?? []).filter(g => g.status === "backlog" || g.status === "dormant");
   const done = (goals ?? []).filter(g => g.status === "succeeded" || g.status === "irrelevant");
@@ -49,7 +55,7 @@ export function GoalsCard({ tick, onChanged }: { tick: number; onChanged: () => 
         </CardHeader>
         <CardContent className="flex flex-1 flex-col gap-1.5 px-4">
           {active.map(g => (
-            <GoalPill key={g.id} goal={g} />
+            <GoalPill key={g.id} goal={g} onOpen={() => setOpenId(g.id)} />
           ))}
           {active.length === 0 && (
             <p className="rounded-lg border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
@@ -68,34 +74,59 @@ export function GoalsCard({ tick, onChanged }: { tick: number; onChanged: () => 
               that needs a smaller first move.
             </SheetDescription>
           </SheetHeader>
-          <GoalSection title="active" goals={active} onChanged={onChanged} actions={g => [
+          <GoalSection title="active" goals={active} onChanged={onChanged} onOpen={setOpenId} actions={g => [
             { label: "→ backlog", to: "backlog" },
             { label: "succeeded", to: "succeeded" },
             { label: "no longer relevant", to: "irrelevant" },
           ]} />
-          <GoalSection title="the pool" goals={pool} onChanged={onChanged} actions={g => [
+          <GoalSection title="the pool" goals={pool} onChanged={onChanged} onOpen={setOpenId} actions={g => [
             { label: "→ active", to: "active" },
             { label: "no longer relevant", to: "irrelevant" },
           ]} />
-          <GoalSection title="finished (both kinds of success)" goals={done} onChanged={onChanged} actions={() => []} />
+          <GoalSection title="finished (both kinds of success)" goals={done} onChanged={onChanged} onOpen={setOpenId} actions={() => []} />
         </SheetContent>
       </Sheet>
+
+      {openId && detail && (
+        <DetailModal
+          open
+          onClose={() => setOpenId(null)}
+          kindLabel={`goal · ${detail.status} · ${detail.attemptCount} attempt${detail.attemptCount === 1 ? "" : "s"}`}
+          title={detail.identityClause ?? detail.title}
+          detail={detail.synthesisMd}
+          relations={{
+            experiments: detail.experiments,
+            habits: detail.idealHabits.map(h => ({ id: h.id, title: h.title, status: h.status })),
+            environment: detail.idealEnvironment.map(e => ({ id: e.id, title: e.title, status: e.status })),
+          }}
+          calendar={detail.schedule}
+          evidence={detail.evidence.filter(n => n.note)}
+          pendingProposals={detail.pendingProposals}
+          extractions={detail.extractions}
+        />
+      )}
     </>
   );
 }
 
-function GoalPill({ goal }: { goal: GoalRow }) {
+function GoalPill({ goal, onOpen }: { goal: GoalRow; onOpen?: () => void }) {
   return (
-    <div
-      className={cn("flex items-center justify-between rounded-full px-3 py-1.5 text-sm", heatClass(goal.attemptCount))}
+    <button
+      className={cn(
+        "flex w-full items-center justify-between rounded-full px-3 py-1.5 text-left text-sm",
+        heatClass(goal.attemptCount),
+        onOpen && "cursor-pointer hover:opacity-80",
+      )}
       title={
         goal.identityClause ??
         (goal.attemptCount ? `${goal.attemptCount} attempt${goal.attemptCount === 1 ? "" : "s"}` : undefined)
       }
+      onClick={onOpen}
+      disabled={!onOpen}
     >
       <span className="min-w-0 truncate">{goal.title}</span>
       {goal.attemptCount > 0 && <span className="ml-2 text-xs opacity-70">×{goal.attemptCount}</span>}
-    </div>
+    </button>
   );
 }
 
@@ -103,11 +134,13 @@ function GoalSection({
   title,
   goals,
   onChanged,
+  onOpen,
   actions,
 }: {
   title: string;
   goals: GoalRow[];
   onChanged: () => void;
+  onOpen: (id: string) => void;
   actions: (g: GoalRow) => { label: string; to: string }[];
 }) {
   if (!goals.length) return null;
@@ -116,7 +149,7 @@ function GoalSection({
       <h3 className="text-xs font-medium uppercase text-muted-foreground">{title}</h3>
       {goals.map(g => (
         <div key={g.id} className="flex flex-col gap-1 rounded-lg border p-2">
-          <GoalPill goal={g} />
+          <GoalPill goal={g} onOpen={() => onOpen(g.id)} />
           {g.identityClause && <p className="px-1 text-xs italic text-muted-foreground">{g.identityClause}</p>}
           {(g.habits.length > 0 || g.environmentItems.length > 0) && (
             <p className="px-1 text-xs text-muted-foreground">
