@@ -1,40 +1,29 @@
-import { desc, eq } from "drizzle-orm";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db } from "../db";
-import { dailyWriteup, proposal } from "../db/schema";
+import { conversation, dailyWriteup, proposal } from "../db/schema";
 import { runText } from "./agentRunner";
 import { emit } from "./events";
-import {
-  daysSinceLastVisit,
-  newWorkspace,
-  projectGlobal,
-  recentEvidenceTitles,
-} from "./projector";
+import { daysSinceLastVisit, newWorkspace, projectWriteup } from "./projector";
 
 export function todayLocal(): string {
   return new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
 }
 
-// §8.7 — idempotent per date: regenerating replaces the row.
+// Kept but demoted: glance bait, not the trajectory mechanism. Idempotent per
+// date: regenerating replaces the row.
 export async function generateDaily(date: string, trigger: "daily" | "manual") {
   const dir = newWorkspace("daily_writeup");
-  projectGlobal(dir);
-
-  const pendingCount = db
+  const pendingProposals = db
     .select({ id: proposal.id })
     .from(proposal)
     .where(eq(proposal.status, "pending"))
     .all().length;
-  const titles = recentEvidenceTitles();
-  writeFileSync(
-    join(dir, "today.md"),
-    `# Today (${date})\n\n` +
-      `pending_proposal_count: ${pendingCount}\n\n` +
-      `## New evidence since the last writeup\n\n` +
-      (titles.length ? titles.map(t => `- ${t}`).join("\n") : "_(none)_") +
-      "\n",
-  );
+  const awaitingReview = db
+    .select({ id: conversation.id })
+    .from(conversation)
+    .where(and(isNotNull(conversation.distilledAt), isNull(conversation.extractionsReviewedAt)))
+    .all().length; // rants awaiting the read-back gate
+  projectWriteup(dir, { awaitingReview, pendingProposals });
 
   const run = await runText("daily_writeup", dir, { trigger });
   if (run.status !== "ok" || !run.output) {

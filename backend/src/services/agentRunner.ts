@@ -53,7 +53,13 @@ const client: Anthropic | AnthropicBedrock = env.USE_BEDROCK
       maxRetries: 2,
     });
 
-type AgentName = "categorizer" | "deriver" | "daily_writeup";
+type AgentName =
+  | "distiller"
+  | "deriver"
+  | "proposal_reviser"
+  | "schedule_agent"
+  | "prompt_generator"
+  | "daily_writeup";
 
 // Agents get read-only file context only (§8.5): the projected workspace is
 // inlined into the prompt; the files stay on disk as the audit trail (A4).
@@ -92,7 +98,7 @@ function persistRun(fields: typeof agentRun.$inferInsert): string {
   return row.id;
 }
 
-// Structured-output run (categorizer, deriver).
+// Structured-output run (distiller, deriver).
 export async function runStructured<S extends z.ZodType>(
   agentName: AgentName,
   workspacePath: string,
@@ -146,7 +152,64 @@ export async function runStructured<S extends z.ZodType>(
   return { runId, status: status as "invalid_output" | "failed", output: null, error: lastError };
 }
 
-// Plain-text run (daily writeup).
+// Multi-turn structured chat (schedule agent): full history in, one validated
+// turn out. The agent re-emits the complete plan each turn, so no tool loop is
+// needed and the call shape is identical on Bedrock.
+export async function runChatTurn<S extends z.ZodType>(
+  agentName: AgentName,
+  system: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  schema: S,
+  opts: { trigger: "daily" | "manual" },
+): Promise<RunResult<z.infer<S>>> {
+  const preamble = getConfig<string>("PROMPT.preamble");
+  const prompt = getConfig<string>(`PROMPT.${agentName}`);
+  const started = Date.now();
+  let lastError = "";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await client.messages.parse({
+        model: resolveModel(),
+        max_tokens: 8192,
+        system: `${preamble}\n\n${prompt}\n\n${system}`,
+        messages: history,
+        output_config: { format: zodOutputFormat(schema) },
+      });
+      const parsed = response.parsed_output;
+      if (parsed == null) {
+        lastError = `no parsed output (stop_reason: ${response.stop_reason})`;
+        continue;
+      }
+      const runId = persistRun({
+        agentName,
+        trigger: opts.trigger,
+        outputJson: JSON.stringify(parsed),
+        status: "ok",
+        tokenUsage: JSON.stringify({
+          input: response.usage.input_tokens,
+          output: response.usage.output_tokens,
+        }),
+        durationMs: Date.now() - started,
+      });
+      return { runId, status: "ok", output: parsed };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const status = lastError.includes("parsed") || lastError.includes("schema") ? "invalid_output" : "failed";
+  const runId = persistRun({
+    agentName,
+    trigger: opts.trigger,
+    status: status as "invalid_output" | "failed",
+    durationMs: Date.now() - started,
+    error: lastError,
+  });
+  return { runId, status: status as "invalid_output" | "failed", output: null, error: lastError };
+}
+
+// Plain-text run (daily writeup, prompt generator).
 export async function runText(
   agentName: AgentName,
   workspacePath: string,

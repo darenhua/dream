@@ -24,7 +24,7 @@ export function ingestFile(payload: unknown): IngestReport {
   }
 
   const report: IngestReport = { new: 0, updated: 0, unchanged: 0, errors: [] };
-  const slug = getConfig<string>("SLUG_CATEGORIZE");
+  const slug = getConfig<string>("SLUG_MARKER");
 
   for (const raw of payload) {
     const externalId = typeof raw?.uuid === "string" ? raw.uuid : null;
@@ -66,7 +66,8 @@ export function ingestFile(payload: unknown): IngestReport {
 
       if (existing) {
         // Content changed: re-detect slug; a conversation gaining a slug enters the
-        // work queue now. categorize_processed_at is deliberately left untouched (§8.1).
+        // distill queue now. Pipeline timestamps are deliberately left untouched —
+        // reprocessing an already-distilled conversation is an explicit admin action.
         db.update(conversation)
           .set({
             title: parsed.title,

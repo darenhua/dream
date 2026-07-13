@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { Sprout, Check } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { api, type ExperimentHistoryRow, type WriteupRow } from "@/lib/api";
+import { api, type ExperimentRow, type WriteupRow } from "@/lib/api";
 
-// Tier 3: experiment + writeup history, side by side.
+// The trajectory: the append-only queue of ended experiments (+ demoted
+// writeup history).
 export function HistoryPanel({ refreshKey }: { refreshKey: number }) {
-  const [experiments, setExperiments] = useState<ExperimentHistoryRow[]>([]);
+  const [experiments, setExperiments] = useState<ExperimentRow[]>([]);
   const [writeups, setWriteups] = useState<WriteupRow[]>([]);
 
   useEffect(() => {
@@ -25,7 +26,7 @@ export function HistoryPanel({ refreshKey }: { refreshKey: number }) {
             {experiments.map(e => (
               <li key={e.id} className="rounded-lg border px-3 py-2 text-sm">
                 <div className="flex items-center gap-2">
-                  {e.status === "done" ? <Check className="size-4 text-green-600" /> : <Sprout className="size-4 text-muted-foreground" />}
+                  {e.status === "succeeded" ? <Check className="size-4 text-green-600" /> : <Sprout className="size-4 text-muted-foreground" />}
                   <span className="min-w-0 flex-1 truncate font-medium">{e.title}</span>
                   <span className="text-xs text-muted-foreground">
                     {e.status} · {e.endedAt?.slice(0, 10) ?? "?"}

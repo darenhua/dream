@@ -1,8 +1,10 @@
-import { asc, count, eq, max, sql } from "drizzle-orm";
+import { asc, count, eq, inArray, max, sql } from "drizzle-orm";
 import { db } from "../db";
-import { goal } from "../db/schema";
+import { experiment, experimentGoal, goal } from "../db/schema";
 import { getConfig } from "./config";
 import { emit } from "./events";
+
+type GoalStatus = typeof goal.$inferSelect.status;
 
 export function activeGoalCount(): number {
   const row = db.select({ n: count() }).from(goal).where(eq(goal.status, "active")).get();
@@ -18,9 +20,9 @@ function nextSortOrder(): number {
   return (row?.m ?? 0) + 1;
 }
 
-// Amendment 4: MAX_ACTIVE_GOALS gates ALL paths into `active` — overflow lands
-// in backlog and the caller is told.
-function capStatus(requested: string): { status: string; note?: string } {
+// MAX_ACTIVE_GOALS gates ALL paths into `active` — overflow lands in backlog
+// and the caller is told.
+function capStatus(requested: GoalStatus): { status: GoalStatus; note?: string } {
   if (requested !== "active") return { status: requested };
   const cap = getConfig<number>("MAX_ACTIVE_GOALS");
   if (activeGoalCount() >= cap) {
@@ -33,11 +35,10 @@ function capStatus(requested: string): { status: string; note?: string } {
 }
 
 export function createGoal(fields: {
-  categoryId?: string | null;
   title: string;
   identityClause?: string | null;
   synthesisMd?: string | null;
-  status?: "suggested" | "active" | "backlog" | "dormant" | "retired";
+  status?: GoalStatus;
   origin: "derived" | "manual";
 }): { goal: typeof goal.$inferSelect; note?: string } {
   const requested = fields.status ?? "active";
@@ -45,11 +46,10 @@ export function createGoal(fields: {
   const row = db
     .insert(goal)
     .values({
-      categoryId: fields.categoryId ?? null,
       title: fields.title,
       identityClause: fields.identityClause ?? null,
       synthesisMd: fields.synthesisMd ?? null,
-      status: status as typeof goal.$inferInsert.status,
+      status,
       sortOrder: status === "active" ? nextSortOrder() : 0,
       origin: fields.origin,
     })
@@ -59,9 +59,11 @@ export function createGoal(fields: {
   return { goal: row, note };
 }
 
+// Terminal states (succeeded | irrelevant) are one-way for agents; leaving
+// them is a manual admin escape hatch handled at the route layer.
 export function setGoalStatus(
   goalId: string,
-  requested: "suggested" | "active" | "backlog" | "dormant" | "retired",
+  requested: GoalStatus,
 ): { goal: typeof goal.$inferSelect; note?: string } | null {
   const existing = db.select().from(goal).where(eq(goal.id, goalId)).get();
   if (!existing) return null;
@@ -69,7 +71,7 @@ export function setGoalStatus(
   const row = db
     .update(goal)
     .set({
-      status: status as typeof goal.$inferInsert.status,
+      status,
       sortOrder: status === "active" ? nextSortOrder() : existing.sortOrder,
     })
     .where(eq(goal.id, goalId))
@@ -79,7 +81,7 @@ export function setGoalStatus(
   return { goal: row, note };
 }
 
-// Reordering emits an event and asks nothing (§7.4 / G5).
+// Reordering emits an event and asks nothing.
 export function reorderGoals(orderedIds: string[]): boolean {
   const active = db
     .select({ id: goal.id })
@@ -101,11 +103,24 @@ export function listGoals(status?: string) {
   return db
     .select()
     .from(goal)
-    .where(status ? eq(goal.status, status as typeof goal.$inferSelect.status) : undefined)
+    .where(status ? eq(goal.status, status as GoalStatus) : undefined)
     .orderBy(
-      // active first (by sort order), then the rest by recency
-      sql`CASE ${goal.status} WHEN 'active' THEN 0 WHEN 'suggested' THEN 1 WHEN 'backlog' THEN 2 WHEN 'dormant' THEN 3 ELSE 4 END`,
+      // active first (by sort order), then the working pool, terminals last
+      sql`CASE ${goal.status} WHEN 'active' THEN 0 WHEN 'backlog' THEN 1 WHEN 'dormant' THEN 2 WHEN 'succeeded' THEN 3 ELSE 4 END`,
       asc(goal.sortOrder),
     )
     .all();
+}
+
+// The heatmap: how many ended experiments have tackled each goal. Light green
+// first try, dark forest after twenty — every ended experiment counts.
+export function attemptCounts(): Map<string, number> {
+  const rows = db
+    .select({ goalId: experimentGoal.goalId, n: count() })
+    .from(experimentGoal)
+    .innerJoin(experiment, eq(experimentGoal.experimentId, experiment.id))
+    .where(inArray(experiment.status, ["succeeded", "failed"]))
+    .groupBy(experimentGoal.goalId)
+    .all();
+  return new Map(rows.map(r => [r.goalId, r.n]));
 }

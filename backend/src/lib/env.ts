@@ -18,6 +18,10 @@ export const env = {
   AWS_REGION: process.env.AWS_REGION ?? "us-west-2",
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
 
+  // --- google calendar (Desktop-app OAuth client) ---
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ?? "",
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ?? "",
+
   // --- outbound proxy ---
   // Bun's fetch honors HTTP(S)_PROXY from process.env at request time, so the
   // flag works by setting/clearing those vars below, before any client exists.

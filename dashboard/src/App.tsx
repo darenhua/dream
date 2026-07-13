@@ -1,240 +1,47 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { MoonStar } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { api, type ExperimentRow, type ProposalRow, type WriteupRow } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useApiData } from "@/lib/useApiData";
 import { AdminDashboard } from "./components/AdminDashboard";
-import { CategoryCard } from "./components/CategoryCard";
-import { type CategoryMapEntry } from "./components/CategoryMap";
-import { EditSheet } from "./components/EditSheet";
-import { ExperimentCard } from "./components/ExperimentCard";
-import { ReviewProposed } from "./components/ReviewProposed";
-import {
-  CATEGORY_LABELS,
-  type CategoryKey,
-  type Conversation,
-  type Item,
-  type ReviewKey,
-} from "./data";
+import { ExtractionReview } from "./screens/ExtractionReview";
+import { MainFeed } from "./screens/MainFeed";
+import { ProposalReview } from "./screens/ProposalReview";
+import { ScheduleChat } from "./screens/ScheduleChat";
 import "./index.css";
 
-type View = "dashboard" | "review";
-
-const EMPTY_BUCKETS: Record<CategoryKey, Item[]> = { goals: [], habits: [], environment: [] };
-
-// Map pending proposals into the review sections (SPEC amendment 8 + plan mapping).
-function proposalToReview(p: ProposalRow): { section: ReviewKey; item: Item } | null {
-  const src: string[] = p.payload?.source_conversation_ids ?? [];
-  switch (p.kind) {
-    case "goal_create":
-      return { section: "goals", item: { id: p.id, text: p.payload.title, sources: src } };
-    case "goal_update":
-      return {
-        section: "goals",
-        item: { id: p.id, text: `update: ${p.payload.title ?? p.payload.reason}`, sources: src },
-      };
-    case "synthesis_update":
-      return {
-        section: "goals",
-        item: { id: p.id, text: `synthesis: ${p.payload.reason}`, sources: src },
-      };
-    case "goal_status":
-      return {
-        section: "goals",
-        item: { id: p.id, text: `→ ${p.payload.status}: ${p.payload.reason}`, sources: src },
-      };
-    case "registry_add": {
-      const section =
-        p.payload.registry_kind === "habit"
-          ? "habits"
-          : p.payload.registry_kind === "environment"
-            ? "environment"
-            : null;
-      if (!section) return null; // experiences have no card yet
-      return { section, item: { id: p.id, text: p.payload.title, sources: src } };
-    }
-    case "registry_prune":
-      return {
-        section: "habits",
-        item: { id: p.id, text: `prune: ${p.payload.reason}`, sources: src },
-      };
-    case "categorization": {
-      const cats = (p.payload.categorizations ?? [])
-        .map((c: any) => c.new_category?.name ?? c.category_name ?? "existing category")
-        .join(", ");
-      const extras = (p.payload.registry_adds ?? []).length;
-      return {
-        section: "filing",
-        item: {
-          id: p.id,
-          text: `file rant → ${cats || "?"}${extras ? ` (+${extras} registry)` : ""}`,
-          sources: src,
-        },
-      };
-    }
-    default:
-      return null;
-  }
-}
+// View shell: the feed is home; review screens and the schedule chat are
+// full-screen takeovers; admin is a mode.
+export type View =
+  | { name: "feed" }
+  | { name: "review-extractions"; conversationId: string }
+  | { name: "review-proposals" }
+  | { name: "schedule-chat"; sessionId: string };
 
 export function App() {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<View>({ name: "feed" });
   const [admin, setAdmin] = useState(false);
-  const [editing, setEditing] = useState<CategoryKey | null>(null);
-  const [items, setItems] = useState<Record<CategoryKey, Item[]>>(EMPTY_BUCKETS);
-  const [accepted, setAccepted] = useState<Record<CategoryKey, Item[]>>(EMPTY_BUCKETS);
-  const [proposed, setProposed] = useState<Record<ReviewKey, Item[]>>({
-    ...EMPTY_BUCKETS,
-    filing: [],
-  });
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [experiment, setExperiment] = useState<ExperimentRow | null>(null);
-  const [writeup, setWriteup] = useState<WriteupRow | null>(null);
-  const [experienceCount, setExperienceCount] = useState(0);
-  const [categoryMap, setCategoryMap] = useState<CategoryMapEntry[]>([]);
-
-  const refresh = useCallback(async () => {
-    const [goals, habits, environment, experiences, proposals, convos, exp, wu, cats] =
-      await Promise.all([
-        api.goals(),
-        api.registry("habit"),
-        api.registry("environment"),
-        api.registry("experience", "active"),
-        api.proposals(),
-        api.conversations(),
-        api.currentExperiment(),
-        api.writeupToday(),
-        api.categories(),
-      ]);
-
-    // current items = active; the pool = backlog goals / removed registry items
-    setItems({
-      goals: goals
-        .filter(g => g.status === "active")
-        .map(g => ({ id: g.id, text: g.title, active: true })),
-      habits: habits
-        .filter(r => r.status === "active")
-        .map(r => ({ id: r.id, text: r.title, active: true })),
-      environment: environment
-        .filter(r => r.status === "active")
-        .map(r => ({ id: r.id, text: r.title, active: true })),
-    });
-    setAccepted({
-      goals: goals
-        .filter(g => g.status === "backlog" || g.status === "suggested")
-        .map(g => ({ id: g.id, text: g.title })),
-      habits: habits.filter(r => r.status === "removed").map(r => ({ id: r.id, text: r.title })),
-      environment: environment
-        .filter(r => r.status === "removed")
-        .map(r => ({ id: r.id, text: r.title })),
-    });
-    setExperienceCount(experiences.length);
-
-    const catNameById = new Map(cats.map(c => [c.id, c.name]));
-    const categoryOf = (scopeKey: string) =>
-      scopeKey.startsWith("category:") ? catNameById.get(scopeKey.slice("category:".length)) : undefined;
-
-    const buckets: Record<ReviewKey, Item[]> = {
-      goals: [],
-      habits: [],
-      environment: [],
-      filing: [],
-    };
-    for (const p of proposals) {
-      const mapped = proposalToReview(p);
-      if (mapped) {
-        mapped.item.category = categoryOf(p.scopeKey);
-        buckets[mapped.section].push(mapped.item);
-      }
-    }
-    setProposed(buckets);
-
-    // The garden map: category → its goals + its filed rants.
-    const entries: CategoryMapEntry[] = cats.map(cat => ({
-      id: cat.id,
-      name: cat.name,
-      description: cat.description,
-      goals: goals
-        .filter(g => g.categoryId === cat.id)
-        .map(g => ({ id: g.id, title: g.title, status: g.status })),
-      rants: convos
-        .filter(c => c.links.some(l => l.categoryId === cat.id))
-        .map(c => ({
-          id: c.id,
-          title: c.title ?? "(untitled)",
-          date: (c.sourceUpdatedAt ?? "").slice(0, 10),
-          active: c.links.find(l => l.categoryId === cat.id)!.activeForDerive,
-        })),
-    }));
-    const unfiled = goals.filter(g => !g.categoryId);
-    if (unfiled.length > 0) {
-      entries.push({
-        id: "uncategorized",
-        name: "uncategorized",
-        description: "goals not yet attached to a category",
-        goals: unfiled.map(g => ({ id: g.id, title: g.title, status: g.status })),
-        rants: [],
-      });
-    }
-    setCategoryMap(entries);
-
-    setConversations(
-      convos.map(c => ({
-        id: c.id,
-        date: (c.sourceUpdatedAt ?? "").slice(5, 10) || "?",
-        title: c.title ?? "(untitled)",
-        slug: c.slugDetected,
-        category: c.links[0]?.categoryName ?? null,
-        categoryId: c.links[0]?.categoryId ?? null,
-        linkId: c.links[0]?.id ?? null,
-        topK: c.links[0]?.activeForDerive ?? false,
-      })),
-    );
-    setExperiment(exp);
-    setWriteup(wu);
-  }, []);
+  const [tick, setTick] = useState(0); // bumped after any mutation to refresh badges
+  const bump = () => setTick(t => t + 1);
 
   useEffect(() => {
-    api.visit().catch(() => {}); // the glance ping (§7.13)
-    refresh().catch(err => console.error("initial load failed:", err));
-  }, [refresh]);
+    api.visit().catch(() => {}); // the glance ping
+  }, []);
 
-  const proposedCount =
-    proposed.goals.length +
-    proposed.habits.length +
-    proposed.environment.length +
-    proposed.filing.length;
-
-  // sheet X: active goal → backlog; active registry item → removed
-  const removeItem = async (category: CategoryKey, id: string) => {
-    if (category === "goals") await api.patchGoalStatus(id, "backlog");
-    else await api.patchRegistry(id, { status: "removed" });
-    await refresh();
-  };
-
-  // sheet +: pool item becomes current again
-  const addItem = async (category: CategoryKey, id: string) => {
-    if (category === "goals") await api.patchGoalStatus(id, "active");
-    else await api.patchRegistry(id, { status: "active" });
-    await refresh();
-  };
-
-  const acceptProposed = async (_section: ReviewKey, id: string) => {
-    await api.approveProposal(id);
-    await refresh();
-  };
-
-  const rejectProposed = async (_section: ReviewKey, id: string) => {
-    await api.denyProposal(id);
-    await refresh();
-  };
+  const { data: pendingProposals } = useApiData(() => api.proposals(), [tick]);
+  const { data: awaitingReview } = useApiData(
+    () => api.conversations({ state: "awaiting_review" }),
+    [tick],
+  );
+  const proposedCount = pendingProposals?.length ?? 0;
+  const readBackCount = awaitingReview?.length ?? 0;
 
   const logo = (
-    <div className="flex items-center gap-2">
+    <button className="flex items-center gap-2" onClick={() => setView({ name: "feed" })}>
       <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background">
         <MoonStar className="size-5" />
       </span>
@@ -248,13 +55,15 @@ export function App() {
       >
         {admin ? "admin" : "user"}
       </Badge>
-    </div>
+    </button>
   );
 
   const reviewButton = (
     <Button
-      variant={view === "review" ? "secondary" : "ghost"}
-      onClick={() => setView(view === "review" ? "dashboard" : "review")}
+      variant={view.name === "review-proposals" ? "secondary" : "ghost"}
+      onClick={() =>
+        setView(view.name === "review-proposals" ? { name: "feed" } : { name: "review-proposals" })
+      }
     >
       review proposed ({proposedCount})
     </Button>
@@ -265,7 +74,14 @@ export function App() {
       <Label htmlFor="mode-toggle" className="text-sm">
         {admin ? "user toggle" : "admin toggle"}
       </Label>
-      <Switch id="mode-toggle" checked={admin} onCheckedChange={setAdmin} />
+      <Switch
+        id="mode-toggle"
+        checked={admin}
+        onCheckedChange={checked => {
+          setAdmin(checked);
+          setView({ name: "feed" });
+        }}
+      />
     </div>
   );
 
@@ -281,49 +97,43 @@ export function App() {
 
       <main>
         {admin ? (
-          <AdminDashboard conversations={conversations} onChanged={refresh} />
-        ) : view === "review" ? (
-          <ReviewProposed proposed={proposed} onAccept={acceptProposed} onReject={rejectProposed} />
+          <AdminDashboard
+            onChanged={bump}
+            onReviewExtractions={id => {
+              setAdmin(false);
+              setView({ name: "review-extractions", conversationId: id });
+            }}
+          />
+        ) : view.name === "review-extractions" ? (
+          <ExtractionReview
+            conversationId={view.conversationId}
+            onDone={() => {
+              bump();
+              setView({ name: "feed" });
+            }}
+          />
+        ) : view.name === "review-proposals" ? (
+          <ProposalReview
+            onChanged={bump}
+            onBack={() => setView({ name: "feed" })}
+          />
+        ) : view.name === "schedule-chat" ? (
+          <ScheduleChat
+            sessionId={view.sessionId}
+            onDone={() => {
+              bump();
+              setView({ name: "feed" });
+            }}
+          />
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <CategoryCard
-              title={CATEGORY_LABELS.goals}
-              items={items.goals}
-              onEdit={() => setEditing("goals")}
-              className="order-2 md:order-1"
-            />
-            <CategoryCard
-              title={CATEGORY_LABELS.habits}
-              items={items.habits}
-              onEdit={() => setEditing("habits")}
-              className="order-4 md:order-2"
-            />
-            <CategoryCard
-              title={CATEGORY_LABELS.environment}
-              items={items.environment}
-              onEdit={() => setEditing("environment")}
-              className="order-3 md:order-3"
-            />
-            <Card className="order-5 hidden border-dashed py-4 md:order-4 md:flex">
-              <CardContent className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-muted-foreground">
-                <p className="text-center text-sm">
-                  {experienceCount}
-                  <br />
-                  experiences
-                </p>
-                <Button variant="outline" size="sm">
-                  open
-                </Button>
-              </CardContent>
-            </Card>
-            <ExperimentCard
-              experiment={experiment}
-              writeup={writeup}
-              categories={categoryMap}
-              onChanged={refresh}
-              className="order-1 md:order-5 md:col-span-4"
-            />
-          </div>
+          <MainFeed
+            tick={tick}
+            onChanged={bump}
+            readBackCount={readBackCount}
+            awaitingReview={awaitingReview ?? []}
+            onReviewExtractions={id => setView({ name: "review-extractions", conversationId: id })}
+            onOpenScheduleChat={sessionId => setView({ name: "schedule-chat", sessionId })}
+          />
         )}
       </main>
 
@@ -336,18 +146,6 @@ export function App() {
         <div className={"flex justify-center py-3 " + (admin ? "" : "border-r")}>{modeToggle}</div>
         {!admin && <div className="flex justify-center py-3">{reviewButton}</div>}
       </nav>
-
-      {editing && (
-        <EditSheet
-          open
-          onOpenChange={open => !open && setEditing(null)}
-          title={CATEGORY_LABELS[editing]}
-          items={items[editing]}
-          accepted={accepted[editing]}
-          onRemove={id => removeItem(editing, id)}
-          onAdd={id => addItem(editing, id)}
-        />
-      )}
     </div>
   );
 }

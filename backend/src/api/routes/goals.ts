@@ -1,41 +1,52 @@
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../../db";
-import { conversation, goal, goalEvidence } from "../../db/schema";
-import { createGoal, listGoals, reorderGoals, setGoalStatus } from "../../services/goals";
+import { environmentItem, goalEnvironment, goalHabit, habit } from "../../db/schema";
+import { goalDetail } from "../../services/entityDetail";
+import { attemptCounts, createGoal, listGoals, reorderGoals, setGoalStatus } from "../../services/goals";
 
 export const goalRoutes = new Hono();
 
 goalRoutes.get("/", c => {
   const { status } = c.req.query();
-  return c.json(listGoals(status || undefined));
-});
-
-goalRoutes.get("/:id", c => {
-  const row = db.select().from(goal).where(eq(goal.id, c.req.param("id"))).get();
-  if (!row) return c.json({ error: "goal not found" }, 404);
-  const evidence = db
-    .select({
-      id: goalEvidence.id,
-      conversationId: goalEvidence.conversationId,
-      note: goalEvidence.note,
-      createdAt: goalEvidence.createdAt,
-      conversationTitle: conversation.title,
-    })
-    .from(goalEvidence)
-    .leftJoin(conversation, eq(goalEvidence.conversationId, conversation.id))
-    .where(eq(goalEvidence.goalId, row.id))
-    .orderBy(desc(goalEvidence.createdAt))
+  const attempts = attemptCounts();
+  const habitLinks = db
+    .select({ goalId: goalHabit.goalId, id: habit.id, title: habit.title, status: habit.status })
+    .from(goalHabit)
+    .innerJoin(habit, eq(goalHabit.habitId, habit.id))
     .all();
-  return c.json({ ...row, evidence });
+  const envLinks = db
+    .select({
+      goalId: goalEnvironment.goalId,
+      id: environmentItem.id,
+      title: environmentItem.title,
+      subKind: environmentItem.subKind,
+    })
+    .from(goalEnvironment)
+    .innerJoin(environmentItem, eq(goalEnvironment.environmentItemId, environmentItem.id))
+    .all();
+  return c.json(
+    listGoals(status || undefined).map(g => ({
+      ...g,
+      attemptCount: attempts.get(g.id) ?? 0, // the heatmap signal
+      habits: habitLinks.filter(l => l.goalId === g.id).map(({ goalId, ...h }) => h),
+      environmentItems: envLinks.filter(l => l.goalId === g.id).map(({ goalId, ...e }) => e),
+    })),
+  );
 });
 
-// Manual create — origin: manual (§9 admin).
+// Everything the data model knows about one goal — the mirror + its relations.
+goalRoutes.get("/:id", c => {
+  const detail = goalDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "goal not found" }, 404);
+  return c.json(detail);
+});
+
+// Manual create — origin: manual.
 goalRoutes.post("/", async c => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.title) return c.json({ error: "title required" }, 400);
   const { goal: created, note } = createGoal({
-    categoryId: body.categoryId ?? null,
     title: body.title,
     identityClause: body.identityClause ?? null,
     synthesisMd: body.synthesisMd ?? null,

@@ -1,23 +1,54 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { db, wipeAllTables } from "../src/db";
-import { goal, goalEvidence } from "../src/db/schema";
 import { eq } from "drizzle-orm";
+import { db, wipeAllTables } from "../src/db";
+import { chatSession, experiment, experimentTask, goal, goalEvidence, habit } from "../src/db/schema";
 import { seedConfig } from "../src/services/config";
 import {
-  commitExperiment,
-  createDraft,
+  archiveExperiment,
+  cancelScheduling,
+  commitPlan,
+  currentExperiment,
   endExperiment,
-  getPromptPackage,
-  liveExperiment,
+  enqueueExperiment,
+  listQueue,
+  patchTask,
+  pickExperiment,
+  taskCopyPrompt,
 } from "../src/services/experiments";
+import { goalDetail, habitDetail } from "../src/services/entityDetail";
+import { attemptCounts } from "../src/services/goals";
+import type { SchedulePlanT } from "../src/domain/schemas";
 
-const validDraft = {
-  title: "Ship one rough song publicly",
-  reasoning_md: "top goal lacks a lever; smallest first move",
-  goal_ids: [] as string[],
-  levers_json: { habit_changes: ["open Ableton after work"] },
-  actions_json: [{ when: "I close my laptop after work", then: "open Ableton for 10 min" }],
-  bandwidth: "normal" as const,
+function makeGoal(title = "wake at 6am") {
+  return db.insert(goal).values({ title, status: "active", origin: "derived" }).returning().get();
+}
+
+function queued(title = "phone out of the bedroom", goalIds: string[] = []) {
+  return enqueueExperiment({
+    title,
+    hypothesisMd: "hypothesis",
+    goalIds,
+    proposalId: null as unknown as string, // FK is nullable; candidates in tests skip the proposal step
+  });
+}
+
+const PLAN: SchedulePlanT = {
+  hypothesis_md: "removing the phone removes the morning scroll",
+  planned_duration_days: 7,
+  bandwidth: "normal",
+  tasks: [
+    { kind: "purchase", title: "buy an alarm clock", start: "2026-07-10T18:00:00Z", end: "2026-07-10T18:30:00Z" },
+    { kind: "experience", title: "one phone-free morning walk", start: "2026-07-11T08:00:00Z", end: "2026-07-11T09:00:00Z" },
+  ],
+  habit_blocks: [
+    {
+      title: "phone docks in kitchen at 22:00",
+      rrule: "FREQ=DAILY",
+      preferred_time: "22:00",
+      duration_minutes: 5,
+      first_occurrence: "2026-07-10T22:00:00Z",
+    },
+  ],
 };
 
 beforeEach(() => {
@@ -25,82 +56,137 @@ beforeEach(() => {
   seedConfig();
 });
 
-describe("experiment lifecycle", () => {
-  test("draft paste returns field-level errors on invalid JSON shape", () => {
-    const result = createDraft({ title: "", actions_json: [], bandwidth: "huge" });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
-    expect(Object.keys(result.fieldErrors)).toContain("title");
-    expect(Object.keys(result.fieldErrors)).toContain("actions_json");
-    expect(Object.keys(result.fieldErrors)).toContain("bandwidth");
-    expect(Object.keys(result.fieldErrors)).toContain("reasoning_md");
+describe("experiment FSM", () => {
+  test("queued → scheduling → running via pick + commitPlan", () => {
+    const exp = queued();
+    const picked = pickExperiment(exp.id);
+    expect(picked.ok).toBe(true);
+    expect(db.select().from(experiment).where(eq(experiment.id, exp.id)).get()!.status).toBe("scheduling");
+    // pick opened a chat session
+    const session = db.select().from(chatSession).where(eq(chatSession.experimentId, exp.id)).get()!;
+    expect(session.status).toBe("open");
+
+    const committed = commitPlan(exp.id, PLAN);
+    expect(committed.ok).toBe(true);
+    const after = db.select().from(experiment).where(eq(experiment.id, exp.id)).get()!;
+    expect(after.status).toBe("running");
+    expect(after.startedAt).toBeTruthy();
+    expect(after.plannedDurationDays).toBe(7);
+
+    // plan side effects: tasks, building habit, planned experience
+    const tasks = db.select().from(experimentTask).where(eq(experimentTask.experimentId, exp.id)).all();
+    expect(tasks).toHaveLength(2);
+    expect(tasks.every(t => t.status === "scheduled")).toBe(true);
+    const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
+    expect(h.status).toBe("building");
   });
 
-  test("draft → commit → running; single-live invariant enforced", () => {
-    const d1 = createDraft(validDraft);
-    if (!d1.ok) throw new Error("draft failed");
-    expect(d1.experiment.status).toBe("draft");
-    expect(liveExperiment()).toBeNull(); // drafts are not live
-
-    expect(commitExperiment(d1.experiment.id).ok).toBe(true);
-    expect(liveExperiment()!.status).toBe("running");
-
-    // A second draft can exist, but committing it is blocked.
-    const d2 = createDraft({ ...validDraft, title: "second" });
-    if (!d2.ok) throw new Error("draft failed");
-    const blocked = commitExperiment(d2.experiment.id);
-    expect(blocked.ok).toBe(false);
-    expect(blocked.error).toContain("already live");
-
-    // Prompt package refuses while live (§8.6.1).
-    const pkg = getPromptPackage();
-    expect(pkg.ok).toBe(false);
-
-    // Ending unblocks both.
-    expect(endExperiment(liveExperiment()!.id, "done", "it stuck").ok).toBe(true);
-    expect(liveExperiment()).toBeNull();
-    expect(getPromptPackage().ok).toBe(true);
-    expect(commitExperiment(d2.experiment.id).ok).toBe(true);
+  test("pick guard: one experiment at a time, including scheduling", () => {
+    const a = queued("a");
+    const b = queued("b");
+    expect(pickExperiment(a.id).ok).toBe(true);
+    const denied = pickExperiment(b.id);
+    expect(denied.ok).toBe(false);
+    // cancel returns a to queued and frees the slot
+    expect(cancelScheduling(a.id).ok).toBe(true);
+    expect(db.select().from(experiment).where(eq(experiment.id, a.id)).get()!.status).toBe("queued");
+    expect(pickExperiment(b.id).ok).toBe(true);
   });
 
-  test("compost is the same single call and writes blameless evidence to linked goals", () => {
-    const g = db
-      .insert(goal)
-      .values({ title: "get lean", origin: "manual", status: "active" })
-      .returning()
-      .get();
-    const d = createDraft({ ...validDraft, goal_ids: [g.id] });
-    if (!d.ok) throw new Error("draft failed");
-    commitExperiment(d.experiment.id);
-
-    const result = endExperiment(d.experiment.id, "composted", undefined, "wrong size for this week");
-    expect(result.ok).toBe(true);
-
-    const ev = db.select().from(goalEvidence).where(eq(goalEvidence.goalId, g.id)).all();
-    expect(ev).toHaveLength(1);
-    expect(ev[0]!.note).toContain("composted");
-    expect(ev[0]!.note).toContain("wrong size");
+  test("cannot commit without scheduling, cannot end without running", () => {
+    const exp = queued();
+    expect(commitPlan(exp.id, PLAN).ok).toBe(false);
+    expect(endExperiment(exp.id, "succeeded").ok).toBe(false);
   });
 
-  test("prompt package inlines the projected state", () => {
-    db.insert(goal)
-      .values({ title: "get lean", identityClause: "I am becoming lean", origin: "manual", status: "active" })
-      .run();
-    const pkg = getPromptPackage();
-    expect(pkg.ok).toBe(true);
-    if (!pkg.ok) throw new Error("unreachable");
-    expect(pkg.markdown).toContain("experiment designer");
-    expect(pkg.markdown).toContain("get lean");
-    expect(pkg.markdown).toContain("MAX_ACTIVE_GOALS");
-    expect(pkg.markdown).not.toContain("[STATE]"); // placeholder replaced
+  test("succeeded: building habits graduate to established, evidence lands on goals", () => {
+    const g = makeGoal();
+    const exp = queued("t", [g.id]);
+    pickExperiment(exp.id);
+    commitPlan(exp.id, PLAN);
+    const ended = endExperiment(exp.id, "succeeded", "the mornings are mine now");
+    expect(ended.ok).toBe(true);
+
+    const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
+    expect(h.status).toBe("established");
+    const evidence = db.select().from(goalEvidence).where(eq(goalEvidence.goalId, g.id)).all();
+    expect(evidence.some(e => e.note?.includes("succeeded"))).toBe(true);
+    expect(attemptCounts().get(g.id)).toBe(1); // heatmap increments
   });
 
-  test("cannot end a draft or double-end", () => {
-    const d = createDraft(validDraft);
-    if (!d.ok) throw new Error("draft failed");
-    expect(endExperiment(d.experiment.id, "done").ok).toBe(false);
-    commitExperiment(d.experiment.id);
-    expect(endExperiment(d.experiment.id, "done").ok).toBe(true);
-    expect(endExperiment(d.experiment.id, "composted").ok).toBe(false);
+  test("failed: blame-free — habits lapse (not deleted), open tasks skip, done tasks stay", () => {
+    const g = makeGoal();
+    const exp = queued("t", [g.id]);
+    pickExperiment(exp.id);
+    commitPlan(exp.id, PLAN);
+    const tasks = db.select().from(experimentTask).where(eq(experimentTask.experimentId, exp.id)).all();
+    patchTask(tasks[0]!.id, "done");
+
+    expect(endExperiment(exp.id, "failed", "phone crept back by day 3 — need a charger in the kitchen").ok).toBe(true);
+    const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
+    expect(h.status).toBe("lapsed"); // row survives; statuses only
+    const after = db.select().from(experimentTask).where(eq(experimentTask.experimentId, exp.id)).all();
+    expect(after.find(t => t.id === tasks[0]!.id)!.status).toBe("done");
+    expect(after.find(t => t.id === tasks[1]!.id)!.status).toBe("skipped");
+    expect(attemptCounts().get(g.id)).toBe(1); // failures count as attempts too
+  });
+
+  test("no double-end", () => {
+    const exp = queued();
+    pickExperiment(exp.id);
+    commitPlan(exp.id, PLAN);
+    expect(endExperiment(exp.id, "failed").ok).toBe(true);
+    expect(endExperiment(exp.id, "succeeded").ok).toBe(false);
+  });
+
+  test("archive is queue-only", () => {
+    const exp = queued();
+    expect(archiveExperiment(exp.id).ok).toBe(true);
+    expect(db.select().from(experiment).where(eq(experiment.id, exp.id)).get()!.status).toBe("archived");
+    const exp2 = queued("running one");
+    pickExperiment(exp2.id);
+    expect(archiveExperiment(exp2.id).ok).toBe(false);
+  });
+
+  test("currentExperiment: running wins, else queue head; queue lists queued+scheduling", () => {
+    expect(currentExperiment()).toBeNull();
+    const a = queued("a");
+    const b = queued("b");
+    expect(currentExperiment()!.id).toBe(a.id);
+    pickExperiment(a.id);
+    commitPlan(a.id, PLAN);
+    expect(currentExperiment()!.id).toBe(a.id);
+    expect(currentExperiment()!.isRunning).toBe(true);
+    expect(listQueue().map(e => e.id)).toEqual([b.id]);
+  });
+
+  test("entity detail: goal shows attempt archaeology; habit shows lineage", () => {
+    const g = makeGoal();
+    const exp = queued("t", [g.id]);
+    pickExperiment(exp.id);
+    commitPlan(exp.id, PLAN);
+    endExperiment(exp.id, "failed", "charger crept back — kitchen next time");
+
+    const gd = goalDetail(g.id)!;
+    expect(gd.attemptCount).toBe(1);
+    expect(gd.experiments).toHaveLength(1);
+    expect(gd.experiments[0]!.status).toBe("failed");
+    expect(gd.experiments[0]!.outcomeMd).toContain("kitchen");
+
+    const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
+    const hd = habitDetail(h.id)!;
+    expect(hd.bornInExperiment!.id).toBe(exp.id);
+    expect(hd.bornInExperiment!.outcomeMd).toContain("kitchen");
+    expect(hd.status).toBe("lapsed");
+  });
+
+  test("task copy-prompt renders experiment context", () => {
+    const exp = queued();
+    pickExperiment(exp.id);
+    commitPlan(exp.id, PLAN);
+    const task = db.select().from(experimentTask).where(eq(experimentTask.experimentId, exp.id)).all()[0]!;
+    const md = taskCopyPrompt(task.id)!;
+    expect(md).toContain("buy an alarm clock");
+    expect(md).toContain(exp.title);
   });
 });

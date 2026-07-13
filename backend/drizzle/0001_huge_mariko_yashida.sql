@@ -1,0 +1,1 @@
+ALTER TABLE `experiment` ADD `proposed_changes_json` text;
