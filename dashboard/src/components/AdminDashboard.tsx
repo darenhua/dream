@@ -61,8 +61,8 @@ export function AdminDashboard({
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Button variant="outline" disabled={running !== null} onClick={() => runJob("daily", api.runDaily)}>
-          {running === "daily" ? <Loader2 className="animate-spin" /> : <Play />} run daily now
-          <span className="text-muted-foreground">(distill → derive → writeup → sync)</span>
+          {running === "daily" ? <Loader2 className="animate-spin" /> : <Play />} run heartbeat now
+          <span className="text-muted-foreground">(strikes → pings → sweep)</span>
         </Button>
         <Button variant="outline" disabled={running !== null} onClick={() => runJob("distill", api.runDistill)}>
           {running === "distill" && <Loader2 className="animate-spin" />} run distill

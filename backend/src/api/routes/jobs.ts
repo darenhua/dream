@@ -1,13 +1,18 @@
 import { Hono } from "hono";
-import { runDaily } from "../../services/daily";
+import { runHeartbeat } from "../../services/daily";
 import { deriveConversation, derivePendingReviewed } from "../../services/derive";
 import { distillPending } from "../../services/distill";
 import { generateDaily, todayLocal } from "../../services/writeup";
 
 export const jobRoutes = new Hono();
 
+// "/daily" kept as an alias so existing dashboard/admin callers don't break.
+jobRoutes.post("/heartbeat", async c => {
+  return c.json(await runHeartbeat("manual"));
+});
+
 jobRoutes.post("/daily", async c => {
-  return c.json(await runDaily("manual"));
+  return c.json(await runHeartbeat("manual"));
 });
 
 jobRoutes.post("/distill", async c => {

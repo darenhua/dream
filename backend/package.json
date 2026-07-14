@@ -6,6 +6,7 @@
     "serve": "bun run src/api/server.ts",
     "dev": "bun --hot src/api/server.ts",
     "daily": "bun run src/cli/daily.ts",
+    "heartbeat": "bun run src/cli/daily.ts",
     "db:generate": "drizzle-kit generate",
     "test": "bun test"
   },

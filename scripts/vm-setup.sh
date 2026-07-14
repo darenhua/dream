@@ -58,10 +58,10 @@ EOF
 "${SSH[@]}" 'sudo systemctl daemon-reload && sudo systemctl enable dream-backend >/dev/null 2>&1'
 echo "   unit installed + enabled (starts on first deploy)"
 
-echo "== daily cron (§11.9)"
-"${SSH[@]}" 'crontab -l 2>/dev/null | grep -v "dream/backend && .*bun run daily" > /tmp/cron.$$ || true
+echo "== heartbeat cron (§11.9; 09:00 ET — social pings land in the morning)"
+"${SSH[@]}" 'crontab -l 2>/dev/null | grep -v "dream/backend && .*bun run \(daily\|heartbeat\)" > /tmp/cron.$$ || true
 grep -q CRON_TZ /tmp/cron.$$ 2>/dev/null || echo "CRON_TZ=America/New_York" >> /tmp/cron.$$
-echo "0 21 * * * cd ~/dream/backend && ~/.bun/bin/bun run daily >> ~/dream/daily.log 2>&1" >> /tmp/cron.$$
+echo "0 9 * * * cd ~/dream/backend && ~/.bun/bin/bun run heartbeat >> ~/dream/heartbeat.log 2>&1" >> /tmp/cron.$$
 crontab /tmp/cron.$$ && rm /tmp/cron.$$ && crontab -l | tail -2'
 
 echo "== done — run scripts/deploy-backend.sh next"
