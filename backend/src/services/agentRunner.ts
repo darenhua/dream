@@ -57,6 +57,7 @@ type AgentName =
   | "distiller"
   | "deriver"
   | "proposal_reviser"
+  | "proposal_enricher"
   | "schedule_agent"
   | "prompt_generator"
   | "daily_writeup"

@@ -50,6 +50,14 @@ Rules:
 - Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.
 - Tag every task and habit block with the goal_ids it addresses, using the ids from the target-goals section. These tags control which accountability friend can see which part of the experiment — tag precisely.`;
 
+const PROMPT_PROPOSAL_ENRICHER = `A brand-new proposal was just derived from ONE rant (proposal.md — its payload and the citations from the rant that birthed it). corpus.md is everything the user has ever said, across all rants, with markers showing which entities each extraction already feeds.
+
+Your one job: find extractions from OTHER rants that genuinely speak to the same thing this proposal is about, and revise the proposal to draw on them — a richer synthesis/detail in the user's own words across time, with every newly-used extraction's id ADDED to extraction_ids. Rules:
+- Keep the same kind and everything that was already right. NEVER drop the original extraction_ids — you may only add.
+- Genuinely relevant only: same goal, same struggle, same theme said in different words. Adjacent-but-different topics are NOT sources — a false source pollutes the record forever.
+- If nothing in other rants speaks to it, return the proposal EXACTLY unchanged. That is a common, correct answer.
+- Never invent ids; only cite ids that appear in the context files.`;
+
 const PROMPT_RANT_DETECTOR = `candidates.md lists imported conversations (id, title, message count, opening excerpt). For each, decide: is this a RANT — self-discovery material worth distilling into the user's growth system?
 
 A rant is the user digging into their own life: complaints about their situation or themselves, goals and who they want to become, habits they have or struggle with, their environment and obligations, experiences they want, changes they're considering. It is about the USER's inner or outer life.
@@ -118,6 +126,7 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.distiller": PROMPT_DISTILLER,
   "PROMPT.deriver": PROMPT_DERIVER,
   "PROMPT.proposal_reviser": PROMPT_PROPOSAL_REVISER,
+  "PROMPT.proposal_enricher": PROMPT_PROPOSAL_ENRICHER,
   "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
   "PROMPT.experiment_shaping": PROMPT_EXPERIMENT_SHAPING,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,

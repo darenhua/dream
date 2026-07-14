@@ -105,6 +105,37 @@ function entityTitles(): Map<string, string> {
   return map;
 }
 
+// The whole confirmed corpus, dated, grouped by conversation — the system's
+// memory. Shared by the deriver and the proposal enricher.
+function corpusMd(markers: Map<string, string[]>): string {
+  const corpus = db
+    .select({ x: extraction, convoTitle: conversation.title, convoDate: conversation.sourceUpdatedAt })
+    .from(extraction)
+    .innerJoin(conversation, eq(extraction.conversationId, conversation.id))
+    .where(isNotNull(extraction.confirmedAt))
+    .orderBy(asc(conversation.sourceUpdatedAt), asc(extraction.createdAt))
+    .all();
+  const byConvo = new Map<string, { title: string; date: string; rows: ExtractionRow[] }>();
+  for (const row of corpus) {
+    const key = row.x.conversationId;
+    if (!byConvo.has(key))
+      byConvo.set(key, {
+        title: row.convoTitle ?? "(untitled)",
+        date: (row.convoDate ?? "").slice(0, 10),
+        rows: [],
+      });
+    byConvo.get(key)!.rows.push(row.x);
+  }
+  const sections = [...byConvo.values()].map(
+    c => `## ${c.date} — ${c.title}\n\n${c.rows.map(x => extractionMd(x, markers)).join("\n")}`,
+  );
+  return (
+    `# Everything the user has said (confirmed extractions, oldest first)\n\n` +
+    (sections.length ? sections.join("\n\n") : "_(corpus is empty)_") +
+    "\n"
+  );
+}
+
 // Merged transcript windows around the trigger extractions: how each passage
 // was actually said. Windows overlap-merge so a dense rant reads as one block.
 function triggerContextMd(contentJson: string | null, rows: ExtractionRow[], radius = 2): string {
@@ -182,36 +213,7 @@ export function projectDerive(conversationId: string, dir: string) {
 
   write(dir, "pending-proposals.md", pendingProposalsMd());
 
-  // The whole confirmed corpus, dated, grouped by conversation — the system's memory.
-  const corpus = db
-    .select({ x: extraction, convoTitle: conversation.title, convoDate: conversation.sourceUpdatedAt })
-    .from(extraction)
-    .innerJoin(conversation, eq(extraction.conversationId, conversation.id))
-    .where(isNotNull(extraction.confirmedAt))
-    .orderBy(asc(conversation.sourceUpdatedAt), asc(extraction.createdAt))
-    .all();
-  const byConvo = new Map<string, { title: string; date: string; rows: ExtractionRow[] }>();
-  for (const row of corpus) {
-    const key = row.x.conversationId;
-    if (!byConvo.has(key))
-      byConvo.set(key, {
-        title: row.convoTitle ?? "(untitled)",
-        date: (row.convoDate ?? "").slice(0, 10),
-        rows: [],
-      });
-    byConvo.get(key)!.rows.push(row.x);
-  }
-  const corpusSections = [...byConvo.values()].map(
-    c => `## ${c.date} — ${c.title}\n\n${c.rows.map(x => extractionMd(x, markers)).join("\n")}`,
-  );
-  write(
-    dir,
-    "corpus.md",
-    `# Everything the user has said (confirmed extractions, oldest first)\n\n` +
-      (corpusSections.length ? corpusSections.join("\n\n") : "_(corpus is empty)_") +
-      "\n",
-  );
-
+  write(dir, "corpus.md", corpusMd(markers));
   write(dir, "state.md", stateMd());
   write(dir, "budget.md", budgetMd());
 }
@@ -256,6 +258,26 @@ export function projectRevision(
   );
 
   write(dir, "state.md", stateMd());
+}
+
+// --- proposal enricher: one BRAND-NEW proposal against the whole corpus ---
+
+export function projectEnrichment(proposalRow: { id: string; kind: string; payloadJson: string }, dir: string) {
+  const markers = linkMarkers();
+  const payload = JSON.parse(proposalRow.payloadJson) as { extraction_ids?: string[] };
+  const cited = payload.extraction_ids?.length
+    ? db.select().from(extraction).where(inArray(extraction.id, payload.extraction_ids)).all()
+    : [];
+  write(
+    dir,
+    "proposal.md",
+    `# The brand-new proposal (kind: ${proposalRow.kind})\n\n` +
+      "```json\n" +
+      JSON.stringify(JSON.parse(proposalRow.payloadJson), null, 2) +
+      "\n```\n\n" +
+      `## Its current citations (from the rant that birthed it)\n\n${cited.length ? cited.map(x => extractionMd(x, markers)).join("\n") : "_(none)_"}\n`,
+  );
+  write(dir, "corpus.md", corpusMd(markers));
 }
 
 // --- current-state renderings (shared by deriver / prompt generator / schedule agent) ---

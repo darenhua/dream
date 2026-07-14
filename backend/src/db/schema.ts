@@ -457,6 +457,7 @@ export const agentRun = sqliteTable("agent_run", {
       "distiller",
       "deriver",
       "proposal_reviser",
+      "proposal_enricher",
       "schedule_agent",
       "prompt_generator",
       "daily_writeup",
