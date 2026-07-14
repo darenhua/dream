@@ -16,6 +16,7 @@ import { EventsFeed } from "./admin/EventsFeed";
 import { HistoryPanel } from "./admin/HistoryPanel";
 import { ProposalLedger } from "./admin/ProposalLedger";
 import { QuickAdd } from "./admin/QuickAdd";
+import { StrikesSection } from "./admin/StrikesSection";
 
 const STATE_STYLE: Record<PipelineState, string> = {
   parse_failed: "bg-red-200 text-red-900 dark:bg-red-900 dark:text-red-100",
@@ -96,6 +97,7 @@ export function AdminDashboard({
         onReviewExtractions={onReviewExtractions}
       />
       <CalendarPanel refreshKey={refreshTick} />
+      <StrikesSection refreshKey={refreshTick} onChanged={handleChanged} />
       <AnchorConfig onChanged={handleChanged} />
       <QuickAdd onChanged={handleChanged} />
       <ProposalLedger refreshKey={refreshTick} />

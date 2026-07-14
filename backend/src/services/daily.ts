@@ -16,7 +16,16 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
   const report: Record<string, unknown> = {};
 
   // 1. Vitals + strike check — the tripwire that fires while the user is
-  //    absent. (Filled in by the strike engine; placeholder until then.)
+  //    absent. Dark until a primary witness chat is linked and alerts enabled.
+  try {
+    const { runStrikeCheck } = await import("./strikes");
+    const { todayLocal } = await import("./writeup");
+    report.strikes = await runStrikeCheck(todayLocal());
+  } catch (e) {
+    report.strikes = { error: e instanceof Error ? e.message : String(e) };
+    emit("heartbeat", null, "heartbeat_step_failed", { step: "strikes", error: String(e) });
+  }
+
   // 2. Duty pings — visible-but-ducking staleness → factual friend lines.
   //    (Filled in by the outbox/messenger work.)
   // 3. Outbox flush — send approved messages past their notBefore.

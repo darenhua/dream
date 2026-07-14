@@ -433,6 +433,18 @@ export const config = sqliteTable("config", {
   updatedAt: updatedAt(),
 });
 
+// Strike bookkeeping ONLY — the counts themselves are always computed live
+// from existing tables (strikes.ts), never stored. This singleton holds the
+// two things that aren't derivable: pause mode and one-alert-per-episode.
+export const strikeState = sqliteTable("strike_state", {
+  id: text("id").primaryKey().default("singleton"),
+  pausedUntil: text("paused_until"), // YYYY-MM-DD; "pause 10d — traveling"
+  pauseReason: text("pause_reason"),
+  armed: integer("armed", { mode: "boolean" }).notNull().default(true), // re-arms when total < threshold
+  lastAlertAt: text("last_alert_at"),
+  updatedAt: updatedAt(),
+});
+
 // Kept but demoted: the daily glance bait, not the trajectory mechanism.
 export const dailyWriteup = sqliteTable("daily_writeup", {
   id: id(),

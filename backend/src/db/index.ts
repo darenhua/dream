@@ -39,6 +39,7 @@ export function wipeAllTables() {
     "environment_item",
     "habit",
     "daily_writeup",
+    "strike_state",
     "proposal",
     "extraction",
     "agent_run",

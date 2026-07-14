@@ -6,6 +6,7 @@ import { ListCards } from "../components/ListCards";
 import { RantCandidatesGate } from "../components/RantCandidatesGate";
 import { ReadBackGate } from "../components/ReadBackGate";
 import { TodayStrip } from "../components/TodayStrip";
+import { VitalsStrip } from "../components/VitalsStrip";
 import { WriteupFootnote } from "../components/WriteupFootnote";
 
 // The main feed, in attention order: anchors (one-tap), today's schedule,
@@ -28,6 +29,7 @@ export function MainFeed({
 }) {
   return (
     <div className="flex flex-col gap-4">
+      <VitalsStrip tick={tick} />
       <AnchorRow tick={tick} onChanged={onChanged} />
       <TodayStrip tick={tick} />
       <RantCandidatesGate tick={tick} onChanged={onChanged} />

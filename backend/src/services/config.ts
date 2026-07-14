@@ -89,6 +89,13 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   DINNER_WINDOW: null, // e.g. { start: "19:00", end: "20:00" }
   EXPERIMENT_DEFAULT_DURATION_DAYS: 7,
   GCAL_SYNC_MIN_INTERVAL_MIN: 10,
+  // The tripwire (all derived — see strikes.ts). Tune here, in daylight.
+  STRIKE_RANT_DAYS: 3, // 1 strike per this many days without an accepted rant
+  STRIKE_THRESHOLD: 3, // total strikes that fire the one alert per episode
+  EXPERIMENT_QUEUE_NUDGE_DAY: 5, // running-experiment day to nudge "queue the next one"
+  STRIKE_ALERTS_ENABLED: false, // stays dark until a primary witness chat is linked AND this is flipped
+  "TEMPLATE.strike_alert":
+    "Heads up: {{FACTS}}. Don't ask whether he did the thing — ask what's in the way.",
   "PROMPT.preamble": PREAMBLE,
   "PROMPT.rant_detector": PROMPT_RANT_DETECTOR,
   "PROMPT.distiller": PROMPT_DISTILLER,

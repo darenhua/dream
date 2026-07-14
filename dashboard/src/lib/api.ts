@@ -57,6 +57,35 @@ export interface ConversationRow {
   pipelineState: PipelineState;
 }
 
+export interface Vitals {
+  lastAcceptedRantAt: string | null;
+  daysSinceLastRant: number | null;
+  lastExtractionConfirmedAt: string | null;
+  lastProposalResolvedAt: string | null;
+  lastVisitAt: string | null;
+  pendingCandidates: number;
+  awaitingReadBack: number;
+  pendingProposals: number;
+  experiment: {
+    running: { id: string; title: string; dayN: number; plannedDurationDays: number | null } | null;
+    queueDepth: number;
+    lastEndedAt: string | null;
+    daysSinceEnded: number | null;
+  };
+}
+
+export interface StrikeReport {
+  total: number;
+  rantStrikes: number;
+  queueStrikes: number;
+  paused: boolean;
+  pausedUntil: string | null;
+  pauseReason: string | null;
+  armed: boolean;
+  queueNudge: boolean;
+  facts: { daysSinceLastRant: number | null; emptyQueueDays: number };
+}
+
 export type ExtractionKind =
   | "goal_talk"
   | "habit_talk"
@@ -340,6 +369,10 @@ export interface HealthReport {
 
 export const api = {
   visit: () => request<{ ok: boolean }>("/user/visit", { method: "POST" }),
+  vitals: () => request<{ asOf: string; vitals: Vitals; strikes: StrikeReport }>("/vitals"),
+  pauseStrikes: (days: number, reason?: string) =>
+    request<{ pausedUntil: string }>("/strikes/pause", { method: "POST", body: JSON.stringify({ days, reason }) }),
+  resumeStrikes: () => request<{ ok: boolean }>("/strikes/resume", { method: "POST", body: "{}" }),
 
   // --- conversations + pipeline ---
   conversations: (params: { state?: string; q?: string; slugged?: string; rant?: string } = {}) => {
