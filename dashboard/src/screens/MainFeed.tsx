@@ -1,5 +1,4 @@
 import type { ConversationRow } from "@/lib/api";
-import { AnchorRow } from "../components/AnchorRow";
 import { ExperimentQueue } from "../components/ExperimentQueue";
 import { GoalsCard } from "../components/GoalsCard";
 import { ListCards } from "../components/ListCards";
@@ -36,7 +35,6 @@ export function MainFeed({
   return (
     <div className="flex flex-col gap-4">
       <VitalsStrip tick={tick} />
-      <AnchorRow tick={tick} onChanged={onChanged} />
       <TodayStrip tick={tick} />
       <RantCandidatesGate tick={tick} onChanged={onChanged} />
       {readBackCount > 0 && (
