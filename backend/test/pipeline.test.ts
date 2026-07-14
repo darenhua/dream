@@ -15,6 +15,8 @@ import { pipelineState } from "../src/services/pipeline";
 import { pendingDistills } from "../src/services/distill";
 import { pendingDerives } from "../src/services/derive";
 import { acceptRant, detectPendingRants, rejectRant } from "../src/services/rantDetection";
+import { cancelShaping, finishShaping, startShaping } from "../src/services/shaping";
+import { chatMessage } from "../src/db/schema";
 
 function makeConversation(overrides: Partial<typeof conversation.$inferInsert> = {}) {
   return db
@@ -128,6 +130,38 @@ describe("conversation pipeline FSM", () => {
     const broken = makeConversation({ parseError: "broken chain", contentJson: null });
     expect(pipelineState(broken)).toBe("parse_failed");
     expect(pendingDistills()).toHaveLength(0);
+  });
+
+  test("finished shaping conversations enter the pipeline pre-accepted", () => {
+    const { sessionId } = startShaping();
+    // No user turn yet → nothing to keep.
+    expect(() => finishShaping(sessionId)).toThrow();
+
+    db.insert(chatMessage)
+      .values({ sessionId, role: "user", content: "I want to try phone-free saturday mornings" })
+      .run();
+    const { conversationId } = finishShaping(sessionId);
+
+    const convo = db.select().from(conversation).where(eq(conversation.id, conversationId)).get()!;
+    expect(convo.source).toBe("in_app");
+    expect(convo.rantStatus).toBe("accepted");
+    expect(pipelineState(convo)).toBe("awaiting_distill");
+    expect(pendingDistills().map(c => c.id)).toContain(conversationId);
+    // The transcript carries both sides of the conversation.
+    const transcript = JSON.parse(convo.contentJson!) as { role: string; content: string }[];
+    expect(transcript.some(m => m.role === "assistant")).toBe(true);
+    expect(transcript.some(m => m.content.includes("saturday mornings"))).toBe(true);
+
+    // A finished session can't be finished twice or cancelled.
+    expect(() => finishShaping(sessionId)).toThrow();
+    expect(cancelShaping(sessionId)).toBe(false);
+  });
+
+  test("cancelled shaping sessions leave no conversation behind", () => {
+    const before = db.select().from(conversation).all().length;
+    const { sessionId } = startShaping();
+    expect(cancelShaping(sessionId)).toBe(true);
+    expect(db.select().from(conversation).all().length).toBe(before);
   });
 });
 

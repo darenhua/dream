@@ -332,38 +332,5 @@ export function patchTask(taskId: string, status: "pending" | "scheduled" | "don
   return updated;
 }
 
-// The per-task copy-prompt: full context from the task's provenance trail,
-// pasteable into a fresh Claude thread to talk through execution.
-export function taskCopyPrompt(taskId: string): string | null {
-  const task = db.select().from(experimentTask).where(eq(experimentTask.id, taskId)).get();
-  if (!task) return null;
-  const exp = db.select().from(experiment).where(eq(experiment.id, task.experimentId)).get();
-  const linkedIds = db
-    .select({ extractionId: extractionLink.extractionId })
-    .from(extractionLink)
-    .where(and(eq(extractionLink.entityType, "experiment_task"), eq(extractionLink.entityId, taskId)))
-    .all()
-    .map(r => r.extractionId);
-  // Fall back to the experiment's own provenance when the task has none.
-  const fallbackIds = linkedIds.length
-    ? []
-    : db
-        .select({ extractionId: extractionLink.extractionId })
-        .from(extractionLink)
-        .where(and(eq(extractionLink.entityType, "experiment"), eq(extractionLink.entityId, task.experimentId)))
-        .all()
-        .map(r => r.extractionId);
-  const ids = linkedIds.length ? linkedIds : fallbackIds;
-  const cited = ids.length ? db.select().from(extraction).where(inArray(extraction.id, ids)).all() : [];
-
-  const template = getConfig<string>("PROMPT.task_copy");
-  return template
-    .replaceAll("{{TASK_TITLE}}", task.title)
-    .replaceAll("{{EXPERIMENT_TITLE}}", exp?.title ?? "")
-    .replaceAll("{{HYPOTHESIS}}", exp?.hypothesisMd ?? "_(none recorded)_")
-    .replaceAll("{{TASK_DETAIL}}", task.detail ?? task.title)
-    .replaceAll(
-      "{{EXTRACTIONS}}",
-      cited.length ? cited.map(x => `- (${x.kind}) ${x.text}`).join("\n") : "_(no linked passages)_",
-    );
-}
+// (The per-task copy-prompt is gone — talking through execution happens
+// in-app now; see routes/shaping.ts for the experiment-level conversation.)

@@ -14,6 +14,7 @@ import { ProposalReview } from "./screens/ProposalReview";
 import { ReviewInterview } from "./screens/ReviewInterview";
 import { ReviewWriteup } from "./screens/ReviewWriteup";
 import { ScheduleChat } from "./screens/ScheduleChat";
+import { ShapingChat } from "./screens/ShapingChat";
 import "./index.css";
 
 // View shell: the feed is home; review screens and the chats are full-screen
@@ -24,7 +25,8 @@ export type View =
   | { name: "review-proposals" }
   | { name: "schedule-chat"; sessionId: string }
   | { name: "review-writeup"; experimentId: string }
-  | { name: "review-interview"; sessionId: string; experimentId: string };
+  | { name: "review-interview"; sessionId: string; experimentId: string }
+  | { name: "shaping-chat"; sessionId: string };
 
 export function App() {
   const [view, setView] = useState<View>({ name: "feed" });
@@ -140,6 +142,15 @@ export function App() {
               setView({ name: "feed" });
             }}
           />
+        ) : view.name === "shaping-chat" ? (
+          <ShapingChat
+            sessionId={view.sessionId}
+            onDone={() => {
+              bump();
+              setView({ name: "feed" });
+            }}
+            onCancel={() => setView({ name: "feed" })}
+          />
         ) : view.name === "review-interview" ? (
           <ReviewInterview
             sessionId={view.sessionId}
@@ -158,6 +169,7 @@ export function App() {
             onReviewExtractions={id => setView({ name: "review-extractions", conversationId: id })}
             onOpenScheduleChat={sessionId => setView({ name: "schedule-chat", sessionId })}
             onOpenReview={experimentId => setView({ name: "review-writeup", experimentId })}
+            onOpenShaping={sessionId => setView({ name: "shaping-chat", sessionId })}
           />
         )}
       </main>

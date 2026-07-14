@@ -46,10 +46,6 @@ Rules:
 - Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.
 - Tag every task and habit block with the goal_ids it addresses, using the ids from the target-goals section. These tags control which accountability friend can see which part of the experiment — tag precisely.`;
 
-const PROMPT_GENERATOR = `Write a self-contained prompt the user will paste into a fresh Claude conversation. That Claude's job is to interview the user toward their next experiment idea — it must NOT design the experiment itself; the conversation it hosts becomes a rant that re-enters this system and is distilled like any other.
-
-The prompt you write must: (1) brief that Claude on the user's full current state exactly as given in the context files (prioritized goals with identity clauses and syntheses, habits, environment, experiment history with outcomes and improvement notes, the attempt heatmap, and the free-time report); (2) instruct it to interview the user about what change would actually help right now — bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding; (3) instruct it to help the user talk through ONE concrete experiment-worthy idea in their own words; (4) remind the user at the end to type the marker slug so the conversation enters the system on next import. Output the prompt as plain markdown, nothing else.`;
-
 const PROMPT_RANT_DETECTOR = `candidates.md lists imported conversations (id, title, message count, opening excerpt). For each, decide: is this a RANT — self-discovery material worth distilling into the user's growth system?
 
 A rant is the user digging into their own life: complaints about their situation or themselves, goals and who they want to become, habits they have or struggle with, their environment and obligations, experiences they want, changes they're considering. It is about the USER's inner or outer life.
@@ -74,22 +70,11 @@ const PROMPT_REVIEW_INTERVIEW = `You are interviewing the user to flesh out an e
 
 Ask 3-4 pointed questions, ONE at a time, that surface what the draft is missing: the resistance story behind skipped tasks, what a specific day actually looked like, what surprised him, what he'd renegotiate. Short questions, his words matter more than yours. When he's said what matters, tell him to hit finish — the transcript regenerates the draft.`;
 
+const PROMPT_EXPERIMENT_SHAPING = `You are interviewing the user toward their NEXT experiment idea, in a quick in-app chat. You must NOT design the experiment yourself — this conversation becomes a rant that re-enters the system and is distilled like any other; the deriver proposes, the human ratifies.
+
+Your context shows the full current state (prioritized goals with identity clauses, habits, environment, experiment history with outcomes and improvement notes, the free-time report). Interview, ONE question at a time, about what change would actually help right now: bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding. Help the user talk through ONE concrete experiment-worthy idea in their own words — their phrasing, not yours. When the idea is concrete enough to distill, tell them to hit finish.`;
+
 const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), the pipeline counts (rants awaiting read-back, pending proposals), goals, and the current experiment or queue. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if anything awaits the user (read-backs or proposals), a "caught this before you forgot it" teaser, else a gentle note on the current experiment or queue. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
-
-const PROMPT_TASK_COPY = `# Task: {{TASK_TITLE}}
-
-I'm working on an experiment called "{{EXPERIMENT_TITLE}}" and I want to talk through how to actually execute one specific piece of it.
-
-## The experiment's hypothesis
-{{HYPOTHESIS}}
-
-## The task
-{{TASK_DETAIL}}
-
-## What I said that led here (my own words, extracted from past conversations)
-{{EXTRACTIONS}}
-
-Help me figure out how to actually do this task: what it constitutes, how to make it easier, what could get in the way, and the smallest version that still counts.`;
 
 // The attention budget and prompts live here, visible and editable via /api/config.
 export const CONFIG_DEFAULTS: Record<string, unknown> = {
@@ -130,13 +115,12 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.deriver": PROMPT_DERIVER,
   "PROMPT.proposal_reviser": PROMPT_PROPOSAL_REVISER,
   "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
-  "PROMPT.prompt_generator": PROMPT_GENERATOR,
+  "PROMPT.experiment_shaping": PROMPT_EXPERIMENT_SHAPING,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
   "PROMPT.review_writeup": PROMPT_REVIEW_WRITEUP,
   "PROMPT.witness_composer": PROMPT_WITNESS_COMPOSER,
   "PROMPT.witness_prompter": PROMPT_WITNESS_PROMPTER,
   "PROMPT.review_interview": PROMPT_REVIEW_INTERVIEW,
-  "PROMPT.task_copy": PROMPT_TASK_COPY,
 };
 
 export function getConfig<T>(key: string): T {

@@ -35,7 +35,7 @@ l3Routes.post("/sessions/:id/stream", async c => {
   const text = lastUserText(body);
   if (!text || !text.trim()) return c.json({ error: "no user message in request" }, 400);
   try {
-    return streamTurn(c.req.param("id"), text);
+    return await streamTurn(c.req.param("id"), text);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

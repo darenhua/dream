@@ -7,6 +7,8 @@ import { chatMessage, chatSession, experiment } from "../db/schema";
 import { env } from "../lib/env";
 import { resolveModel } from "./agentRunner";
 import { getConfig } from "./config";
+import { budgetMd, stateMd } from "./projector";
+import { freeTimeReport } from "./promptGenerator";
 import { getReview } from "./reviewWriteup";
 
 // L3: Bedrock conversations, no tools — quick in-app chats that turn messy
@@ -32,7 +34,7 @@ export function getL3Session(sessionId: string) {
 }
 
 // Purpose-specific system context, projected fresh per turn.
-function systemFor(session: typeof chatSession.$inferSelect): string {
+async function systemFor(session: typeof chatSession.$inferSelect): Promise<string> {
   const preamble = getConfig<string>("PROMPT.preamble");
   const prompt = getConfig<string>(`PROMPT.${session.purpose}`);
   let context = "";
@@ -45,16 +47,21 @@ function systemFor(session: typeof chatSession.$inferSelect): string {
       if (review?.draftMd) context += `\n\n# Current draft writeup\n\n${review.draftMd}`;
     }
   }
+  if (session.purpose === "experiment_shaping") {
+    // The same full-state briefing the old paste-into-Claude prompt carried.
+    context = `\n\n${stateMd()}\n\n${budgetMd()}\n\n# Free time (coming days)\n\n${await freeTimeReport()}`;
+  }
   return `${preamble}\n\n${prompt}${context}`;
 }
 
 // One streamed turn: persist the user message now, the assistant message on
 // finish. Returns the AI SDK Response (fetch-native — Hono returns it as-is).
-export function streamTurn(sessionId: string, userText: string): Response {
+export async function streamTurn(sessionId: string, userText: string): Promise<Response> {
   const found = getL3Session(sessionId);
   if (!found) throw new Error(`session ${sessionId} not found`);
   if (found.session.status !== "open") throw new Error(`session is ${found.session.status}`);
 
+  const system = await systemFor(found.session);
   db.insert(chatMessage).values({ sessionId, role: "user", content: userText }).run();
 
   const history: ModelMessage[] = [
@@ -64,7 +71,7 @@ export function streamTurn(sessionId: string, userText: string): Response {
 
   const result = streamText({
     model: bedrock(resolveModel()),
-    system: systemFor(found.session),
+    system,
     messages: history,
     onFinish: ({ text }) => {
       db.insert(chatMessage).values({ sessionId, role: "assistant", content: text }).run();

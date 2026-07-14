@@ -317,19 +317,6 @@ export function daysSinceLastVisit(): number | null {
   return lastVisit ? Math.floor((Date.now() - new Date(lastVisit).getTime()) / 86_400_000) : null;
 }
 
-// --- prompt generator: full state, for the paste-into-Claude-app prompt ---
-
-export function projectPromptGenerator(dir: string, freeTimeReport: string) {
-  write(dir, "state.md", stateMd());
-  write(dir, "budget.md", budgetMd());
-  write(dir, "free-time.md", freeTimeReport);
-  write(
-    dir,
-    "marker.md",
-    `# Marker slug\n\nThe user marks a conversation for import by typing this on its own message: \`${getConfig<string>("SLUG_MARKER")}\`\n`,
-  );
-}
-
 // --- writeup: pipeline counts + state, demoted glance bait ---
 
 export function projectWriteup(dir: string, pipelineCounts: { awaitingReview: number; pendingProposals: number }) {

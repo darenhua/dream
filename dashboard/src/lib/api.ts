@@ -557,19 +557,12 @@ export const api = {
   archiveExperiment: (id: string) => request(`/experiments/${id}/archive`, { method: "POST", body: "{}" }),
   patchTask: (taskId: string, status: TaskRow["status"]) =>
     request<TaskRow>(`/experiments/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ status }) }),
-  taskCopyPrompt: async (taskId: string) => {
-    const res = await fetch(`/api/experiments/tasks/${taskId}/copy-prompt`);
-    if (!res.ok) throw new ApiError(res.status, "copy prompt unavailable");
-    return res.text();
-  },
-  experimentPrompt: async () => {
-    const res = await fetch("/api/experiments/prompt");
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new ApiError(res.status, body.error ?? "prompt unavailable");
-    }
-    return res.text();
-  },
+  // --- experiment shaping (the in-app replacement for copy-paste prompts) ---
+  startShaping: () => request<{ sessionId: string; opener: string }>("/shaping", { method: "POST", body: "{}" }),
+  finishShaping: (sessionId: string) =>
+    request<{ conversationId: string }>(`/shaping/${sessionId}/finish`, { method: "POST", body: "{}" }),
+  cancelShaping: (sessionId: string) =>
+    request<{ ok: boolean }>(`/shaping/${sessionId}/cancel`, { method: "POST", body: "{}" }),
 
   // --- schedule chat ---
   chatSession: (id: string) => request<ChatSessionRow>(`/chat/sessions/${id}`),

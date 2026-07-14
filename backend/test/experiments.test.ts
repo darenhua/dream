@@ -22,7 +22,6 @@ import {
   listQueue,
   patchTask,
   pickExperiment,
-  taskCopyPrompt,
 } from "../src/services/experiments";
 import { goalDetail, habitDetail } from "../src/services/entityDetail";
 import { attemptCounts } from "../src/services/goals";
@@ -231,13 +230,6 @@ describe("experiment FSM", () => {
     expect(hd.status).toBe("lapsed");
   });
 
-  test("task copy-prompt renders experiment context", () => {
-    const exp = queued();
-    pickExperiment(exp.id);
-    commitPlan(exp.id, PLAN);
-    const task = db.select().from(experimentTask).where(eq(experimentTask.experimentId, exp.id)).all()[0]!;
-    const md = taskCopyPrompt(task.id)!;
-    expect(md).toContain("buy an alarm clock");
-    expect(md).toContain(exp.title);
-  });
+  // (task copy-prompt removed: system-initiated context gathering happens
+  // in-app now — see shaping tests in pipeline.test.ts)
 });
