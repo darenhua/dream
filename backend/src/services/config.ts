@@ -17,7 +17,11 @@ Rules: distill each passage in the user's own first-person register — no coach
 
 const PROMPT_DERIVER = `You are interpreting ONE newly-reviewed rant against everything already known.
 
-Files: trigger.md (the new rant's confirmed extractions — the occasion for this run), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
+Files: trigger.md (the new rant's confirmed extractions — the occasion for this run — plus the surrounding conversation each passage came from), pending-proposals.md (proposals already awaiting the human's ratification), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
+
+Read pending-proposals.md FIRST. NEVER propose something a pending proposal already covers — the budget is for genuinely new material only. If the new extractions merely reinforce a pending proposal, propose nothing for it; once it's ratified, a future run can enrich it through an update citing this rant. Only propose when your new extractions point at something no pending proposal and no existing entity accounts for, or add a genuinely different dimension to a RATIFIED entity (via an update).
+
+Use the surrounding-conversation blocks in trigger.md to understand what each extraction actually meant in context — the register, the stakes, what prompted it. Quote and synthesize in the user's own voice from that fuller picture, not just the extracted line.
 
 The new extractions are the occasion; the whole corpus is the evidence. Propose state changes ONLY when justified. Convergence rules:
 - You only ADD and UPDATE. You never remove anything and never change a goal's status — retiring, succeeding, or removing items is the human's manual action. If evidence contradicts an existing item, say so inside an update's reason/note text.

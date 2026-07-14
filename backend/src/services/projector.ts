@@ -105,6 +105,59 @@ function entityTitles(): Map<string, string> {
   return map;
 }
 
+// Merged transcript windows around the trigger extractions: how each passage
+// was actually said. Windows overlap-merge so a dense rant reads as one block.
+function triggerContextMd(contentJson: string | null, rows: ExtractionRow[], radius = 2): string {
+  if (!contentJson) return "";
+  const messages = JSON.parse(contentJson) as TranscriptMessage[];
+  const spans = rows
+    .filter(x => x.startIdx !== null && x.endIdx !== null)
+    .map(x => [Math.max(0, x.startIdx! - radius), Math.min(messages.length - 1, x.endIdx! + radius)] as const)
+    .sort((a, b) => a[0] - b[0]);
+  if (!spans.length) return "";
+  const merged: [number, number][] = [];
+  for (const [s, e] of spans) {
+    const last = merged.at(-1);
+    if (last && s <= last[1] + 1) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  const blocks = merged.map(([s, e]) =>
+    messages
+      .slice(s, e + 1)
+      .map((m, i) => `**[${s + i}] ${m.role === "user" ? "me" : "claude"}:** ${m.content.slice(0, 600)}`)
+      .join("\n\n"),
+  );
+  return (
+    `\n## How it was said (surrounding conversation, message indices match the spans above)\n\n` +
+    blocks.join("\n\n_[…]_\n\n") +
+    "\n"
+  );
+}
+
+// Pending proposals: what already awaits the human. The deriver's first duty
+// is NOT duplicating these — the budget is spent on genuinely new material.
+function pendingProposalsMd(): string {
+  const rows = db.select().from(proposal).where(eq(proposal.status, "pending")).all();
+  if (!rows.length) return "# Proposals already awaiting ratification\n\n_(none pending)_\n";
+  const lines = rows.map(p => {
+    const payload = JSON.parse(p.payloadJson) as Record<string, unknown>;
+    const title =
+      (payload.title as string) ??
+      (payload.identity_clause as string) ??
+      (payload.note as string)?.slice(0, 80) ??
+      "(untitled)";
+    const body =
+      (payload.hypothesis_md as string) ?? (payload.synthesis_md as string) ?? (payload.detail as string) ?? "";
+    const cited = Array.isArray(payload.extraction_ids) ? (payload.extraction_ids as string[]) : [];
+    return (
+      `- **${p.kind}**: ${title}` +
+      (body ? `\n  ${String(body).slice(0, 240).replaceAll("\n", " ")}` : "") +
+      (cited.length ? `\n  cites: ${cited.map(id => `\`${id}\``).join(", ")}` : "")
+    );
+  });
+  return `# Proposals already awaiting ratification\n\n${lines.join("\n")}\n`;
+}
+
 export function projectDerive(conversationId: string, dir: string) {
   const convo = db.select().from(conversation).where(eq(conversation.id, conversationId)).get();
   if (!convo) throw new Error(`conversation ${conversationId} not found`);
@@ -123,8 +176,11 @@ export function projectDerive(conversationId: string, dir: string) {
     `# The new rant: ${convo.title ?? "(untitled)"} (${(convo.sourceUpdatedAt ?? "").slice(0, 10)})\n\n` +
       `These freshly-confirmed extractions are the occasion for this run.\n\n` +
       (trigger.length ? trigger.map(x => extractionMd(x, markers)).join("\n") : "_(none)_") +
-      "\n",
+      "\n" +
+      triggerContextMd(convo.contentJson, trigger),
   );
+
+  write(dir, "pending-proposals.md", pendingProposalsMd());
 
   // The whole confirmed corpus, dated, grouped by conversation — the system's memory.
   const corpus = db
