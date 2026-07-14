@@ -11,7 +11,11 @@ import { emit } from "../events";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const SCOPE = "https://www.googleapis.com/auth/calendar";
-export const LOOPBACK_REDIRECT = "http://localhost:8765/callback";
+// The API server hosts the callback itself, so the dashboard's "connect"
+// button completes the whole flow with nothing else running (Desktop-app
+// clients accept any localhost port without pre-registration). Remote (VM)
+// setups forward this port over ssh, or use the manual code-paste fallback.
+export const LOOPBACK_REDIRECT = `http://localhost:${env.PORT}/api/calendar/oauth/callback`;
 
 export function authRow() {
   return db.select().from(googleAuth).where(eq(googleAuth.id, "singleton")).get() ?? null;

@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { db } from "../../db";
 import { calendarEvent } from "../../db/schema";
 import { tapAnchor, anchorsForDate } from "../../services/anchors";
-import { busyByDate, isConnected, syncIncremental } from "../../services/calendarSync";
+import { busyByDate, ensureDreamCalendar, isConnected, syncIncremental } from "../../services/calendarSync";
 import { authRow, consentUrl, disconnect, exchangeCode } from "../../services/google/auth";
 import { getConfig } from "../../services/config";
 import { freeTimeForDates, upcomingDates } from "../../services/freeTime";
@@ -21,12 +21,40 @@ calendarRoutes.get("/auth/url", c => {
   }
 });
 
-// Manual code-paste fallback (the loopback helper script is the happy path).
+// The consent redirect lands here — the server completes the flow itself, so
+// the admin panel's button is the whole story: open consent → approve → done.
+calendarRoutes.get("/oauth/callback", async c => {
+  const code = c.req.query("code");
+  const err = c.req.query("error");
+  const page = (title: string, body: string, status: 200 | 400 | 500 = 200) =>
+    c.html(
+      `<!doctype html><meta charset="utf-8"><title>${title}</title><body style="font-family:system-ui;max-width:32rem;margin:4rem auto;line-height:1.5"><h2>${title}</h2><p>${body}</p></body>`,
+      status,
+    );
+  if (err) return page("consent failed", String(err), 400);
+  if (!code) return page("consent failed", "no authorization code in the redirect", 400);
+  try {
+    await exchangeCode(code);
+    const calendarId = await ensureDreamCalendar();
+    return page(
+      "dream is connected to google calendar",
+      `dedicated calendar: <code>${calendarId}</code> — you can close this tab and head back to the dashboard.`,
+    );
+  } catch (e) {
+    return page("token exchange failed", e instanceof Error ? e.message : String(e), 500);
+  }
+});
+
+// Manual code-paste fallback for remote setups (VM) where the localhost
+// redirect can't reach the server: copy the `code` param from the failed
+// redirect URL and paste it into the admin panel.
 calendarRoutes.post("/auth/token", async c => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.code) return c.json({ error: "code required" }, 400);
   try {
-    return c.json(await exchangeCode(String(body.code).trim()));
+    const result = await exchangeCode(String(body.code).trim());
+    await ensureDreamCalendar();
+    return c.json(result);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

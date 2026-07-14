@@ -59,20 +59,24 @@ export function CalendarPanel({ refreshKey }: { refreshKey: number }) {
         ) : (
           <>
             <p className="text-xs text-muted-foreground">
-              connect via the helper script on the box (<span className="font-mono">bun run scripts/gcal-auth.ts</span>)
-              — or open the consent URL and paste the code from the failed localhost redirect below.
+              one click: consent opens in a new tab and the server finishes the rest. remote setup
+              (VM) where localhost can't reach the server: let the redirect fail, copy the{" "}
+              <span className="font-mono">code</span> param from its URL, paste it below.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
                 size="sm"
                 disabled={busy}
                 onClick={async () => {
-                  const { url } = await api.calendarAuthUrl();
-                  window.open(url, "_blank");
+                  try {
+                    const { url } = await api.calendarAuthUrl();
+                    window.open(url, "_blank");
+                  } catch (e) {
+                    setMessage(`consent url failed: ${e instanceof Error ? e.message : String(e)}`);
+                  }
                 }}
               >
-                <ExternalLink className="size-3" /> open consent URL
+                <ExternalLink className="size-3" /> connect google calendar
               </Button>
               <Input
                 placeholder="paste authorization code"
