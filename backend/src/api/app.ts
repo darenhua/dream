@@ -14,6 +14,7 @@ import { proposalRoutes } from "./routes/proposals";
 import { environmentRoutes, experienceRoutes, habitRoutes } from "./routes/registries";
 import { userRoutes, writeupRoutes } from "./routes/user";
 import { strikeRoutes, vitalsRoutes } from "./routes/vitals";
+import { witnessRoutes } from "./routes/witnesses";
 
 export const app = new Hono();
 
@@ -36,4 +37,5 @@ app.route("/api/user", userRoutes);
 app.route("/api/writeup", writeupRoutes);
 app.route("/api/vitals", vitalsRoutes);
 app.route("/api/strikes", strikeRoutes);
+app.route("/api/witnesses", witnessRoutes);
 app.route("/api/agent-runs", agentRunRoutes);

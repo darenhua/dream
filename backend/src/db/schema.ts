@@ -276,6 +276,66 @@ export const experimentTask = sqliteTable("experiment_task", {
   updatedAt: updatedAt(),
 });
 
+// Which goals a specific task addresses — sub-experiment granularity for
+// witness scoping. A task with no rows here is invisible to every witness
+// (fail closed); commitPlan defaults untagged tasks to the experiment's goals.
+export const experimentTaskGoal = sqliteTable(
+  "experiment_task_goal",
+  {
+    id: id(),
+    experimentTaskId: text("experiment_task_id")
+      .notNull()
+      .references(() => experimentTask.id),
+    goalId: text("goal_id")
+      .notNull()
+      .references(() => goal.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("experiment_task_goal_unique").on(t.experimentTaskId, t.goalId)],
+);
+
+// The witness registry: accountability friends. The seat is the feature, the
+// occupant is replaceable. chatId binds the friend's chat once a transport
+// links it; until then the manual copy-paste protocol carries everything.
+export const witness = sqliteTable("witness", {
+  id: id(),
+  name: text("name").notNull(),
+  platform: text("platform", { enum: ["manual", "imessage", "telegram"] })
+    .notNull()
+    .default("manual"),
+  handle: text("handle"), // phone/email on the platform
+  timezone: text("timezone").notNull().default("America/New_York"),
+  status: text("status", { enum: ["invited", "active", "paused", "removed"] })
+    .notNull()
+    .default("invited"),
+  isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false), // ≤1 enforced in service
+  inviteCode: text("invite_code").unique(), // one-time chat-link code
+  chatId: text("chat_id"), // transport chat GUID; null until linked
+  linkedAt: text("linked_at"),
+  promptCadenceDays: integer("prompt_cadence_days").notNull().default(4), // friend-tunable (less/more)
+  lastPromptAt: text("last_prompt_at"),
+  mutedUntil: text("muted_until"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// Goal-scoped visibility: a witness sees ONLY content reachable from these
+// goals. Enforced at the query layer (witnessScope.ts), not the prompt layer.
+export const witnessGoal = sqliteTable(
+  "witness_goal",
+  {
+    id: id(),
+    witnessId: text("witness_id")
+      .notNull()
+      .references(() => witness.id),
+    goalId: text("goal_id")
+      .notNull()
+      .references(() => goal.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("witness_goal_unique").on(t.witnessId, t.goalId)],
+);
+
 // The in-dashboard schedule-agent conversation for activating an experiment.
 export const chatSession = sqliteTable("chat_session", {
   id: id(),

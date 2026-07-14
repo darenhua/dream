@@ -7,6 +7,7 @@ import { RantCandidatesGate } from "../components/RantCandidatesGate";
 import { ReadBackGate } from "../components/ReadBackGate";
 import { TodayStrip } from "../components/TodayStrip";
 import { VitalsStrip } from "../components/VitalsStrip";
+import { WitnessCard } from "../components/WitnessCard";
 import { WriteupFootnote } from "../components/WriteupFootnote";
 
 // The main feed, in attention order: anchors (one-tap), today's schedule,
@@ -41,6 +42,7 @@ export function MainFeed({
         <GoalsCard tick={tick} onChanged={onChanged} />
         <ListCards tick={tick} onChanged={onChanged} />
       </div>
+      <WitnessCard tick={tick} onChanged={onChanged} />
       <WriteupFootnote tick={tick} />
     </div>
   );

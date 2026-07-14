@@ -5,6 +5,7 @@ import {
   experiment,
   experimentGoal,
   experimentTask,
+  experimentTaskGoal,
   extraction,
   extractionLink,
   goalEvidence,
@@ -170,6 +171,16 @@ export function commitPlan(
   if (!row) return { ok: false, error: "experiment not found" };
   if (row.status !== "scheduling") return { ok: false, error: `experiment is ${row.status}, not scheduling` };
 
+  // Goal tags gate witness visibility, so they must always resolve to real
+  // goals of THIS experiment: agent-provided ids are intersected with the
+  // experiment's own goal set; missing/empty tags default to the full set
+  // (an untagged task must never become an invisible orphan).
+  const experimentGoalIds = goalIdsFor(experimentId);
+  const resolveGoalTags = (tagged?: string[]): string[] => {
+    const valid = (tagged ?? []).filter(g => experimentGoalIds.includes(g));
+    return valid.length > 0 ? valid : experimentGoalIds;
+  };
+
   let updated: ExperimentRow;
   db.transaction(() => {
     updated = db
@@ -216,6 +227,13 @@ export function commitPlan(
           .onConflictDoNothing()
           .run();
       }
+      // Task → goal links: the granularity witness scoping filters on.
+      for (const goalId of resolveGoalTags(t.goal_ids)) {
+        db.insert(experimentTaskGoal)
+          .values({ experimentTaskId: task.id, goalId })
+          .onConflictDoNothing()
+          .run();
+      }
     }
 
     for (const h of plan.habit_blocks) {
@@ -229,6 +247,7 @@ export function commitPlan(
         durationMinutes: h.duration_minutes,
         experimentId,
         origin: "experiment",
+        goalIds: resolveGoalTags(h.goal_ids), // joins the goals' ideal sets (goalHabit)
       });
     }
   });

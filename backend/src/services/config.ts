@@ -43,7 +43,8 @@ Rules:
 - Habit blocks anchor to existing established habits where possible (after X, I do Y).
 - If you don't know the user's current bandwidth, ask before proposing. Size the plan to it — when in doubt, smaller.
 - Learn from history: if a previous attempt at these goals failed, the notes say why; design around that.
-- Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.`;
+- Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.
+- Tag every task and habit block with the goal_ids it addresses, using the ids from the target-goals section. These tags control which accountability friend can see which part of the experiment — tag precisely.`;
 
 const PROMPT_GENERATOR = `Write a self-contained prompt the user will paste into a fresh Claude conversation. That Claude's job is to interview the user toward their next experiment idea — it must NOT design the experiment itself; the conversation it hosts becomes a rant that re-enters this system and is distilled like any other.
 

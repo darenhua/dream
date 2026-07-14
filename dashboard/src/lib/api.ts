@@ -86,6 +86,21 @@ export interface StrikeReport {
   facts: { daysSinceLastRant: number | null; emptyQueueDays: number };
 }
 
+export interface WitnessRow {
+  id: string;
+  name: string;
+  platform: "manual" | "imessage" | "telegram";
+  handle: string | null;
+  timezone: string;
+  status: "invited" | "active" | "paused" | "removed";
+  isPrimary: boolean;
+  inviteCode: string | null;
+  chatId: string | null;
+  linkedAt: string | null;
+  promptCadenceDays: number;
+  goalIds: string[];
+}
+
 export type ExtractionKind =
   | "goal_talk"
   | "habit_talk"
@@ -373,6 +388,19 @@ export const api = {
   pauseStrikes: (days: number, reason?: string) =>
     request<{ pausedUntil: string }>("/strikes/pause", { method: "POST", body: JSON.stringify({ days, reason }) }),
   resumeStrikes: () => request<{ ok: boolean }>("/strikes/resume", { method: "POST", body: "{}" }),
+
+  // --- witnesses ---
+  witnesses: () => request<WitnessRow[]>("/witnesses"),
+  inviteWitness: (fields: { name: string; handle?: string; timezone?: string; isPrimary?: boolean; goalIds?: string[] }) =>
+    request<WitnessRow>("/witnesses", { method: "POST", body: JSON.stringify(fields) }),
+  patchWitness: (id: string, patch: Partial<Pick<WitnessRow, "name" | "handle" | "timezone" | "status" | "promptCadenceDays">>) =>
+    request<WitnessRow>(`/witnesses/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  setWitnessGoals: (id: string, goalIds: string[]) =>
+    request<{ ok: boolean; goalIds: string[] }>(`/witnesses/${id}/goals`, { method: "PUT", body: JSON.stringify({ goalIds }) }),
+  setWitnessPrimary: (id: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/primary`, { method: "POST", body: "{}" }),
+  witnessPreview: (id: string) => request<{ contextMd: string }>(`/witnesses/${id}/preview`),
+  removeWitness: (id: string) => request<{ ok: boolean }>(`/witnesses/${id}`, { method: "DELETE" }),
 
   // --- conversations + pipeline ---
   conversations: (params: { state?: string; q?: string; slugged?: string; rant?: string } = {}) => {

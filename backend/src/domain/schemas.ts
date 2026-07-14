@@ -168,6 +168,10 @@ export const SchedulePlanTurn = z.object({
         title: z.string(),
         detail: z.string().optional(),
         extraction_ids: z.array(z.string()).optional(),
+        goal_ids: z
+          .array(z.string())
+          .optional()
+          .describe("ids of the target goals this task addresses (from the target-goals section)"),
         start: z.string().describe("ISO datetime, inside reported free time"),
         end: z.string().describe("ISO datetime"),
       }),
@@ -177,6 +181,10 @@ export const SchedulePlanTurn = z.object({
         title: z.string(),
         note: z.string().optional(),
         valence: z.enum(["good", "bad"]).optional(),
+        goal_ids: z
+          .array(z.string())
+          .optional()
+          .describe("ids of the target goals this habit serves (from the target-goals section)"),
         rrule: z.string().describe('RFC5545, e.g. "FREQ=WEEKLY;BYDAY=MO,WE,FR"'),
         preferred_time: z.string().describe('"HH:MM" local'),
         duration_minutes: z.number().int(),

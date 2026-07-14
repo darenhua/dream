@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { db, wipeAllTables } from "../src/db";
-import { chatSession, experiment, experimentTask, goal, goalEvidence, habit } from "../src/db/schema";
+import {
+  chatSession,
+  experiment,
+  experimentTask,
+  experimentTaskGoal,
+  goal,
+  goalEvidence,
+  goalHabit,
+  habit,
+} from "../src/db/schema";
 import { seedConfig } from "../src/services/config";
 import {
   archiveExperiment,
@@ -79,6 +88,48 @@ describe("experiment FSM", () => {
     expect(tasks.every(t => t.status === "scheduled")).toBe(true);
     const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
     expect(h.status).toBe("building");
+  });
+
+  test("commitPlan persists goal tags; untagged/invalid tags default to the experiment's goals", () => {
+    const music = makeGoal("ship music");
+    const career = makeGoal("stop people-pleasing");
+    const exp = queued("two-front week", [music.id, career.id]);
+    pickExperiment(exp.id);
+
+    const plan: SchedulePlanT = {
+      ...PLAN,
+      tasks: [
+        { kind: "setup", title: "studio session", goal_ids: [music.id], start: "2026-07-10T18:00:00Z", end: "2026-07-10T19:00:00Z" },
+        { kind: "experience", title: "salary talk", goal_ids: [career.id, "hallucinated-goal-id"], start: "2026-07-11T10:00:00Z", end: "2026-07-11T10:30:00Z" },
+        { kind: "purchase", title: "untagged buy", start: "2026-07-12T10:00:00Z", end: "2026-07-12T10:15:00Z" },
+      ],
+      habit_blocks: [{ ...PLAN.habit_blocks[0]!, goal_ids: [music.id] }],
+    };
+    expect(commitPlan(exp.id, plan).ok).toBe(true);
+
+    const tasks = db.select().from(experimentTask).where(eq(experimentTask.experimentId, exp.id)).all();
+    const tagsFor = (title: string) =>
+      db
+        .select({ goalId: experimentTaskGoal.goalId })
+        .from(experimentTaskGoal)
+        .where(eq(experimentTaskGoal.experimentTaskId, tasks.find(t => t.title === title)!.id))
+        .all()
+        .map(r => r.goalId)
+        .sort();
+
+    expect(tagsFor("studio session")).toEqual([music.id]);
+    expect(tagsFor("salary talk")).toEqual([career.id]); // hallucinated id dropped
+    expect(tagsFor("untagged buy").sort()).toEqual([music.id, career.id].sort()); // defaults to experiment goals
+
+    // Habit joined the tagged goal's ideal set.
+    const h = db.select().from(habit).where(eq(habit.experimentId, exp.id)).get()!;
+    const habitGoals = db
+      .select({ goalId: goalHabit.goalId })
+      .from(goalHabit)
+      .where(eq(goalHabit.habitId, h.id))
+      .all()
+      .map(r => r.goalId);
+    expect(habitGoals).toEqual([music.id]);
   });
 
   test("pick guard: one experiment at a time, including scheduling", () => {
