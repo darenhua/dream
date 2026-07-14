@@ -32,6 +32,15 @@ export const conversation = sqliteTable(
     sourceUpdatedAt: text("source_updated_at"),
     slugDetected: integer("slug_detected", { mode: "boolean" }).notNull().default(false),
     slugMessageIdx: integer("slug_message_idx"),
+    // The intake gate: every imported chat is auto-classified (rant_detector),
+    // candidates surface on the dashboard, and a human accept — not a slug —
+    // is what admits a conversation into distill. slug columns are legacy;
+    // a detected slug just auto-accepts during the transition.
+    rantVerdict: text("rant_verdict", { enum: ["candidate", "not_candidate"] }), // null = not yet detected
+    rantStatus: text("rant_status", { enum: ["proposed", "accepted", "rejected"] }),
+    rantDetectedAt: text("rant_detected_at"),
+    rantResolvedAt: text("rant_resolved_at"),
+    detectorNote: text("detector_note"), // one line: why this looks like a rant
     distillRequested: integer("distill_requested", { mode: "boolean" }).notNull().default(false),
     distilledAt: text("distilled_at"),
     extractionsReviewedAt: text("extractions_reviewed_at"),
@@ -382,7 +391,15 @@ export const proposal = sqliteTable(
 export const agentRun = sqliteTable("agent_run", {
   id: id(),
   agentName: text("agent_name", {
-    enum: ["distiller", "deriver", "proposal_reviser", "schedule_agent", "prompt_generator", "daily_writeup"],
+    enum: [
+      "distiller",
+      "deriver",
+      "proposal_reviser",
+      "schedule_agent",
+      "prompt_generator",
+      "daily_writeup",
+      "rant_detector",
+    ],
   }).notNull(),
   trigger: text("trigger", { enum: ["daily", "manual"] }).notNull(),
   workspacePath: text("workspace_path"),

@@ -1,4 +1,4 @@
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { conversation, extraction } from "../db/schema";
 import { DistillerOutput } from "../domain/schemas";
@@ -7,7 +7,9 @@ import { emit } from "./events";
 import { newWorkspace, projectDistill } from "./projector";
 
 // Pass 1 of the pipeline: a pure function of the rant. Runs once per
-// conversation; failures leave distilled_at null so the next daily retries.
+// conversation; failures leave distilled_at null so the next heartbeat retries.
+// Admission is via the intake gate (rantDetection.acceptRant sets
+// distillRequested) — the slug no longer gates anything here.
 
 export function pendingDistills() {
   return db
@@ -15,7 +17,7 @@ export function pendingDistills() {
     .from(conversation)
     .where(
       and(
-        or(eq(conversation.slugDetected, true), eq(conversation.distillRequested, true)),
+        eq(conversation.distillRequested, true),
         isNull(conversation.distilledAt),
         isNull(conversation.parseError),
       ),

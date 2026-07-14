@@ -24,6 +24,14 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
 
   // 4. Safety-net sweep: idempotent leftovers from event-driven steps.
   try {
+    const { detectPendingRants } = await import("./rantDetection");
+    report.detect = await detectPendingRants(trigger);
+  } catch (e) {
+    report.detect = { error: e instanceof Error ? e.message : String(e) };
+    emit("heartbeat", null, "heartbeat_step_failed", { step: "detect", error: String(e) });
+  }
+
+  try {
     report.distill = await distillPending(trigger);
   } catch (e) {
     report.distill = { error: e instanceof Error ? e.message : String(e) };

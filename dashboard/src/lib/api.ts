@@ -32,6 +32,9 @@ export class ApiError extends Error {
 
 export type PipelineState =
   | "parse_failed"
+  | "pending_detection"
+  | "rant_candidate"
+  | "rejected"
   | "idle"
   | "awaiting_distill"
   | "awaiting_review"
@@ -43,6 +46,9 @@ export interface ConversationRow {
   title: string | null;
   sourceUpdatedAt: string | null;
   slugDetected: boolean;
+  rantVerdict: "candidate" | "not_candidate" | null;
+  rantStatus: "proposed" | "accepted" | "rejected" | null;
+  detectorNote: string | null;
   distillRequested: boolean;
   distilledAt: string | null;
   extractionsReviewedAt: string | null;
@@ -336,11 +342,12 @@ export const api = {
   visit: () => request<{ ok: boolean }>("/user/visit", { method: "POST" }),
 
   // --- conversations + pipeline ---
-  conversations: (params: { state?: string; q?: string; slugged?: string } = {}) => {
+  conversations: (params: { state?: string; q?: string; slugged?: string; rant?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.state) q.set("state", params.state);
     if (params.q) q.set("q", params.q);
     if (params.slugged) q.set("slugged", params.slugged);
+    if (params.rant) q.set("rant", params.rant);
     return request<{ conversations: ConversationRow[] }>(`/conversations?${q}`).then(r => r.conversations);
   },
   conversation: (id: string) =>
@@ -352,6 +359,13 @@ export const api = {
       }
     >(`/conversations/${id}`),
   requestDistill: (id: string) => request(`/conversations/${id}/request-distill`, { method: "POST", body: "{}" }),
+  rantAccept: (id: string) =>
+    request<{ ok: boolean; distill: unknown }>(`/conversations/${id}/rant-accept`, { method: "POST", body: "{}" }),
+  rantReject: (id: string, note?: string) =>
+    request<{ ok: boolean }>(`/conversations/${id}/rant-reject`, {
+      method: "POST",
+      body: JSON.stringify(note ? { note } : {}),
+    }),
   confirmExtractions: (id: string) =>
     request<{ ok: boolean; confirmed: number; derive: unknown }>(`/conversations/${id}/confirm-extractions`, {
       method: "POST",
@@ -500,6 +514,7 @@ export const api = {
     return body as { new: number; updated: number; unchanged: number; errors: unknown[] };
   },
   runDaily: () => request("/jobs/daily", { method: "POST", body: "{}" }),
+  runDetect: () => request("/jobs/detect", { method: "POST", body: "{}" }),
   runDistill: () => request("/jobs/distill", { method: "POST", body: "{}" }),
   runDerive: (conversationId?: string) =>
     request("/jobs/derive", { method: "POST", body: JSON.stringify(conversationId ? { conversationId } : {}) }),

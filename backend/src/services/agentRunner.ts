@@ -32,8 +32,8 @@ const MODEL_ALIASES_BEDROCK: Record<string, string> = {
   haiku: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 };
 
-export function resolveModel(): string {
-  const configured = getConfig<string>("MODEL");
+export function resolveModel(alias?: string): string {
+  const configured = alias ?? getConfig<string>("MODEL");
   const aliases = env.USE_BEDROCK ? MODEL_ALIASES_BEDROCK : MODEL_ALIASES_API;
   return aliases[configured] ?? configured; // raw IDs pass through untouched
 }
@@ -59,7 +59,8 @@ type AgentName =
   | "proposal_reviser"
   | "schedule_agent"
   | "prompt_generator"
-  | "daily_writeup";
+  | "daily_writeup"
+  | "rant_detector";
 
 // Agents get read-only file context only (§8.5): the projected workspace is
 // inlined into the prompt; the files stay on disk as the audit trail (A4).
@@ -103,7 +104,7 @@ export async function runStructured<S extends z.ZodType>(
   agentName: AgentName,
   workspacePath: string,
   schema: S,
-  opts: { trigger: "daily" | "manual"; hints?: string },
+  opts: { trigger: "daily" | "manual"; hints?: string; model?: string },
 ): Promise<RunResult<z.infer<S>>> {
   const prompt = buildPrompt(agentName, workspacePath, opts.hints);
   const started = Date.now();
@@ -112,7 +113,7 @@ export async function runStructured<S extends z.ZodType>(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await client.messages.parse({
-        model: resolveModel(),
+        model: resolveModel(opts.model),
         max_tokens: 8192,
         messages: [{ role: "user", content: prompt }],
         output_config: { format: zodOutputFormat(schema) },

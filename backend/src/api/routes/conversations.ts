@@ -4,19 +4,24 @@ import { db } from "../../db";
 import { conversation } from "../../db/schema";
 import { deriveConversation, rederiveConversation } from "../../services/derive";
 import { distillPending, redistill } from "../../services/distill";
-import { emit } from "../../services/events";
 import { confirmExtractions, listExtractions } from "../../services/extractions";
 import { pipelineState } from "../../services/pipeline";
+import { acceptRant, rejectRant } from "../../services/rantDetection";
 
 export const conversationRoutes = new Hono();
 
 const PAGE_SIZE = 50;
 
 conversationRoutes.get("/", c => {
-  const { slugged, state, q, page } = c.req.query();
+  const { slugged, state, q, page, rant } = c.req.query();
   const conds = [];
   if (slugged === "true") conds.push(eq(conversation.slugDetected, true));
   if (slugged === "false") conds.push(eq(conversation.slugDetected, false));
+  // Direct column filter (not the post-page FSM filter) so the candidates
+  // gate sees every proposed rant, not just the newest page.
+  if (rant === "proposed" || rant === "accepted" || rant === "rejected") {
+    conds.push(eq(conversation.rantStatus, rant));
+  }
   if (q) conds.push(like(conversation.title, `%${q}%`));
 
   const pageNum = Math.max(1, Number(page) || 1);
@@ -51,16 +56,39 @@ conversationRoutes.get("/:id", c => {
   });
 });
 
-// Manual add: send an un-slugged conversation (historical backlog) through
-// the distill pipeline.
+// Intake gate: human accepts a detected candidate (or force-admits anything
+// with content) — this is what actually starts distill.
+conversationRoutes.post("/:id/rant-accept", async c => {
+  const id = c.req.param("id");
+  try {
+    acceptRant(id);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+  // Distill right away — the read-back gate should fill without waiting.
+  const result = await distillPending("manual");
+  return c.json({ ok: true, distill: result });
+});
+
+conversationRoutes.post("/:id/rant-reject", async c => {
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    rejectRant(id, body.note);
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Legacy alias for the pre-gate "manual add" flow — same thing as accepting.
 conversationRoutes.post("/:id/request-distill", async c => {
   const id = c.req.param("id");
-  const row = db.select().from(conversation).where(eq(conversation.id, id)).get();
-  if (!row) return c.json({ error: "conversation not found" }, 404);
-  if (!row.contentJson) return c.json({ error: "conversation has no parsed content" }, 400);
-  db.update(conversation).set({ distillRequested: true }).where(eq(conversation.id, id)).run();
-  emit("conversation", id, "distill_requested", {});
-  // Distill right away — the read-back gate should fill without waiting for cron.
+  try {
+    acceptRant(id);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
   const result = await distillPending("manual");
   return c.json({ ok: true, distill: result });
 });

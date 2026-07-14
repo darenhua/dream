@@ -14,6 +14,7 @@ import {
 import { pipelineState } from "../src/services/pipeline";
 import { pendingDistills } from "../src/services/distill";
 import { pendingDerives } from "../src/services/derive";
+import { acceptRant, detectPendingRants, rejectRant } from "../src/services/rantDetection";
 
 function makeConversation(overrides: Partial<typeof conversation.$inferInsert> = {}) {
   return db
@@ -52,44 +53,79 @@ beforeEach(() => {
 });
 
 describe("conversation pipeline FSM", () => {
-  test("state predicates walk imported → derived", () => {
-    const idle = makeConversation();
-    expect(pipelineState(idle)).toBe("idle");
-    expect(pendingDistills().map(c => c.id)).not.toContain(idle.id);
+  test("intake gate: accepted candidates walk to derived, rejected never distill", () => {
+    // Fresh import: not yet detected.
+    const fresh = makeConversation();
+    expect(pipelineState(fresh)).toBe("pending_detection");
+    expect(pendingDistills().map(c => c.id)).not.toContain(fresh.id);
 
-    const slugged = makeConversation({ slugDetected: true, slugMessageIdx: 1 });
-    expect(pipelineState(slugged)).toBe("awaiting_distill");
-    expect(pendingDistills().map(c => c.id)).toContain(slugged.id);
+    // Detector verdicts.
+    db.update(conversation)
+      .set({ rantVerdict: "candidate", rantStatus: "proposed", detectorNote: "digging into mornings" })
+      .where(eq(conversation.id, fresh.id))
+      .run();
+    let row = db.select().from(conversation).where(eq(conversation.id, fresh.id)).get()!;
+    expect(pipelineState(row)).toBe("rant_candidate");
+    expect(pendingDistills().map(c => c.id)).not.toContain(fresh.id); // proposed ≠ admitted
 
-    // manual add: distill_requested puts an un-slugged convo in the queue
-    db.update(conversation).set({ distillRequested: true }).where(eq(conversation.id, idle.id)).run();
-    expect(pendingDistills().map(c => c.id)).toContain(idle.id);
+    const organized = makeConversation({ rantVerdict: "not_candidate", rantDetectedAt: new Date().toISOString() });
+    expect(pipelineState(organized)).toBe("idle");
+
+    // Human gate: reject files it away, forever out of the distill queue.
+    const dismissed = makeConversation({ rantVerdict: "candidate", rantStatus: "proposed" });
+    rejectRant(dismissed.id);
+    const dismissedRow = db.select().from(conversation).where(eq(conversation.id, dismissed.id)).get()!;
+    expect(pipelineState(dismissedRow)).toBe("rejected");
+    expect(pendingDistills().map(c => c.id)).not.toContain(dismissed.id);
+
+    // Human gate: accept admits it.
+    acceptRant(fresh.id);
+    row = db.select().from(conversation).where(eq(conversation.id, fresh.id)).get()!;
+    expect(pipelineState(row)).toBe("awaiting_distill");
+    expect(pendingDistills().map(c => c.id)).toContain(fresh.id);
 
     db.update(conversation)
       .set({ distilledAt: new Date().toISOString() })
-      .where(eq(conversation.id, slugged.id))
+      .where(eq(conversation.id, fresh.id))
       .run();
-    let row = db.select().from(conversation).where(eq(conversation.id, slugged.id)).get()!;
+    row = db.select().from(conversation).where(eq(conversation.id, fresh.id)).get()!;
     expect(pipelineState(row)).toBe("awaiting_review");
-    expect(pendingDistills().map(c => c.id)).not.toContain(slugged.id);
+    expect(pendingDistills().map(c => c.id)).not.toContain(fresh.id);
 
-    draftExtraction(slugged.id);
-    confirmExtractions(slugged.id);
-    row = db.select().from(conversation).where(eq(conversation.id, slugged.id)).get()!;
+    draftExtraction(fresh.id);
+    confirmExtractions(fresh.id);
+    row = db.select().from(conversation).where(eq(conversation.id, fresh.id)).get()!;
     expect(pipelineState(row)).toBe("awaiting_derive");
-    expect(pendingDerives().map(c => c.id)).toContain(slugged.id);
+    expect(pendingDerives().map(c => c.id)).toContain(fresh.id);
 
     db.update(conversation)
       .set({ derivedAt: new Date().toISOString() })
-      .where(eq(conversation.id, slugged.id))
+      .where(eq(conversation.id, fresh.id))
       .run();
-    row = db.select().from(conversation).where(eq(conversation.id, slugged.id)).get()!;
+    row = db.select().from(conversation).where(eq(conversation.id, fresh.id)).get()!;
     expect(pipelineState(row)).toBe("derived");
     expect(pendingDerives()).toHaveLength(0);
   });
 
+  test("slug rows auto-accept through detection without an LLM call", async () => {
+    const slugged = makeConversation({ slugDetected: true, slugMessageIdx: 1 });
+    // Only slugged rows pending → the fast path handles all of them, no batches.
+    const result = await detectPendingRants("manual");
+    expect(result.autoAccepted).toBe(1);
+    expect(result.processed).toBe(0); // nothing went to the classifier
+    const row = db.select().from(conversation).where(eq(conversation.id, slugged.id)).get()!;
+    expect(row.rantStatus).toBe("accepted");
+    expect(pipelineState(row)).toBe("awaiting_distill");
+    expect(pendingDistills().map(c => c.id)).toContain(slugged.id);
+  });
+
+  test("legacy slug-era rows keep their distill-chain state without gate columns", () => {
+    const legacy = makeConversation({ slugDetected: true, distilledAt: new Date().toISOString() });
+    expect(pipelineState(legacy)).toBe("awaiting_review");
+  });
+
   test("parse_failed conversations never enter the distill queue", () => {
-    const broken = makeConversation({ slugDetected: true, parseError: "broken chain", contentJson: null });
+    const broken = makeConversation({ parseError: "broken chain", contentJson: null });
     expect(pipelineState(broken)).toBe("parse_failed");
     expect(pendingDistills()).toHaveLength(0);
   });

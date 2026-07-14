@@ -49,6 +49,14 @@ const PROMPT_GENERATOR = `Write a self-contained prompt the user will paste into
 
 The prompt you write must: (1) brief that Claude on the user's full current state exactly as given in the context files (prioritized goals with identity clauses and syntheses, habits, environment, experiment history with outcomes and improvement notes, the attempt heatmap, and the free-time report); (2) instruct it to interview the user about what change would actually help right now — bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding; (3) instruct it to help the user talk through ONE concrete experiment-worthy idea in their own words; (4) remind the user at the end to type the marker slug so the conversation enters the system on next import. Output the prompt as plain markdown, nothing else.`;
 
+const PROMPT_RANT_DETECTOR = `candidates.md lists imported conversations (id, title, message count, opening excerpt). For each, decide: is this a RANT — self-discovery material worth distilling into the user's growth system?
+
+A rant is the user digging into their own life: complaints about their situation or themselves, goals and who they want to become, habits they have or struggle with, their environment and obligations, experiences they want, changes they're considering. It is about the USER's inner or outer life.
+
+NOT a rant: coding/work sessions, how-to questions, research, drafting documents, planning logistics, anything where the user is producing output rather than examining themselves. When a conversation mixes both, ask: would distilling it yield evidence about who this person is and wants to be? If yes → candidate.
+
+Return one verdict per conversation with its exact conversation_id and a one-line note the user will read when accepting/rejecting ("digging into why weekends disappear", "React debugging session"). Be strict: a false candidate costs the user a needless review tap; when genuinely unsure, lean candidate — the human gate catches it.`;
+
 const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), the pipeline counts (rants awaiting read-back, pending proposals), goals, and the current experiment or queue. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if anything awaits the user (read-backs or proposals), a "caught this before you forgot it" teaser, else a gentle note on the current experiment or queue. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
 
 const PROMPT_TASK_COPY = `# Task: {{TASK_TITLE}}
@@ -70,8 +78,10 @@ Help me figure out how to actually do this task: what it constitutes, how to mak
 export const CONFIG_DEFAULTS: Record<string, unknown> = {
   MAX_ACTIVE_GOALS: 5,
   MAX_PROPOSALS_PER_DERIVE: 7,
-  SLUG_MARKER: "#DREAM-CATEGORIZE", // kept so historical rants import unchanged
+  SLUG_MARKER: "#DREAM-CATEGORIZE", // legacy: a detected slug auto-accepts through the intake gate
   MODEL: "sonnet",
+  DETECTOR_MODEL: "haiku", // intake classification is cheap-model work
+  DETECTOR_BATCH_SIZE: 10,
   LAST_VISIT_AT: null,
   TIMEZONE: "America/New_York",
   SLEEP_WINDOW: { start: "23:30", end: "07:30" },
@@ -80,6 +90,7 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   EXPERIMENT_DEFAULT_DURATION_DAYS: 7,
   GCAL_SYNC_MIN_INTERVAL_MIN: 10,
   "PROMPT.preamble": PREAMBLE,
+  "PROMPT.rant_detector": PROMPT_RANT_DETECTOR,
   "PROMPT.distiller": PROMPT_DISTILLER,
   "PROMPT.deriver": PROMPT_DERIVER,
   "PROMPT.proposal_reviser": PROMPT_PROPOSAL_REVISER,

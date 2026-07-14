@@ -3,6 +3,7 @@ import { AnchorRow } from "../components/AnchorRow";
 import { ExperimentQueue } from "../components/ExperimentQueue";
 import { GoalsCard } from "../components/GoalsCard";
 import { ListCards } from "../components/ListCards";
+import { RantCandidatesGate } from "../components/RantCandidatesGate";
 import { ReadBackGate } from "../components/ReadBackGate";
 import { TodayStrip } from "../components/TodayStrip";
 import { WriteupFootnote } from "../components/WriteupFootnote";
@@ -29,6 +30,7 @@ export function MainFeed({
     <div className="flex flex-col gap-4">
       <AnchorRow tick={tick} onChanged={onChanged} />
       <TodayStrip tick={tick} />
+      <RantCandidatesGate tick={tick} onChanged={onChanged} />
       {readBackCount > 0 && (
         <ReadBackGate conversations={awaitingReview} onReview={onReviewExtractions} />
       )}

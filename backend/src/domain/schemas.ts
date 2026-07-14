@@ -29,6 +29,21 @@ export const DistillerOutput = z.object({
 });
 export type DistillerOutputT = z.infer<typeof DistillerOutput>;
 
+// Rant detector: the intake gate's classifier. Batched — one verdict per
+// conversation in the projected batch; unknown ids are dropped on apply.
+export const RantDetectorOutput = z.object({
+  conversations: z.array(
+    z.object({
+      conversation_id: z.string(),
+      verdict: z.enum(["candidate", "not_candidate"]),
+      note: z
+        .string()
+        .describe("one short line: why this is (or isn't) self-discovery material worth distilling"),
+    }),
+  ),
+});
+export type RantDetectorOutputT = z.infer<typeof RantDetectorOutput>;
+
 const extractionIds = z
   .array(z.string())
   .min(1)

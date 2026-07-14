@@ -10,6 +10,7 @@ import { emit } from "../../services/events";
 import { liveExperiment, listQueue } from "../../services/experiments";
 import { ingestFile } from "../../services/ingestion";
 import { distillPending } from "../../services/distill";
+import { detectPendingRants } from "../../services/rantDetection";
 import { listProposals } from "../../services/proposals";
 import { authRow } from "../../services/google/auth";
 
@@ -81,8 +82,11 @@ adminRoutes.post("/import", async c => {
 
   try {
     const report = ingestFile(payload);
-    // Fire-and-forget: the read-back gate fills without waiting for cron.
-    distillPending("manual").catch(() => {});
+    // Fire-and-forget chain: detect candidates (slug rows auto-accept), then
+    // distill whatever got accepted — the gates fill without waiting for cron.
+    detectPendingRants("manual")
+      .then(() => distillPending("manual"))
+      .catch(() => {});
     return c.json(report);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);

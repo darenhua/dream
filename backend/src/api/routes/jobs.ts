@@ -15,6 +15,11 @@ jobRoutes.post("/daily", async c => {
   return c.json(await runHeartbeat("manual"));
 });
 
+jobRoutes.post("/detect", async c => {
+  const { detectPendingRants } = await import("../../services/rantDetection");
+  return c.json(await detectPendingRants("manual"));
+});
+
 jobRoutes.post("/distill", async c => {
   return c.json(await distillPending("manual"));
 });
