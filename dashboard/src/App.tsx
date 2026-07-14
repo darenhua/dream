@@ -11,16 +11,20 @@ import { AdminDashboard } from "./components/AdminDashboard";
 import { ExtractionReview } from "./screens/ExtractionReview";
 import { MainFeed } from "./screens/MainFeed";
 import { ProposalReview } from "./screens/ProposalReview";
+import { ReviewInterview } from "./screens/ReviewInterview";
+import { ReviewWriteup } from "./screens/ReviewWriteup";
 import { ScheduleChat } from "./screens/ScheduleChat";
 import "./index.css";
 
-// View shell: the feed is home; review screens and the schedule chat are
-// full-screen takeovers; admin is a mode.
+// View shell: the feed is home; review screens and the chats are full-screen
+// takeovers; admin is a mode.
 export type View =
   | { name: "feed" }
   | { name: "review-extractions"; conversationId: string }
   | { name: "review-proposals" }
-  | { name: "schedule-chat"; sessionId: string };
+  | { name: "schedule-chat"; sessionId: string }
+  | { name: "review-writeup"; experimentId: string }
+  | { name: "review-interview"; sessionId: string; experimentId: string };
 
 export function App() {
   const [view, setView] = useState<View>({ name: "feed" });
@@ -125,6 +129,26 @@ export function App() {
               setView({ name: "feed" });
             }}
           />
+        ) : view.name === "review-writeup" ? (
+          <ReviewWriteup
+            experimentId={view.experimentId}
+            onOpenInterview={sessionId =>
+              setView({ name: "review-interview", sessionId, experimentId: view.experimentId })
+            }
+            onBack={() => {
+              bump();
+              setView({ name: "feed" });
+            }}
+          />
+        ) : view.name === "review-interview" ? (
+          <ReviewInterview
+            sessionId={view.sessionId}
+            onDone={() => {
+              bump();
+              setView({ name: "review-writeup", experimentId: view.experimentId });
+            }}
+            onBack={() => setView({ name: "review-writeup", experimentId: view.experimentId })}
+          />
         ) : (
           <MainFeed
             tick={tick}
@@ -133,6 +157,7 @@ export function App() {
             awaitingReview={awaitingReview ?? []}
             onReviewExtractions={id => setView({ name: "review-extractions", conversationId: id })}
             onOpenScheduleChat={sessionId => setView({ name: "schedule-chat", sessionId })}
+            onOpenReview={experimentId => setView({ name: "review-writeup", experimentId })}
           />
         )}
       </main>

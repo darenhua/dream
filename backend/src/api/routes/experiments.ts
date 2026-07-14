@@ -61,12 +61,20 @@ experimentRoutes.post("/:id/pick", async c => {
 });
 
 // running → succeeded | failed. Blame-free; notes feed the next attempt.
+// Ending triggers the review-writeup draft fire-and-forget — a failed draft
+// never blocks the end, and the review screen has a regenerate button.
 experimentRoutes.post("/:id/end", async c => {
   const body = await c.req.json().catch(() => ({}));
   if (body.verdict !== "succeeded" && body.verdict !== "failed") {
     return c.json({ error: 'verdict must be "succeeded" or "failed"' }, 400);
   }
-  const result = endExperiment(c.req.param("id"), body.verdict, body.outcomeMd ?? body.outcome_md);
+  const id = c.req.param("id");
+  const result = endExperiment(id, body.verdict, body.outcomeMd ?? body.outcome_md);
+  if (result.ok) {
+    import("../../services/reviewWriteup")
+      .then(({ generateDraft }) => generateDraft(id, "manual"))
+      .catch(() => {});
+  }
   return c.json(result, result.ok ? 200 : 400);
 });
 

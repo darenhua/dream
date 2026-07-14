@@ -154,6 +154,35 @@ export type DeriverOutputT = z.infer<typeof DeriverOutput>;
 export const ReviserOutput = z.object({ proposal: DeriverProposal });
 export type ReviserOutputT = z.infer<typeof ReviserOutput>;
 
+// Review writeup drafter: the full experiment recap, from the run's evidence.
+export const ReviewWriteupOutput = z.object({
+  review_md: z
+    .string()
+    .describe("the complete review writeup in the user's own register — what was tried, what held, what broke, what's next; failures included, shrink-first language preserved"),
+});
+export type ReviewWriteupOutputT = z.infer<typeof ReviewWriteupOutput>;
+
+// Witness composer: one friend's goal-filtered share + questions to ask.
+export const WitnessShareOutput = z.object({
+  body_text: z
+    .string()
+    .describe("the message to this friend: self-contained (they memorize nothing), factual, warm, no shame framing"),
+  follow_up_questions: z
+    .array(z.string())
+    .min(2)
+    .max(3)
+    .describe("specific questions the friend can cherry-pick — never 'how's it going'"),
+});
+export type WitnessShareOutputT = z.infer<typeof WitnessShareOutput>;
+
+// Witness prompter: one piece of conversation ammo tied to live state.
+export const WitnessPromptOutput = z.object({
+  body_text: z
+    .string()
+    .describe("one specific, timely conversation starter for the friend, tied to the live experiment or goals in scope"),
+});
+export type WitnessPromptOutputT = z.infer<typeof WitnessPromptOutput>;
+
 // Schedule agent: one turn of the in-dashboard scheduling chat. The agent
 // re-emits the FULL plan each turn; kept flat for structured-output limits.
 export const SchedulePlanTurn = z.object({

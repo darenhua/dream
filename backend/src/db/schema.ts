@@ -339,7 +339,9 @@ export const witnessGoal = sqliteTable(
 // The in-dashboard schedule-agent conversation for activating an experiment.
 export const chatSession = sqliteTable("chat_session", {
   id: id(),
-  purpose: text("purpose", { enum: ["schedule"] }).notNull().default("schedule"),
+  purpose: text("purpose", { enum: ["schedule", "review_interview", "experiment_shaping"] })
+    .notNull()
+    .default("schedule"),
   experimentId: text("experiment_id").references(() => experiment.id),
   status: text("status", { enum: ["open", "committed", "cancelled"] }).notNull().default("open"),
   planJson: text("plan_json"), // latest structured plan draft the chat converges on
@@ -459,6 +461,9 @@ export const agentRun = sqliteTable("agent_run", {
       "prompt_generator",
       "daily_writeup",
       "rant_detector",
+      "review_writeup",
+      "witness_composer",
+      "witness_prompter",
     ],
   }).notNull(),
   trigger: text("trigger", { enum: ["daily", "manual"] }).notNull(),
@@ -492,6 +497,57 @@ export const config = sqliteTable("config", {
   value: text("value").notNull(),
   updatedAt: updatedAt(),
 });
+
+// The review artifact endExperiment lacked: agent-drafted from the run's
+// evidence, human-edited, frozen at approve — approval fans out per-witness
+// goal-filtered shares into the outbox.
+export const reviewWriteup = sqliteTable("review_writeup", {
+  id: id(),
+  experimentId: text("experiment_id")
+    .notNull()
+    .unique()
+    .references(() => experiment.id),
+  draftMd: text("draft_md"),
+  finalMd: text("final_md"), // user-edited, frozen at approve
+  status: text("status", { enum: ["drafting", "draft_ready", "approved"] })
+    .notNull()
+    .default("drafting"),
+  agentRunId: text("agent_run_id").references(() => agentRun.id),
+  approvedAt: text("approved_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// The approval gate + durable queue: NOTHING reaches a transport without
+// status=approved. Every agent-composed message lands here as
+// pending_approval; the user reads/edits/copies before anything moves.
+export const outboundMessage = sqliteTable(
+  "outbound_message",
+  {
+    id: id(),
+    witnessId: text("witness_id")
+      .notNull()
+      .references(() => witness.id),
+    kind: text("kind", {
+      enum: ["review_share", "experiment_announcement", "random_prompt", "strike_alert", "duty_ping"],
+    }).notNull(),
+    bodyText: text("body_text").notNull(), // user-editable pre-send
+    contextJson: text("context_json"), // e.g. suggested follow-up questions
+    relatedType: text("related_type"),
+    relatedId: text("related_id"),
+    dedupeKey: text("dedupe_key"), // one ping per staleness episode
+    status: text("status", { enum: ["pending_approval", "approved", "sent", "failed", "cancelled"] })
+      .notNull()
+      .default("pending_approval"),
+    notBefore: text("not_before"), // quiet-hours / spacing gate
+    sentAt: text("sent_at"),
+    transportMessageId: text("transport_message_id"),
+    error: text("error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("outbound_status").on(t.status), index("outbound_dedupe").on(t.dedupeKey)],
+);
 
 // Strike bookkeeping ONLY — the counts themselves are always computed live
 // from existing tables (strikes.ts), never stored. This singleton holds the

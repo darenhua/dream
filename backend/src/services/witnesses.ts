@@ -2,6 +2,7 @@ import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
 import { db } from "../db";
 import { goal, witness, witnessGoal } from "../db/schema";
 import { emit } from "./events";
+import { cancelPendingForWitness } from "./outbox";
 
 // The witness registry. The seat is the feature; the occupant is replaceable.
 // Witnesses never enforce or track — the system holds all state and arms them
@@ -72,9 +73,10 @@ export function patchWitness(
 }
 
 // Scope change = delete-and-reinsert. Only real goals survive the write, and
-// pending outbound messages for this witness are cancelled by the outbox
-// (once it exists) so a re-scope can't leak already-composed content.
+// this witness's pending outbound messages are cancelled so a re-scope can't
+// leak already-composed content.
 export function setGoals(witnessId: string, goalIds: string[]) {
+  cancelPendingForWitness(witnessId);
   const known = new Set(
     db
       .select({ id: goal.id })

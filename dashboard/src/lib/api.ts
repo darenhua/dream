@@ -101,6 +101,27 @@ export interface WitnessRow {
   goalIds: string[];
 }
 
+export interface ReviewWriteupRow {
+  id: string;
+  experimentId: string;
+  draftMd: string | null;
+  finalMd: string | null;
+  status: "drafting" | "draft_ready" | "approved";
+  approvedAt: string | null;
+}
+
+export interface OutboundRow {
+  id: string;
+  witnessId: string;
+  kind: "review_share" | "experiment_announcement" | "random_prompt" | "strike_alert" | "duty_ping";
+  bodyText: string;
+  contextJson: string | null;
+  status: "pending_approval" | "approved" | "sent" | "failed" | "cancelled";
+  notBefore: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
 export type ExtractionKind =
   | "goal_talk"
   | "habit_talk"
@@ -401,6 +422,35 @@ export const api = {
     request<{ ok: boolean }>(`/witnesses/${id}/primary`, { method: "POST", body: "{}" }),
   witnessPreview: (id: string) => request<{ contextMd: string }>(`/witnesses/${id}/preview`),
   removeWitness: (id: string) => request<{ ok: boolean }>(`/witnesses/${id}`, { method: "DELETE" }),
+
+  // --- review writeups + outbox ---
+  review: (experimentId: string) => request<ReviewWriteupRow>(`/reviews/${experimentId}`),
+  generateReview: (experimentId: string) =>
+    request<{ status: string; draftMd?: string; error?: string }>(`/reviews/${experimentId}/generate`, { method: "POST", body: "{}" }),
+  patchReview: (experimentId: string, draftMd: string) =>
+    request<ReviewWriteupRow>(`/reviews/${experimentId}`, { method: "PATCH", body: JSON.stringify({ draftMd }) }),
+  approveReview: (experimentId: string, finalMd: string) =>
+    request<{ ok: boolean; shares: Record<string, string> }>(`/reviews/${experimentId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ finalMd }),
+    }),
+  startReviewInterview: (experimentId: string) =>
+    request<{ sessionId: string }>(`/reviews/${experimentId}/interview`, { method: "POST", body: "{}" }),
+  finishReviewInterview: (sessionId: string) =>
+    request<{ status: string; draftMd?: string }>(`/reviews/interview/${sessionId}/finish`, { method: "POST", body: "{}" }),
+  l3Session: (id: string) =>
+    request<{ session: { id: string; purpose: string; status: string; experimentId: string | null }; messages: ChatMessageRow[] }>(
+      `/l3/sessions/${id}`,
+    ),
+  outbox: (status?: string) => request<OutboundRow[]>(`/outbox${status ? `?status=${status}` : ""}`),
+  approveOutbound: (id: string, bodyText?: string) =>
+    request<{ row: OutboundRow; flush: unknown }>(`/outbox/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify(bodyText !== undefined ? { bodyText } : {}),
+    }),
+  patchOutbound: (id: string, bodyText: string) =>
+    request<OutboundRow>(`/outbox/${id}`, { method: "PATCH", body: JSON.stringify({ bodyText }) }),
+  cancelOutbound: (id: string) => request<{ ok: boolean }>(`/outbox/${id}/cancel`, { method: "POST", body: "{}" }),
 
   // --- conversations + pipeline ---
   conversations: (params: { state?: string; q?: string; slugged?: string; rant?: string } = {}) => {

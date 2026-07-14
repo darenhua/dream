@@ -58,6 +58,22 @@ NOT a rant: coding/work sessions, how-to questions, research, drafting documents
 
 Return one verdict per conversation with its exact conversation_id and a one-line note the user will read when accepting/rejecting ("digging into why weekends disappear", "React debugging session"). Be strict: a false candidate costs the user a needless review tap; when genuinely unsure, lean candidate — the human gate catches it.`;
 
+const PROMPT_REVIEW_WRITEUP = `Draft the review writeup for the experiment described in the context files (the experiment, its plan, task and habit end-states, the user's own end-of-run notes, and evidence captured along the way).
+
+Write it in the user's own first-person register — this is HIS review, drafted for him to edit. Structure: what was tried and why; what actually happened, day-level where the evidence supports it; what held and what broke, with the honest why (resistance stories included, never sanded off); what this run taught about the goals it targeted; what the next bet probably is. Failures are data, not verdicts — shrink-first language stays. No coaching-speak, no cheerleading, no grades.`;
+
+const PROMPT_WITNESS_COMPOSER = `You are composing ONE message to ONE accountability friend. witness-context.md is EVERYTHING this friend is allowed to know — it has already been filtered; never reference anything outside it. review.md (when present) is the approved writeup filtered to their scope.
+
+Compose body_text as a self-contained message (the friend memorizes nothing: carry the context inside the message). Factual and warm; failures stay failures, never dressed up, never dramatized. No shame framing, no streaks, no scores, no "he's behind". Then 2-3 follow_up_questions the friend can cherry-pick — each specific to something in the material ("ask him what the resistance story was on Tuesday"), never generic.`;
+
+const PROMPT_WITNESS_PROMPTER = `You are arming an accountability friend with ONE piece of conversation ammo. witness-context.md is everything this friend is allowed to know — never reference anything outside it.
+
+Write body_text: one short message to the friend suggesting something specific and timely to ask, tied to the live experiment or a shared goal ("Conversation ammo, use it or don't: ..."). It must be answerable in thirty seconds, interesting to answer, and impossible to answer with a bare "fine". Never "how's it going". No shame, no pressure framing — a door, not a demand.`;
+
+const PROMPT_REVIEW_INTERVIEW = `You are interviewing the user to flesh out an experiment review. The context shows the experiment, its plan, task/habit end-states, and the current draft writeup.
+
+Ask 3-4 pointed questions, ONE at a time, that surface what the draft is missing: the resistance story behind skipped tasks, what a specific day actually looked like, what surprised him, what he'd renegotiate. Short questions, his words matter more than yours. When he's said what matters, tell him to hit finish — the transcript regenerates the draft.`;
+
 const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), the pipeline counts (rants awaiting read-back, pending proposals), goals, and the current experiment or queue. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if anything awaits the user (read-backs or proposals), a "caught this before you forgot it" teaser, else a gentle note on the current experiment or queue. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
 
 const PROMPT_TASK_COPY = `# Task: {{TASK_TITLE}}
@@ -97,6 +113,17 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   STRIKE_ALERTS_ENABLED: false, // stays dark until a primary witness chat is linked AND this is flipped
   "TEMPLATE.strike_alert":
     "Heads up: {{FACTS}}. Don't ask whether he did the thing — ask what's in the way.",
+  // Witness messaging (outbox + duty pings). All friend-facing timing/copy
+  // knobs live here, in daylight.
+  WITNESS_AUTOSEND: false, // first weeks: every outbound message is hand-approved
+  WITNESS_PROMPT_MIN_HOURS: 48, // never two prompts to the same friend inside this window
+  WITNESS_QUIET_HOURS: { start: "21:00", end: "10:00" }, // interpreted in each witness's timezone
+  DUTY_PING_REVIEW_HOURS: 48, // experiment ended this long without an approved writeup → ping
+  DUTY_PING_PROPOSAL_DAYS: 4, // pending proposals/candidates older than this while active → ping
+  "TEMPLATE.duty_ping_review":
+    "{{EXPERIMENT}} wrapped {{DAYS}} days ago and there's no review yet. Your move — ask him how it actually went.",
+  "TEMPLATE.duty_ping_backlog":
+    "There's material sitting in his queue ({{WHAT}}) going stale. Worth asking what he's been chewing on.",
   "PROMPT.preamble": PREAMBLE,
   "PROMPT.rant_detector": PROMPT_RANT_DETECTOR,
   "PROMPT.distiller": PROMPT_DISTILLER,
@@ -105,6 +132,10 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
   "PROMPT.prompt_generator": PROMPT_GENERATOR,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
+  "PROMPT.review_writeup": PROMPT_REVIEW_WRITEUP,
+  "PROMPT.witness_composer": PROMPT_WITNESS_COMPOSER,
+  "PROMPT.witness_prompter": PROMPT_WITNESS_PROMPTER,
+  "PROMPT.review_interview": PROMPT_REVIEW_INTERVIEW,
   "PROMPT.task_copy": PROMPT_TASK_COPY,
 };
 

@@ -43,6 +43,8 @@ export function wipeAllTables() {
     "habit",
     "daily_writeup",
     "strike_state",
+    "outbound_message",
+    "review_writeup",
     "proposal",
     "extraction",
     "agent_run",

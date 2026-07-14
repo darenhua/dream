@@ -18,6 +18,8 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
   // 1. Vitals + strike check — the tripwire that fires while the user is
   //    absent. Dark until a primary witness chat is linked and alerts enabled.
   try {
+    const { initMessaging } = await import("./messaging/messenger");
+    initMessaging(); // idempotent: gives the tripwire its delivery sink
     const { runStrikeCheck } = await import("./strikes");
     const { todayLocal } = await import("./writeup");
     report.strikes = await runStrikeCheck(todayLocal());
@@ -27,9 +29,23 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
   }
 
   // 2. Duty pings — visible-but-ducking staleness → factual friend lines.
-  //    (Filled in by the outbox/messenger work.)
-  // 3. Outbox flush — send approved messages past their notBefore.
-  //    (Filled in with the transport.)
+  try {
+    const { runDutyPings } = await import("./dutyPings");
+    report.dutyPings = runDutyPings();
+  } catch (e) {
+    report.dutyPings = { error: e instanceof Error ? e.message : String(e) };
+    emit("heartbeat", null, "heartbeat_step_failed", { step: "duty_pings", error: String(e) });
+  }
+
+  // 3. Random friend prompts (bounded) + outbox flush.
+  try {
+    const { scheduleWitnessPrompts, flushOutbound } = await import("./messaging/messenger");
+    report.prompts = await scheduleWitnessPrompts(trigger);
+    report.flush = await flushOutbound();
+  } catch (e) {
+    report.messaging = { error: e instanceof Error ? e.message : String(e) };
+    emit("heartbeat", null, "heartbeat_step_failed", { step: "messaging", error: String(e) });
+  }
 
   // 4. Safety-net sweep: idempotent leftovers from event-driven steps.
   try {

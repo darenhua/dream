@@ -17,10 +17,12 @@ export function ExperimentQueue({
   tick,
   onChanged,
   onOpenScheduleChat,
+  onOpenReview,
 }: {
   tick: number;
   onChanged: () => void;
   onOpenScheduleChat: (sessionId: string) => void;
+  onOpenReview: (experimentId: string) => void;
 }) {
   const { data: current } = useApiData(() => api.currentExperiment(), [tick]);
   const { data: queue } = useApiData(() => api.experimentQueue(), [tick]);
@@ -58,7 +60,12 @@ export function ExperimentQueue({
       <CardContent className="flex flex-col gap-4">
         {current ? (
           current.isRunning ? (
-            <RunningExperimentCard experiment={current} onChanged={onChanged} onOpen={() => setOpenId(current.id)} />
+            <RunningExperimentCard
+              experiment={current}
+              onChanged={onChanged}
+              onOpen={() => setOpenId(current.id)}
+              onEnded={onOpenReview}
+            />
           ) : (
             <QueueRow
               experiment={current}
@@ -197,10 +204,12 @@ function RunningExperimentCard({
   experiment,
   onChanged,
   onOpen,
+  onEnded,
 }: {
   experiment: CurrentExperiment;
   onChanged: () => void;
   onOpen: () => void;
+  onEnded: (experimentId: string) => void;
 }) {
   const [ending, setEnding] = useState<"succeeded" | "failed" | null>(null);
   const [note, setNote] = useState("");
@@ -210,6 +219,9 @@ function RunningExperimentCard({
     setEnding(null);
     setNote("");
     onChanged();
+    // Ending routes straight into the review moment — the draft is already
+    // being written fire-and-forget on the backend.
+    onEnded(experiment.id);
   };
 
   return (

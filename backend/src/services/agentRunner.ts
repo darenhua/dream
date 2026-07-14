@@ -60,7 +60,10 @@ type AgentName =
   | "schedule_agent"
   | "prompt_generator"
   | "daily_writeup"
-  | "rant_detector";
+  | "rant_detector"
+  | "review_writeup"
+  | "witness_composer"
+  | "witness_prompter";
 
 // Agents get read-only file context only (§8.5): the projected workspace is
 // inlined into the prompt; the files stay on disk as the audit trail (A4).

@@ -109,7 +109,7 @@ export function getExperiment(id: string) {
   };
 }
 
-function goalIdsFor(experimentId: string): string[] {
+export function goalIdsFor(experimentId: string): string[] {
   return db
     .select({ goalId: experimentGoal.goalId })
     .from(experimentGoal)

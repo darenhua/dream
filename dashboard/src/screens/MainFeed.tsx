@@ -3,6 +3,7 @@ import { AnchorRow } from "../components/AnchorRow";
 import { ExperimentQueue } from "../components/ExperimentQueue";
 import { GoalsCard } from "../components/GoalsCard";
 import { ListCards } from "../components/ListCards";
+import { OutboxCard } from "../components/OutboxCard";
 import { RantCandidatesGate } from "../components/RantCandidatesGate";
 import { ReadBackGate } from "../components/ReadBackGate";
 import { TodayStrip } from "../components/TodayStrip";
@@ -20,6 +21,7 @@ export function MainFeed({
   awaitingReview,
   onReviewExtractions,
   onOpenScheduleChat,
+  onOpenReview,
 }: {
   tick: number;
   onChanged: () => void;
@@ -27,6 +29,7 @@ export function MainFeed({
   awaitingReview: ConversationRow[];
   onReviewExtractions: (conversationId: string) => void;
   onOpenScheduleChat: (sessionId: string) => void;
+  onOpenReview: (experimentId: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -37,7 +40,13 @@ export function MainFeed({
       {readBackCount > 0 && (
         <ReadBackGate conversations={awaitingReview} onReview={onReviewExtractions} />
       )}
-      <ExperimentQueue tick={tick} onChanged={onChanged} onOpenScheduleChat={onOpenScheduleChat} />
+      <OutboxCard tick={tick} onChanged={onChanged} />
+      <ExperimentQueue
+        tick={tick}
+        onChanged={onChanged}
+        onOpenScheduleChat={onOpenScheduleChat}
+        onOpenReview={onOpenReview}
+      />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <GoalsCard tick={tick} onChanged={onChanged} />
         <ListCards tick={tick} onChanged={onChanged} />
