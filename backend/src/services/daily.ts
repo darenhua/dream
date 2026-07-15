@@ -48,9 +48,16 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
   }
 
   // 4. Safety-net sweep: idempotent leftovers from event-driven steps.
+  //    Detection respects AUTO_DETECT — with it off (bulk-import onboarding),
+  //    the heartbeat must not classify the backlog behind the user's back.
   try {
-    const { detectPendingRants } = await import("./rantDetection");
-    report.detect = await detectPendingRants(trigger);
+    const { getConfig } = await import("./config");
+    if (getConfig<boolean>("AUTO_DETECT")) {
+      const { detectPendingRants } = await import("./rantDetection");
+      report.detect = await detectPendingRants(trigger);
+    } else {
+      report.detect = { skipped: "AUTO_DETECT off" };
+    }
   } catch (e) {
     report.detect = { error: e instanceof Error ? e.message : String(e) };
     emit("heartbeat", null, "heartbeat_step_failed", { step: "detect", error: String(e) });

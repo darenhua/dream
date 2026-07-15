@@ -22,6 +22,7 @@ export function MainFeed({
   onOpenScheduleChat,
   onOpenReview,
   onOpenShaping,
+  onOpenGoalSteer,
 }: {
   tick: number;
   onChanged: () => void;
@@ -31,6 +32,7 @@ export function MainFeed({
   onOpenScheduleChat: (sessionId: string) => void;
   onOpenReview: (experimentId: string) => void;
   onOpenShaping: (sessionId: string) => void;
+  onOpenGoalSteer: (sessionId: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -49,7 +51,7 @@ export function MainFeed({
         onOpenShaping={onOpenShaping}
       />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <GoalsCard tick={tick} onChanged={onChanged} />
+        <GoalsCard tick={tick} onChanged={onChanged} onOpenSteer={onOpenGoalSteer} />
         <ListCards tick={tick} onChanged={onChanged} />
       </div>
       <WitnessCard tick={tick} onChanged={onChanged} />

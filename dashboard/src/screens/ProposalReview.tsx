@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, Check, X } from "lucide-react";
+import { ArrowLeft, Check, MessagesSquare, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,7 +51,15 @@ export function summarize(p: ProposalRow): { title: string; detail: string | nul
   }
 }
 
-export function ProposalReview({ onChanged, onBack }: { onChanged: () => void; onBack: () => void }) {
+export function ProposalReview({
+  onChanged,
+  onBack,
+  onOpenSteer,
+}: {
+  onChanged: () => void;
+  onBack: () => void;
+  onOpenSteer: (sessionId: string) => void;
+}) {
   const [tick, setTick] = useState(0);
   const { data: proposals } = useApiData(() => api.proposals(), [tick]);
   const rows = proposals ?? [];
@@ -87,7 +95,13 @@ export function ProposalReview({ onChanged, onBack }: { onChanged: () => void; o
           <section key={group.title} className="flex flex-col gap-1.5">
             <h3 className="text-xs font-medium uppercase text-muted-foreground">{group.title}</h3>
             {groupRows.map(p => (
-              <ProposalRowView key={p.id} proposal={p} onOpen={() => setOpenId(p.id)} onResolved={bump} />
+              <ProposalRowView
+                key={p.id}
+                proposal={p}
+                onOpen={() => setOpenId(p.id)}
+                onResolved={bump}
+                onOpenSteer={onOpenSteer}
+              />
             ))}
           </section>
         );
@@ -119,15 +133,29 @@ function ProposalRowView({
   proposal,
   onOpen,
   onResolved,
+  onOpenSteer,
 }: {
   proposal: ProposalRow;
   onOpen: () => void;
   onResolved: () => void;
+  onOpenSteer: (sessionId: string) => void;
 }) {
   const [denying, setDenying] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const { title } = summarize(proposal);
+
+  // The third option next to accept/deny: EDIT — a steering conversation
+  // that regenerates this proposal in place.
+  const edit = async () => {
+    setBusy(true);
+    try {
+      const { sessionId } = await api.startSteer("proposal", proposal.id);
+      onOpenSteer(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const approve = async () => {
     setBusy(true);
@@ -164,6 +192,9 @@ function ProposalRowView({
         <div className="flex shrink-0 gap-1">
           <Button size="sm" variant="ghost" disabled={busy} onClick={approve} title="approve">
             <Check className="size-3" />
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={edit} title="edit via a steering chat">
+            <MessagesSquare className="size-3" />
           </Button>
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => setDenying(d => !d)} title="deny">
             <X className="size-3" />

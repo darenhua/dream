@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { db, wipeAllTables } from "../../db";
 import { conversation, environmentItem, event, experience, experiment, goal, habit } from "../../db/schema";
 import { isConnected } from "../../services/calendarSync";
-import { seedConfig } from "../../services/config";
+import { getConfig, seedConfig } from "../../services/config";
 import { pendingDerives } from "../../services/derive";
 import { pendingDistills } from "../../services/distill";
 import { emit } from "../../services/events";
@@ -84,9 +84,13 @@ adminRoutes.post("/import", async c => {
     const report = ingestFile(payload);
     // Fire-and-forget chain: detect candidates (slug rows auto-accept), then
     // distill whatever got accepted — the gates fill without waiting for cron.
-    detectPendingRants("manual")
-      .then(() => distillPending("manual"))
-      .catch(() => {});
+    // AUTO_DETECT=false makes bulk imports inert: nothing classifies until
+    // the rant explorer's buttons say so.
+    if (getConfig<boolean>("AUTO_DETECT")) {
+      detectPendingRants("manual")
+        .then(() => distillPending("manual"))
+        .catch(() => {});
+    }
     return c.json(report);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
