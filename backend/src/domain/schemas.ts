@@ -29,6 +29,21 @@ export const DistillerOutput = z.object({
 });
 export type DistillerOutputT = z.infer<typeof DistillerOutput>;
 
+// Rant detector: the intake gate's classifier. Batched — one verdict per
+// conversation in the projected batch; unknown ids are dropped on apply.
+export const RantDetectorOutput = z.object({
+  conversations: z.array(
+    z.object({
+      conversation_id: z.string(),
+      verdict: z.enum(["candidate", "not_candidate"]),
+      note: z
+        .string()
+        .describe("one short line: why this is (or isn't) self-discovery material worth distilling"),
+    }),
+  ),
+});
+export type RantDetectorOutputT = z.infer<typeof RantDetectorOutput>;
+
 const extractionIds = z
   .array(z.string())
   .min(1)
@@ -139,6 +154,46 @@ export type DeriverOutputT = z.infer<typeof DeriverOutput>;
 export const ReviserOutput = z.object({ proposal: DeriverProposal });
 export type ReviserOutputT = z.infer<typeof ReviserOutput>;
 
+// Goal editor (steering a RATIFIED goal): re-emits the complete record —
+// idempotent replace, applied only on the user's explicit finish click.
+export const GoalEditOutput = z.object({
+  title: z.string(),
+  identity_clause: z.string().describe('one sharp sentence: "I am becoming someone who..."'),
+  synthesis_md: z
+    .string()
+    .describe("the full multi-paragraph synthesis in the user's register — complete, not a diff"),
+});
+export type GoalEditOutputT = z.infer<typeof GoalEditOutput>;
+
+// Review writeup drafter: the full experiment recap, from the run's evidence.
+export const ReviewWriteupOutput = z.object({
+  review_md: z
+    .string()
+    .describe("the complete review writeup in the user's own register — what was tried, what held, what broke, what's next; failures included, shrink-first language preserved"),
+});
+export type ReviewWriteupOutputT = z.infer<typeof ReviewWriteupOutput>;
+
+// Witness composer: one friend's goal-filtered share + questions to ask.
+export const WitnessShareOutput = z.object({
+  body_text: z
+    .string()
+    .describe("the message to this friend: self-contained (they memorize nothing), factual, warm, no shame framing"),
+  follow_up_questions: z
+    .array(z.string())
+    .min(2)
+    .max(3)
+    .describe("specific questions the friend can cherry-pick — never 'how's it going'"),
+});
+export type WitnessShareOutputT = z.infer<typeof WitnessShareOutput>;
+
+// Witness prompter: one piece of conversation ammo tied to live state.
+export const WitnessPromptOutput = z.object({
+  body_text: z
+    .string()
+    .describe("one specific, timely conversation starter for the friend, tied to the live experiment or goals in scope"),
+});
+export type WitnessPromptOutputT = z.infer<typeof WitnessPromptOutput>;
+
 // Schedule agent: one turn of the in-dashboard scheduling chat. The agent
 // re-emits the FULL plan each turn; kept flat for structured-output limits.
 export const SchedulePlanTurn = z.object({
@@ -153,6 +208,10 @@ export const SchedulePlanTurn = z.object({
         title: z.string(),
         detail: z.string().optional(),
         extraction_ids: z.array(z.string()).optional(),
+        goal_ids: z
+          .array(z.string())
+          .optional()
+          .describe("ids of the target goals this task addresses (from the target-goals section)"),
         start: z.string().describe("ISO datetime, inside reported free time"),
         end: z.string().describe("ISO datetime"),
       }),
@@ -162,6 +221,10 @@ export const SchedulePlanTurn = z.object({
         title: z.string(),
         note: z.string().optional(),
         valence: z.enum(["good", "bad"]).optional(),
+        goal_ids: z
+          .array(z.string())
+          .optional()
+          .describe("ids of the target goals this habit serves (from the target-goals section)"),
         rrule: z.string().describe('RFC5545, e.g. "FREQ=WEEKLY;BYDAY=MO,WE,FR"'),
         preferred_time: z.string().describe('"HH:MM" local'),
         duration_minutes: z.number().int(),

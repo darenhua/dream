@@ -7,6 +7,7 @@ import { getConfig } from "./config";
 import { emit } from "./events";
 import { newWorkspace, projectDerive } from "./projector";
 import { createProposal, supersedePending } from "./proposals";
+import { enrichNewProposal, NEW_PROPOSAL_KINDS } from "./revise";
 
 // Pass 2 of the pipeline: extractions × current state → proposals. Runs once
 // per reviewed rant; the new rant is the trigger, the whole confirmed corpus
@@ -52,9 +53,7 @@ export async function deriveConversation(conversationId: string, trigger: "daily
 
   const cap = getConfig<number>("MAX_PROPOSALS_PER_DERIVE");
   const accepted = grounded.slice(0, cap); // importance-ordered; overflow dropped
-  for (const p of accepted) {
-    createProposal(p.kind, p, `conversation:${conversationId}`, run.runId);
-  }
+  const created = accepted.map(p => createProposal(p.kind, p, `conversation:${conversationId}`, run.runId));
   db.update(conversation)
     .set({ derivedAt: new Date().toISOString() })
     .where(eq(conversation.id, conversationId))
@@ -64,7 +63,27 @@ export async function deriveConversation(conversationId: string, trigger: "daily
     proposals: accepted.length,
     rejectedUngrounded: rejected,
   });
-  return { conversationId, proposals: accepted.length, rejectedUngrounded: rejected, status: "ok" as const };
+
+  // Second pass, NEW-record proposals only: fold in extractions from OTHER
+  // rants that speak to the same thing. Sequential, and a failed enrichment
+  // never fails the derive — the un-enriched proposal is still valid.
+  let enriched = 0;
+  for (const row of created.filter(r => NEW_PROPOSAL_KINDS.has(r.kind))) {
+    try {
+      const result = await enrichNewProposal(row.id, trigger);
+      if (result.ok && result.added > 0) enriched++;
+    } catch {
+      // already event-logged inside enrichNewProposal's failure paths
+    }
+  }
+
+  return {
+    conversationId,
+    proposals: accepted.length,
+    rejectedUngrounded: rejected,
+    enriched,
+    status: "ok" as const,
+  };
 }
 
 export async function derivePendingReviewed(trigger: "daily" | "manual") {

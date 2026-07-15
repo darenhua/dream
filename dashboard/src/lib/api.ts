@@ -32,6 +32,9 @@ export class ApiError extends Error {
 
 export type PipelineState =
   | "parse_failed"
+  | "pending_detection"
+  | "rant_candidate"
+  | "rejected"
   | "idle"
   | "awaiting_distill"
   | "awaiting_review"
@@ -41,14 +44,87 @@ export type PipelineState =
 export interface ConversationRow {
   id: string;
   title: string | null;
+  source: string;
+  createdAt: string;
+  sourceCreatedAt: string | null;
   sourceUpdatedAt: string | null;
   slugDetected: boolean;
+  rantVerdict: "candidate" | "not_candidate" | null;
+  rantStatus: "proposed" | "accepted" | "rejected" | null;
+  rantDetectedAt: string | null;
+  detectorNote: string | null;
   distillRequested: boolean;
   distilledAt: string | null;
   extractionsReviewedAt: string | null;
   derivedAt: string | null;
   parseError: string | null;
+  messageCount: number | null;
   pipelineState: PipelineState;
+}
+
+export interface Vitals {
+  lastAcceptedRantAt: string | null;
+  daysSinceLastRant: number | null;
+  lastExtractionConfirmedAt: string | null;
+  lastProposalResolvedAt: string | null;
+  lastVisitAt: string | null;
+  pendingCandidates: number;
+  awaitingReadBack: number;
+  pendingProposals: number;
+  experiment: {
+    running: { id: string; title: string; dayN: number; plannedDurationDays: number | null } | null;
+    queueDepth: number;
+    lastEndedAt: string | null;
+    daysSinceEnded: number | null;
+  };
+}
+
+export interface StrikeReport {
+  total: number;
+  rantStrikes: number;
+  queueStrikes: number;
+  paused: boolean;
+  pausedUntil: string | null;
+  pauseReason: string | null;
+  armed: boolean;
+  queueNudge: boolean;
+  facts: { daysSinceLastRant: number | null; emptyQueueDays: number };
+}
+
+export interface WitnessRow {
+  id: string;
+  name: string;
+  platform: "manual" | "imessage" | "telegram";
+  handle: string | null;
+  timezone: string;
+  status: "invited" | "active" | "paused" | "removed";
+  isPrimary: boolean;
+  inviteCode: string | null;
+  chatId: string | null;
+  linkedAt: string | null;
+  promptCadenceDays: number;
+  goalIds: string[];
+}
+
+export interface ReviewWriteupRow {
+  id: string;
+  experimentId: string;
+  draftMd: string | null;
+  finalMd: string | null;
+  status: "drafting" | "draft_ready" | "approved";
+  approvedAt: string | null;
+}
+
+export interface OutboundRow {
+  id: string;
+  witnessId: string;
+  kind: "review_share" | "experiment_announcement" | "random_prompt" | "strike_alert" | "duty_ping";
+  bodyText: string;
+  contextJson: string | null;
+  status: "pending_approval" | "approved" | "sent" | "failed" | "cancelled";
+  notBefore: string | null;
+  sentAt: string | null;
+  createdAt: string;
 }
 
 export type ExtractionKind =
@@ -334,15 +410,101 @@ export interface HealthReport {
 
 export const api = {
   visit: () => request<{ ok: boolean }>("/user/visit", { method: "POST" }),
+  vitals: () => request<{ asOf: string; vitals: Vitals; strikes: StrikeReport }>("/vitals"),
+  pauseStrikes: (days: number, reason?: string) =>
+    request<{ pausedUntil: string }>("/strikes/pause", { method: "POST", body: JSON.stringify({ days, reason }) }),
+  resumeStrikes: () => request<{ ok: boolean }>("/strikes/resume", { method: "POST", body: "{}" }),
+
+  // --- witnesses ---
+  witnesses: () => request<WitnessRow[]>("/witnesses"),
+  inviteWitness: (fields: { name: string; handle?: string; timezone?: string; isPrimary?: boolean; goalIds?: string[] }) =>
+    request<WitnessRow>("/witnesses", { method: "POST", body: JSON.stringify(fields) }),
+  patchWitness: (id: string, patch: Partial<Pick<WitnessRow, "name" | "handle" | "timezone" | "status" | "promptCadenceDays">>) =>
+    request<WitnessRow>(`/witnesses/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  setWitnessGoals: (id: string, goalIds: string[]) =>
+    request<{ ok: boolean; goalIds: string[] }>(`/witnesses/${id}/goals`, { method: "PUT", body: JSON.stringify({ goalIds }) }),
+  setWitnessPrimary: (id: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/primary`, { method: "POST", body: "{}" }),
+  witnessPreview: (id: string) => request<{ contextMd: string }>(`/witnesses/${id}/preview`),
+  removeWitness: (id: string) => request<{ ok: boolean }>(`/witnesses/${id}`, { method: "DELETE" }),
+
+  // --- review writeups + outbox ---
+  review: (experimentId: string) => request<ReviewWriteupRow>(`/reviews/${experimentId}`),
+  generateReview: (experimentId: string) =>
+    request<{ status: string; draftMd?: string; error?: string }>(`/reviews/${experimentId}/generate`, { method: "POST", body: "{}" }),
+  patchReview: (experimentId: string, draftMd: string) =>
+    request<ReviewWriteupRow>(`/reviews/${experimentId}`, { method: "PATCH", body: JSON.stringify({ draftMd }) }),
+  approveReview: (experimentId: string, finalMd: string) =>
+    request<{ ok: boolean; shares: Record<string, string> }>(`/reviews/${experimentId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ finalMd }),
+    }),
+  startReviewInterview: (experimentId: string) =>
+    request<{ sessionId: string }>(`/reviews/${experimentId}/interview`, { method: "POST", body: "{}" }),
+  finishReviewInterview: (sessionId: string) =>
+    request<{ status: string; draftMd?: string }>(`/reviews/interview/${sessionId}/finish`, { method: "POST", body: "{}" }),
+  l3Session: (id: string) =>
+    request<{ session: { id: string; purpose: string; status: string; experimentId: string | null }; messages: ChatMessageRow[] }>(
+      `/l3/sessions/${id}`,
+    ),
+  outbox: (status?: string) => request<OutboundRow[]>(`/outbox${status ? `?status=${status}` : ""}`),
+  approveOutbound: (id: string, bodyText?: string) =>
+    request<{ row: OutboundRow; flush: unknown }>(`/outbox/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify(bodyText !== undefined ? { bodyText } : {}),
+    }),
+  patchOutbound: (id: string, bodyText: string) =>
+    request<OutboundRow>(`/outbox/${id}`, { method: "PATCH", body: JSON.stringify({ bodyText }) }),
+  cancelOutbound: (id: string) => request<{ ok: boolean }>(`/outbox/${id}/cancel`, { method: "POST", body: "{}" }),
 
   // --- conversations + pipeline ---
-  conversations: (params: { state?: string; q?: string; slugged?: string } = {}) => {
+  conversations: (params: { state?: string; q?: string; slugged?: string; rant?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.state) q.set("state", params.state);
     if (params.q) q.set("q", params.q);
     if (params.slugged) q.set("slugged", params.slugged);
+    if (params.rant) q.set("rant", params.rant);
     return request<{ conversations: ConversationRow[] }>(`/conversations?${q}`).then(r => r.conversations);
   },
+  // The rant explorer's paged envelope (total included).
+  conversationsPaged: (params: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    rant?: string;
+    verdict?: string;
+    detected?: string;
+  }) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
+    return request<{ page: number; pageSize: number; total: number; conversations: ConversationRow[] }>(
+      `/conversations?${q}`,
+    );
+  },
+  detectConversation: (id: string) =>
+    request<{ processed: number; candidates: number; skipped: number }>(`/conversations/${id}/detect`, {
+      method: "POST",
+      body: "{}",
+    }),
+  runDetectLimited: (limit: number) =>
+    request<{ processed: number; candidates: number; autoAccepted: number; remaining: number }>("/jobs/detect", {
+      method: "POST",
+      body: JSON.stringify({ limit }),
+    }),
+
+  // --- steering (the universal EDIT next to accept/deny) ---
+  startSteer: (targetType: "distill" | "proposal" | "goal", targetId: string) =>
+    request<{ sessionId: string; opener: string }>("/steer", {
+      method: "POST",
+      body: JSON.stringify({ targetType, targetId }),
+    }),
+  finishSteer: (sessionId: string) =>
+    request<{ targetType: string; targetId: string; result: unknown }>(`/steer/${sessionId}/finish`, {
+      method: "POST",
+      body: "{}",
+    }),
+  cancelSteer: (sessionId: string) =>
+    request<{ ok: boolean }>(`/steer/${sessionId}/cancel`, { method: "POST", body: "{}" }),
   conversation: (id: string) =>
     request<
       ConversationRow & {
@@ -352,6 +514,13 @@ export const api = {
       }
     >(`/conversations/${id}`),
   requestDistill: (id: string) => request(`/conversations/${id}/request-distill`, { method: "POST", body: "{}" }),
+  rantAccept: (id: string) =>
+    request<{ ok: boolean; distill: unknown }>(`/conversations/${id}/rant-accept`, { method: "POST", body: "{}" }),
+  rantReject: (id: string, note?: string) =>
+    request<{ ok: boolean }>(`/conversations/${id}/rant-reject`, {
+      method: "POST",
+      body: JSON.stringify(note ? { note } : {}),
+    }),
   confirmExtractions: (id: string) =>
     request<{ ok: boolean; confirmed: number; derive: unknown }>(`/conversations/${id}/confirm-extractions`, {
       method: "POST",
@@ -432,19 +601,12 @@ export const api = {
   archiveExperiment: (id: string) => request(`/experiments/${id}/archive`, { method: "POST", body: "{}" }),
   patchTask: (taskId: string, status: TaskRow["status"]) =>
     request<TaskRow>(`/experiments/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ status }) }),
-  taskCopyPrompt: async (taskId: string) => {
-    const res = await fetch(`/api/experiments/tasks/${taskId}/copy-prompt`);
-    if (!res.ok) throw new ApiError(res.status, "copy prompt unavailable");
-    return res.text();
-  },
-  experimentPrompt: async () => {
-    const res = await fetch("/api/experiments/prompt");
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new ApiError(res.status, body.error ?? "prompt unavailable");
-    }
-    return res.text();
-  },
+  // --- experiment shaping (the in-app replacement for copy-paste prompts) ---
+  startShaping: () => request<{ sessionId: string; opener: string }>("/shaping", { method: "POST", body: "{}" }),
+  finishShaping: (sessionId: string) =>
+    request<{ conversationId: string }>(`/shaping/${sessionId}/finish`, { method: "POST", body: "{}" }),
+  cancelShaping: (sessionId: string) =>
+    request<{ ok: boolean }>(`/shaping/${sessionId}/cancel`, { method: "POST", body: "{}" }),
 
   // --- schedule chat ---
   chatSession: (id: string) => request<ChatSessionRow>(`/chat/sessions/${id}`),
@@ -500,6 +662,7 @@ export const api = {
     return body as { new: number; updated: number; unchanged: number; errors: unknown[] };
   },
   runDaily: () => request("/jobs/daily", { method: "POST", body: "{}" }),
+  runDetect: () => request("/jobs/detect", { method: "POST", body: "{}" }),
   runDistill: () => request("/jobs/distill", { method: "POST", body: "{}" }),
   runDerive: (conversationId?: string) =>
     request("/jobs/derive", { method: "POST", body: JSON.stringify(conversationId ? { conversationId } : {}) }),

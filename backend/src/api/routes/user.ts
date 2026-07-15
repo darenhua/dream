@@ -1,14 +1,24 @@
 import { Hono } from "hono";
 import { setConfig } from "../../services/config";
 import { emit } from "../../services/events";
-import { getWriteup, latestWriteup, listWriteups, todayLocal } from "../../services/writeup";
+import { generateDaily, getWriteup, latestWriteup, listWriteups, todayLocal } from "../../services/writeup";
 
 export const userRoutes = new Hono();
 
 // §7.13 — the glance ping; "last visit" feeds the writeup's re-entry warmth.
+// The glance is also the trigger for glance-shaped work: today's writeup and
+// the calendar sync run lazily off the first visit of the day instead of a
+// nightly cron, so tokens are only spent on days the user actually looks.
+// Both fire-and-forget — the visit itself must never stall on the network.
 userRoutes.post("/visit", c => {
   setConfig("LAST_VISIT_AT", new Date().toISOString());
   emit("user", null, "visit");
+  if (!getWriteup(todayLocal())) {
+    generateDaily(todayLocal(), "manual").catch(() => {});
+  }
+  import("../../services/calendarSync")
+    .then(({ syncIfStale, isConnected }) => (isConnected() ? syncIfStale() : null))
+    .catch(() => {});
   return c.json({ ok: true });
 });
 

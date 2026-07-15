@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { z } from "zod";
+import { z } from "zod";
 import { db } from "../db";
 import { agentRun } from "../db/schema";
 import { env } from "../lib/env";
@@ -32,8 +32,8 @@ const MODEL_ALIASES_BEDROCK: Record<string, string> = {
   haiku: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 };
 
-export function resolveModel(): string {
-  const configured = getConfig<string>("MODEL");
+export function resolveModel(alias?: string): string {
+  const configured = alias ?? getConfig<string>("MODEL");
   const aliases = env.USE_BEDROCK ? MODEL_ALIASES_BEDROCK : MODEL_ALIASES_API;
   return aliases[configured] ?? configured; // raw IDs pass through untouched
 }
@@ -57,9 +57,15 @@ type AgentName =
   | "distiller"
   | "deriver"
   | "proposal_reviser"
+  | "proposal_enricher"
   | "schedule_agent"
   | "prompt_generator"
-  | "daily_writeup";
+  | "daily_writeup"
+  | "rant_detector"
+  | "review_writeup"
+  | "witness_composer"
+  | "witness_prompter"
+  | "goal_editor";
 
 // Agents get read-only file context only (§8.5): the projected workspace is
 // inlined into the prompt; the files stay on disk as the audit trail (A4).
@@ -103,7 +109,7 @@ export async function runStructured<S extends z.ZodType>(
   agentName: AgentName,
   workspacePath: string,
   schema: S,
-  opts: { trigger: "daily" | "manual"; hints?: string },
+  opts: { trigger: "daily" | "manual"; hints?: string; model?: string },
 ): Promise<RunResult<z.infer<S>>> {
   const prompt = buildPrompt(agentName, workspacePath, opts.hints);
   const started = Date.now();
@@ -112,7 +118,7 @@ export async function runStructured<S extends z.ZodType>(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await client.messages.parse({
-        model: resolveModel(),
+        model: resolveModel(opts.model),
         max_tokens: 8192,
         messages: [{ role: "user", content: prompt }],
         output_config: { format: zodOutputFormat(schema) },
@@ -137,6 +143,13 @@ export async function runStructured<S extends z.ZodType>(
       return { runId, status: "ok", output: parsed };
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
+      // Big schemas (the deriver's 9-way proposal union) can exceed the
+      // server-side grammar compiler's limit. Amendment 9's sanctioned
+      // fallback: plain call with the JSON schema in the prompt, zod
+      // validation client-side — same guarantee for us, no schema surgery.
+      if (lastError.includes("grammar is too large")) {
+        return runStructuredUnconstrained(agentName, prompt, workspacePath, schema, opts, started);
+      }
     }
   }
 
@@ -150,6 +163,72 @@ export async function runStructured<S extends z.ZodType>(
     error: lastError,
   });
   return { runId, status: status as "invalid_output" | "failed", output: null, error: lastError };
+}
+
+// The grammar-limit fallback: no output_config — the schema travels in the
+// prompt and zod is the only validator (which it effectively is anyway).
+// Second attempt feeds the first attempt's validation error back.
+async function runStructuredUnconstrained<S extends z.ZodType>(
+  agentName: AgentName,
+  prompt: string,
+  workspacePath: string,
+  schema: S,
+  opts: { trigger: "daily" | "manual"; model?: string },
+  started: number,
+): Promise<RunResult<z.infer<S>>> {
+  const jsonSchema = JSON.stringify(z.toJSONSchema(schema));
+  let feedback = "";
+  let lastError = "";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await client.messages.create({
+        model: resolveModel(opts.model),
+        max_tokens: 8192,
+        messages: [
+          {
+            role: "user",
+            content:
+              `${prompt}\n\n# Output format\n\nRespond with ONLY a JSON object valid against this JSON Schema — no prose, no code fences:\n${jsonSchema}${feedback}`,
+          },
+        ],
+      });
+      const text = response.content
+        .filter(b => b.type === "text")
+        .map(b => b.text)
+        .join("")
+        .trim()
+        .replace(/^```(?:json)?\n?/, "")
+        .replace(/\n?```$/, "");
+      const parsed = schema.parse(JSON.parse(text));
+      const runId = persistRun({
+        agentName,
+        trigger: opts.trigger,
+        workspacePath,
+        outputJson: JSON.stringify(parsed),
+        status: "ok",
+        tokenUsage: JSON.stringify({
+          input: response.usage.input_tokens,
+          output: response.usage.output_tokens,
+        }),
+        durationMs: Date.now() - started,
+      });
+      return { runId, status: "ok", output: parsed };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      feedback = `\n\nYour previous attempt failed validation with: ${lastError.slice(0, 600)}. Fix it and respond with only the corrected JSON.`;
+    }
+  }
+
+  const runId = persistRun({
+    agentName,
+    trigger: opts.trigger,
+    workspacePath,
+    status: "invalid_output",
+    durationMs: Date.now() - started,
+    error: `unconstrained fallback failed: ${lastError}`,
+  });
+  return { runId, status: "invalid_output", output: null, error: lastError };
 }
 
 // Multi-turn structured chat (schedule agent): full history in, one validated

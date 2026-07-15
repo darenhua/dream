@@ -5,6 +5,7 @@ import {
   experiment,
   experimentGoal,
   experimentTask,
+  experimentTaskGoal,
   extraction,
   extractionLink,
   goalEvidence,
@@ -108,7 +109,7 @@ export function getExperiment(id: string) {
   };
 }
 
-function goalIdsFor(experimentId: string): string[] {
+export function goalIdsFor(experimentId: string): string[] {
   return db
     .select({ goalId: experimentGoal.goalId })
     .from(experimentGoal)
@@ -170,6 +171,16 @@ export function commitPlan(
   if (!row) return { ok: false, error: "experiment not found" };
   if (row.status !== "scheduling") return { ok: false, error: `experiment is ${row.status}, not scheduling` };
 
+  // Goal tags gate witness visibility, so they must always resolve to real
+  // goals of THIS experiment: agent-provided ids are intersected with the
+  // experiment's own goal set; missing/empty tags default to the full set
+  // (an untagged task must never become an invisible orphan).
+  const experimentGoalIds = goalIdsFor(experimentId);
+  const resolveGoalTags = (tagged?: string[]): string[] => {
+    const valid = (tagged ?? []).filter(g => experimentGoalIds.includes(g));
+    return valid.length > 0 ? valid : experimentGoalIds;
+  };
+
   let updated: ExperimentRow;
   db.transaction(() => {
     updated = db
@@ -216,6 +227,13 @@ export function commitPlan(
           .onConflictDoNothing()
           .run();
       }
+      // Task → goal links: the granularity witness scoping filters on.
+      for (const goalId of resolveGoalTags(t.goal_ids)) {
+        db.insert(experimentTaskGoal)
+          .values({ experimentTaskId: task.id, goalId })
+          .onConflictDoNothing()
+          .run();
+      }
     }
 
     for (const h of plan.habit_blocks) {
@@ -229,6 +247,7 @@ export function commitPlan(
         durationMinutes: h.duration_minutes,
         experimentId,
         origin: "experiment",
+        goalIds: resolveGoalTags(h.goal_ids), // joins the goals' ideal sets (goalHabit)
       });
     }
   });
@@ -313,38 +332,5 @@ export function patchTask(taskId: string, status: "pending" | "scheduled" | "don
   return updated;
 }
 
-// The per-task copy-prompt: full context from the task's provenance trail,
-// pasteable into a fresh Claude thread to talk through execution.
-export function taskCopyPrompt(taskId: string): string | null {
-  const task = db.select().from(experimentTask).where(eq(experimentTask.id, taskId)).get();
-  if (!task) return null;
-  const exp = db.select().from(experiment).where(eq(experiment.id, task.experimentId)).get();
-  const linkedIds = db
-    .select({ extractionId: extractionLink.extractionId })
-    .from(extractionLink)
-    .where(and(eq(extractionLink.entityType, "experiment_task"), eq(extractionLink.entityId, taskId)))
-    .all()
-    .map(r => r.extractionId);
-  // Fall back to the experiment's own provenance when the task has none.
-  const fallbackIds = linkedIds.length
-    ? []
-    : db
-        .select({ extractionId: extractionLink.extractionId })
-        .from(extractionLink)
-        .where(and(eq(extractionLink.entityType, "experiment"), eq(extractionLink.entityId, task.experimentId)))
-        .all()
-        .map(r => r.extractionId);
-  const ids = linkedIds.length ? linkedIds : fallbackIds;
-  const cited = ids.length ? db.select().from(extraction).where(inArray(extraction.id, ids)).all() : [];
-
-  const template = getConfig<string>("PROMPT.task_copy");
-  return template
-    .replaceAll("{{TASK_TITLE}}", task.title)
-    .replaceAll("{{EXPERIMENT_TITLE}}", exp?.title ?? "")
-    .replaceAll("{{HYPOTHESIS}}", exp?.hypothesisMd ?? "_(none recorded)_")
-    .replaceAll("{{TASK_DETAIL}}", task.detail ?? task.title)
-    .replaceAll(
-      "{{EXTRACTIONS}}",
-      cited.length ? cited.map(x => `- (${x.kind}) ${x.text}`).join("\n") : "_(no linked passages)_",
-    );
-}
+// (The per-task copy-prompt is gone — talking through execution happens
+// in-app now; see routes/shaping.ts for the experiment-level conversation.)

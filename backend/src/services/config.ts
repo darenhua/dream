@@ -17,7 +17,11 @@ Rules: distill each passage in the user's own first-person register — no coach
 
 const PROMPT_DERIVER = `You are interpreting ONE newly-reviewed rant against everything already known.
 
-Files: trigger.md (the new rant's confirmed extractions — the occasion for this run), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
+Files: trigger.md (the new rant's confirmed extractions — the occasion for this run — plus the surrounding conversation each passage came from), pending-proposals.md (proposals already awaiting the human's ratification), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
+
+Read pending-proposals.md FIRST. NEVER propose something a pending proposal already covers — the budget is for genuinely new material only. If the new extractions merely reinforce a pending proposal, propose nothing for it; once it's ratified, a future run can enrich it through an update citing this rant. Only propose when your new extractions point at something no pending proposal and no existing entity accounts for, or add a genuinely different dimension to a RATIFIED entity (via an update).
+
+Use the surrounding-conversation blocks in trigger.md to understand what each extraction actually meant in context — the register, the stakes, what prompted it. Quote and synthesize in the user's own voice from that fuller picture, not just the extracted line.
 
 The new extractions are the occasion; the whole corpus is the evidence. Propose state changes ONLY when justified. Convergence rules:
 - You only ADD and UPDATE. You never remove anything and never change a goal's status — retiring, succeeding, or removing items is the human's manual action. If evidence contradicts an existing item, say so inside an update's reason/note text.
@@ -43,35 +47,66 @@ Rules:
 - Habit blocks anchor to existing established habits where possible (after X, I do Y).
 - If you don't know the user's current bandwidth, ask before proposing. Size the plan to it — when in doubt, smaller.
 - Learn from history: if a previous attempt at these goals failed, the notes say why; design around that.
-- Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.`;
+- Re-emit the FULL plan every turn (message_to_user carries your conversational reply; plan carries the complete current draft). The user commits when it feels right; keep refining until then.
+- Tag every task and habit block with the goal_ids it addresses, using the ids from the target-goals section. These tags control which accountability friend can see which part of the experiment — tag precisely.`;
 
-const PROMPT_GENERATOR = `Write a self-contained prompt the user will paste into a fresh Claude conversation. That Claude's job is to interview the user toward their next experiment idea — it must NOT design the experiment itself; the conversation it hosts becomes a rant that re-enters this system and is distilled like any other.
+const PROMPT_PROPOSAL_ENRICHER = `A brand-new proposal was just derived from ONE rant (proposal.md — its payload and the citations from the rant that birthed it). corpus.md is everything the user has ever said, across all rants, with markers showing which entities each extraction already feeds.
 
-The prompt you write must: (1) brief that Claude on the user's full current state exactly as given in the context files (prioritized goals with identity clauses and syntheses, habits, environment, experiment history with outcomes and improvement notes, the attempt heatmap, and the free-time report); (2) instruct it to interview the user about what change would actually help right now — bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding; (3) instruct it to help the user talk through ONE concrete experiment-worthy idea in their own words; (4) remind the user at the end to type the marker slug so the conversation enters the system on next import. Output the prompt as plain markdown, nothing else.`;
+Your one job: find extractions from OTHER rants that genuinely speak to the same thing this proposal is about, and revise the proposal to draw on them — a richer synthesis/detail in the user's own words across time, with every newly-used extraction's id ADDED to extraction_ids. Rules:
+- Keep the same kind and everything that was already right. NEVER drop the original extraction_ids — you may only add.
+- Genuinely relevant only: same goal, same struggle, same theme said in different words. Adjacent-but-different topics are NOT sources — a false source pollutes the record forever.
+- If nothing in other rants speaks to it, return the proposal EXACTLY unchanged. That is a common, correct answer.
+- Never invent ids; only cite ids that appear in the context files.`;
+
+const PROMPT_RANT_DETECTOR = `candidates.md lists imported conversations (id, title, message count, opening excerpt). For each, decide: is this a RANT — self-discovery material worth distilling into the user's growth system?
+
+A rant is the user digging into their own life: complaints about their situation or themselves, goals and who they want to become, habits they have or struggle with, their environment and obligations, experiences they want, changes they're considering. It is about the USER's inner or outer life.
+
+NOT a rant: coding/work sessions, how-to questions, research, drafting documents, planning logistics, anything where the user is producing output rather than examining themselves. When a conversation mixes both, ask: would distilling it yield evidence about who this person is and wants to be? If yes → candidate.
+
+Return one verdict per conversation with its exact conversation_id and a one-line note the user will read when accepting/rejecting ("digging into why weekends disappear", "React debugging session"). Be strict: a false candidate costs the user a needless review tap; when genuinely unsure, lean candidate — the human gate catches it.`;
+
+const PROMPT_REVIEW_WRITEUP = `Draft the review writeup for the experiment described in the context files (the experiment, its plan, task and habit end-states, the user's own end-of-run notes, and evidence captured along the way).
+
+Write it in the user's own first-person register — this is HIS review, drafted for him to edit. Structure: what was tried and why; what actually happened, day-level where the evidence supports it; what held and what broke, with the honest why (resistance stories included, never sanded off); what this run taught about the goals it targeted; what the next bet probably is. Failures are data, not verdicts — shrink-first language stays. No coaching-speak, no cheerleading, no grades.`;
+
+const PROMPT_WITNESS_COMPOSER = `You are composing ONE message to ONE accountability friend. witness-context.md is EVERYTHING this friend is allowed to know — it has already been filtered; never reference anything outside it. review.md (when present) is the approved writeup filtered to their scope.
+
+Compose body_text as a self-contained message (the friend memorizes nothing: carry the context inside the message). Factual and warm; failures stay failures, never dressed up, never dramatized. No shame framing, no streaks, no scores, no "he's behind". Then 2-3 follow_up_questions the friend can cherry-pick — each specific to something in the material ("ask him what the resistance story was on Tuesday"), never generic.`;
+
+const PROMPT_WITNESS_PROMPTER = `You are arming an accountability friend with ONE piece of conversation ammo. witness-context.md is everything this friend is allowed to know — never reference anything outside it.
+
+Write body_text: one short message to the friend suggesting something specific and timely to ask, tied to the live experiment or a shared goal ("Conversation ammo, use it or don't: ..."). It must be answerable in thirty seconds, interesting to answer, and impossible to answer with a bare "fine". Never "how's it going". No shame, no pressure framing — a door, not a demand.`;
+
+const PROMPT_REVIEW_INTERVIEW = `You are interviewing the user to flesh out an experiment review. The context shows the experiment, its plan, task/habit end-states, and the current draft writeup.
+
+Ask 3-4 pointed questions, ONE at a time, that surface what the draft is missing: the resistance story behind skipped tasks, what a specific day actually looked like, what surprised him, what he'd renegotiate. Short questions, his words matter more than yours. When he's said what matters, tell him to hit finish — the transcript regenerates the draft.`;
+
+const PROMPT_STEER = `You are the steering conversation for one generation the user is reviewing (an extraction pass, a pending proposal, or a ratified goal record). Your context carries the generation's ORIGINAL instructions, its inputs, and its current output — you know exactly what the job was and what came out.
+
+The user will say what's wrong: wrong splits, missed material, wrong register, wrong emphasis, wrong depth. Ask at most one clarifying question at a time, and only when their intent is genuinely ambiguous — mostly, reflect back concretely what you'd change ("I'd merge #2 and #3, drop #5, and recover the phrasing about X from message 4") so they can correct you cheaply. Never apply anything yourself: when the user is satisfied, tell them to hit finish — the redo runs with this conversation as its steering.`;
+
+const PROMPT_GOAL_EDITOR = `Rewrite the goal record in goal.md according to the steering conversation in your instructions. Re-emit the COMPLETE record — title, identity_clause, synthesis_md — not a diff; unchanged parts are re-stated verbatim. Honor the record rules from the original instructions (identity clause = one sharp sentence; synthesis = multiple substantial paragraphs in the user's own register, root-cause understanding plus what days concretely look like when the goal is true). The steering conversation overrides your defaults where they conflict; never invent material the evidence and conversation don't support.`;
+
+const PROMPT_EXPERIMENT_SHAPING = `You are interviewing the user toward their NEXT experiment idea, in a quick in-app chat. You must NOT design the experiment yourself — this conversation becomes a rant that re-enters the system and is distilled like any other; the deriver proposes, the human ratifies.
+
+Your context shows the full current state (prioritized goals with identity clauses, habits, environment, experiment history with outcomes and improvement notes, the free-time report). Interview, ONE question at a time, about what change would actually help right now: bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding. Help the user talk through ONE concrete experiment-worthy idea in their own words — their phrasing, not yours. When the idea is concrete enough to distill, tell them to hit finish.`;
 
 const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), the pipeline counts (rants awaiting read-back, pending proposals), goals, and the current experiment or queue. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if anything awaits the user (read-backs or proposals), a "caught this before you forgot it" teaser, else a gentle note on the current experiment or queue. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
-
-const PROMPT_TASK_COPY = `# Task: {{TASK_TITLE}}
-
-I'm working on an experiment called "{{EXPERIMENT_TITLE}}" and I want to talk through how to actually execute one specific piece of it.
-
-## The experiment's hypothesis
-{{HYPOTHESIS}}
-
-## The task
-{{TASK_DETAIL}}
-
-## What I said that led here (my own words, extracted from past conversations)
-{{EXTRACTIONS}}
-
-Help me figure out how to actually do this task: what it constitutes, how to make it easier, what could get in the way, and the smallest version that still counts.`;
 
 // The attention budget and prompts live here, visible and editable via /api/config.
 export const CONFIG_DEFAULTS: Record<string, unknown> = {
   MAX_ACTIVE_GOALS: 5,
   MAX_PROPOSALS_PER_DERIVE: 7,
-  SLUG_MARKER: "#DREAM-CATEGORIZE", // kept so historical rants import unchanged
+  SLUG_MARKER: "#DREAM-CATEGORIZE", // legacy: a detected slug auto-accepts through the intake gate
   MODEL: "sonnet",
+  DETECTOR_MODEL: "haiku", // intake classification is cheap-model work
+  DETECTOR_BATCH_SIZE: 10,
+  // When false, importing NEVER classifies (and the heartbeat sweep skips
+  // detection too) — the rant explorer's manual buttons are the only path.
+  // Turn off before a bulk backlog import; classification then happens at
+  // the user's own pace, page by page.
+  AUTO_DETECT: true,
   LAST_VISIT_AT: null,
   TIMEZONE: "America/New_York",
   SLEEP_WINDOW: { start: "23:30", end: "07:30" },
@@ -79,14 +114,39 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   DINNER_WINDOW: null, // e.g. { start: "19:00", end: "20:00" }
   EXPERIMENT_DEFAULT_DURATION_DAYS: 7,
   GCAL_SYNC_MIN_INTERVAL_MIN: 10,
+  // The tripwire (all derived — see strikes.ts). Tune here, in daylight.
+  STRIKE_RANT_DAYS: 3, // 1 strike per this many days without an accepted rant
+  STRIKE_THRESHOLD: 3, // total strikes that fire the one alert per episode
+  EXPERIMENT_QUEUE_NUDGE_DAY: 5, // running-experiment day to nudge "queue the next one"
+  STRIKE_ALERTS_ENABLED: false, // stays dark until a primary witness chat is linked AND this is flipped
+  "TEMPLATE.strike_alert":
+    "Heads up: {{FACTS}}. Don't ask whether he did the thing — ask what's in the way.",
+  // Witness messaging (outbox + duty pings). All friend-facing timing/copy
+  // knobs live here, in daylight.
+  WITNESS_AUTOSEND: false, // first weeks: every outbound message is hand-approved
+  WITNESS_PROMPT_MIN_HOURS: 48, // never two prompts to the same friend inside this window
+  WITNESS_QUIET_HOURS: { start: "21:00", end: "10:00" }, // interpreted in each witness's timezone
+  DUTY_PING_REVIEW_HOURS: 48, // experiment ended this long without an approved writeup → ping
+  DUTY_PING_PROPOSAL_DAYS: 4, // pending proposals/candidates older than this while active → ping
+  "TEMPLATE.duty_ping_review":
+    "{{EXPERIMENT}} wrapped {{DAYS}} days ago and there's no review yet. Your move — ask him how it actually went.",
+  "TEMPLATE.duty_ping_backlog":
+    "There's material sitting in his queue ({{WHAT}}) going stale. Worth asking what he's been chewing on.",
   "PROMPT.preamble": PREAMBLE,
+  "PROMPT.rant_detector": PROMPT_RANT_DETECTOR,
   "PROMPT.distiller": PROMPT_DISTILLER,
   "PROMPT.deriver": PROMPT_DERIVER,
   "PROMPT.proposal_reviser": PROMPT_PROPOSAL_REVISER,
+  "PROMPT.proposal_enricher": PROMPT_PROPOSAL_ENRICHER,
   "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
-  "PROMPT.prompt_generator": PROMPT_GENERATOR,
+  "PROMPT.experiment_shaping": PROMPT_EXPERIMENT_SHAPING,
+  "PROMPT.steer": PROMPT_STEER,
+  "PROMPT.goal_editor": PROMPT_GOAL_EDITOR,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
-  "PROMPT.task_copy": PROMPT_TASK_COPY,
+  "PROMPT.review_writeup": PROMPT_REVIEW_WRITEUP,
+  "PROMPT.witness_composer": PROMPT_WITNESS_COMPOSER,
+  "PROMPT.witness_prompter": PROMPT_WITNESS_PROMPTER,
+  "PROMPT.review_interview": PROMPT_REVIEW_INTERVIEW,
 };
 
 export function getConfig<T>(key: string): T {

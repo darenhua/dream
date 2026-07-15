@@ -1,4 +1,4 @@
-import { Pencil } from "lucide-react";
+import { MessagesSquare, Pencil } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,15 @@ function heatClass(attempts: number): string {
   return HEAT[Math.min(attempts, HEAT.length - 1)]!;
 }
 
-export function GoalsCard({ tick, onChanged }: { tick: number; onChanged: () => void }) {
+export function GoalsCard({
+  tick,
+  onChanged,
+  onOpenSteer,
+}: {
+  tick: number;
+  onChanged: () => void;
+  onOpenSteer?: (sessionId: string) => void;
+}) {
   const { data: goals } = useApiData(() => api.goals(), [tick]);
   const [editing, setEditing] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -74,12 +82,12 @@ export function GoalsCard({ tick, onChanged }: { tick: number; onChanged: () => 
               that needs a smaller first move.
             </SheetDescription>
           </SheetHeader>
-          <GoalSection title="active" goals={active} onChanged={onChanged} onOpen={setOpenId} actions={g => [
+          <GoalSection title="active" goals={active} onChanged={onChanged} onOpen={setOpenId} onOpenSteer={onOpenSteer} actions={g => [
             { label: "→ backlog", to: "backlog" },
             { label: "succeeded", to: "succeeded" },
             { label: "no longer relevant", to: "irrelevant" },
           ]} />
-          <GoalSection title="the pool" goals={pool} onChanged={onChanged} onOpen={setOpenId} actions={g => [
+          <GoalSection title="the pool" goals={pool} onChanged={onChanged} onOpen={setOpenId} onOpenSteer={onOpenSteer} actions={g => [
             { label: "→ active", to: "active" },
             { label: "no longer relevant", to: "irrelevant" },
           ]} />
@@ -136,12 +144,14 @@ function GoalSection({
   onChanged,
   onOpen,
   actions,
+  onOpenSteer,
 }: {
   title: string;
   goals: GoalRow[];
   onChanged: () => void;
   onOpen: (id: string) => void;
   actions: (g: GoalRow) => { label: string; to: string }[];
+  onOpenSteer?: (sessionId: string) => void;
 }) {
   if (!goals.length) return null;
   return (
@@ -168,6 +178,20 @@ function GoalSection({
                 {a.label}
               </Button>
             ))}
+            {onOpenSteer && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-xs"
+                title="rewrite this record via a steering chat — applies only when you hit finish"
+                onClick={async () => {
+                  const { sessionId } = await api.startSteer("goal", g.id);
+                  onOpenSteer(sessionId);
+                }}
+              >
+                <MessagesSquare className="size-3" /> edit record
+              </Button>
+            )}
           </div>
         </div>
       ))}

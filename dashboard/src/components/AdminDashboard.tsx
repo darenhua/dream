@@ -16,9 +16,13 @@ import { EventsFeed } from "./admin/EventsFeed";
 import { HistoryPanel } from "./admin/HistoryPanel";
 import { ProposalLedger } from "./admin/ProposalLedger";
 import { QuickAdd } from "./admin/QuickAdd";
+import { StrikesSection } from "./admin/StrikesSection";
 
 const STATE_STYLE: Record<PipelineState, string> = {
   parse_failed: "bg-red-200 text-red-900 dark:bg-red-900 dark:text-red-100",
+  pending_detection: "bg-muted text-muted-foreground",
+  rant_candidate: "bg-violet-200 text-violet-900 dark:bg-violet-900 dark:text-violet-100",
+  rejected: "bg-muted text-muted-foreground line-through",
   idle: "bg-muted text-muted-foreground",
   awaiting_distill: "bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100",
   awaiting_review: "bg-emerald-200 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100",
@@ -61,8 +65,11 @@ export function AdminDashboard({
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Button variant="outline" disabled={running !== null} onClick={() => runJob("daily", api.runDaily)}>
-          {running === "daily" ? <Loader2 className="animate-spin" /> : <Play />} run daily now
-          <span className="text-muted-foreground">(distill → derive → writeup → sync)</span>
+          {running === "daily" ? <Loader2 className="animate-spin" /> : <Play />} run heartbeat now
+          <span className="text-muted-foreground">(strikes → pings → sweep)</span>
+        </Button>
+        <Button variant="outline" disabled={running !== null} onClick={() => runJob("detect", api.runDetect)}>
+          {running === "detect" && <Loader2 className="animate-spin" />} run rant detection
         </Button>
         <Button variant="outline" disabled={running !== null} onClick={() => runJob("distill", api.runDistill)}>
           {running === "distill" && <Loader2 className="animate-spin" />} run distill
@@ -90,6 +97,7 @@ export function AdminDashboard({
         onReviewExtractions={onReviewExtractions}
       />
       <CalendarPanel refreshKey={refreshTick} />
+      <StrikesSection refreshKey={refreshTick} onChanged={handleChanged} />
       <AnchorConfig onChanged={handleChanged} />
       <QuickAdd onChanged={handleChanged} />
       <ProposalLedger refreshKey={refreshTick} />
@@ -133,10 +141,22 @@ function PipelineBrowser({
 
   const actionFor = (c: ConversationRow) => {
     switch (c.pipelineState) {
-      case "idle":
+      case "rant_candidate":
         return (
-          <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => act(c.id, () => api.requestDistill(c.id))}>
-            distill this
+          <div className="flex gap-1">
+            <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => act(c.id, () => api.rantAccept(c.id))}>
+              accept
+            </Button>
+            <Button size="sm" variant="ghost" disabled={busy === c.id} onClick={() => act(c.id, () => api.rantReject(c.id))}>
+              reject
+            </Button>
+          </div>
+        );
+      case "idle":
+      case "rejected":
+        return (
+          <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => act(c.id, () => api.rantAccept(c.id))}>
+            accept as rant
           </Button>
         );
       case "awaiting_review":
@@ -187,7 +207,11 @@ function PipelineBrowser({
                   {(c.sourceUpdatedAt ?? "").slice(0, 10)}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{c.title ?? "(untitled)"}</span>
-                {c.slugDetected && <span title="marker slug present">✓</span>}
+                {c.detectorNote && (
+                  <span className="hidden max-w-48 truncate text-xs text-muted-foreground sm:inline" title={c.detectorNote}>
+                    {c.detectorNote}
+                  </span>
+                )}
                 <Badge className={cn("border-transparent", STATE_STYLE[c.pipelineState])}>
                   {c.pipelineState.replace("_", " ")}
                 </Badge>
@@ -221,8 +245,8 @@ function ImportDialog({
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // The raw Claude conversations.json goes straight to the backend; slugged
-  // rants start distilling immediately.
+  // The raw Claude conversations.json goes straight to the backend; the
+  // detector proposes rant candidates for the user gate right after import.
   const handleFile = async (file: File) => {
     setError(null);
     setReport(null);

@@ -1,10 +1,13 @@
 import type { ConversationRow } from "@/lib/api";
-import { AnchorRow } from "../components/AnchorRow";
 import { ExperimentQueue } from "../components/ExperimentQueue";
 import { GoalsCard } from "../components/GoalsCard";
 import { ListCards } from "../components/ListCards";
+import { OutboxCard } from "../components/OutboxCard";
+import { RantCandidatesGate } from "../components/RantCandidatesGate";
 import { ReadBackGate } from "../components/ReadBackGate";
 import { TodayStrip } from "../components/TodayStrip";
+import { VitalsStrip } from "../components/VitalsStrip";
+import { WitnessCard } from "../components/WitnessCard";
 import { WriteupFootnote } from "../components/WriteupFootnote";
 
 // The main feed, in attention order: anchors (one-tap), today's schedule,
@@ -17,6 +20,9 @@ export function MainFeed({
   awaitingReview,
   onReviewExtractions,
   onOpenScheduleChat,
+  onOpenReview,
+  onOpenShaping,
+  onOpenGoalSteer,
 }: {
   tick: number;
   onChanged: () => void;
@@ -24,19 +30,31 @@ export function MainFeed({
   awaitingReview: ConversationRow[];
   onReviewExtractions: (conversationId: string) => void;
   onOpenScheduleChat: (sessionId: string) => void;
+  onOpenReview: (experimentId: string) => void;
+  onOpenShaping: (sessionId: string) => void;
+  onOpenGoalSteer: (sessionId: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <AnchorRow tick={tick} onChanged={onChanged} />
+      <VitalsStrip tick={tick} />
       <TodayStrip tick={tick} />
+      <RantCandidatesGate tick={tick} onChanged={onChanged} />
       {readBackCount > 0 && (
         <ReadBackGate conversations={awaitingReview} onReview={onReviewExtractions} />
       )}
-      <ExperimentQueue tick={tick} onChanged={onChanged} onOpenScheduleChat={onOpenScheduleChat} />
+      <OutboxCard tick={tick} onChanged={onChanged} />
+      <ExperimentQueue
+        tick={tick}
+        onChanged={onChanged}
+        onOpenScheduleChat={onOpenScheduleChat}
+        onOpenReview={onOpenReview}
+        onOpenShaping={onOpenShaping}
+      />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <GoalsCard tick={tick} onChanged={onChanged} />
+        <GoalsCard tick={tick} onChanged={onChanged} onOpenSteer={onOpenGoalSteer} />
         <ListCards tick={tick} onChanged={onChanged} />
       </div>
+      <WitnessCard tick={tick} onChanged={onChanged} />
       <WriteupFootnote tick={tick} />
     </div>
   );

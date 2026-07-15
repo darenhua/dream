@@ -105,28 +105,9 @@ function entityTitles(): Map<string, string> {
   return map;
 }
 
-export function projectDerive(conversationId: string, dir: string) {
-  const convo = db.select().from(conversation).where(eq(conversation.id, conversationId)).get();
-  if (!convo) throw new Error(`conversation ${conversationId} not found`);
-  const markers = linkMarkers();
-
-  const trigger = db
-    .select()
-    .from(extraction)
-    .where(eq(extraction.conversationId, conversationId))
-    .orderBy(asc(extraction.createdAt))
-    .all()
-    .filter(x => x.confirmedAt);
-  write(
-    dir,
-    "trigger.md",
-    `# The new rant: ${convo.title ?? "(untitled)"} (${(convo.sourceUpdatedAt ?? "").slice(0, 10)})\n\n` +
-      `These freshly-confirmed extractions are the occasion for this run.\n\n` +
-      (trigger.length ? trigger.map(x => extractionMd(x, markers)).join("\n") : "_(none)_") +
-      "\n",
-  );
-
-  // The whole confirmed corpus, dated, grouped by conversation — the system's memory.
+// The whole confirmed corpus, dated, grouped by conversation — the system's
+// memory. Shared by the deriver and the proposal enricher.
+function corpusMd(markers: Map<string, string[]>): string {
   const corpus = db
     .select({ x: extraction, convoTitle: conversation.title, convoDate: conversation.sourceUpdatedAt })
     .from(extraction)
@@ -145,17 +126,94 @@ export function projectDerive(conversationId: string, dir: string) {
       });
     byConvo.get(key)!.rows.push(row.x);
   }
-  const corpusSections = [...byConvo.values()].map(
+  const sections = [...byConvo.values()].map(
     c => `## ${c.date} — ${c.title}\n\n${c.rows.map(x => extractionMd(x, markers)).join("\n")}`,
   );
+  return (
+    `# Everything the user has said (confirmed extractions, oldest first)\n\n` +
+    (sections.length ? sections.join("\n\n") : "_(corpus is empty)_") +
+    "\n"
+  );
+}
+
+// Merged transcript windows around the trigger extractions: how each passage
+// was actually said. Windows overlap-merge so a dense rant reads as one block.
+function triggerContextMd(contentJson: string | null, rows: ExtractionRow[], radius = 2): string {
+  if (!contentJson) return "";
+  const messages = JSON.parse(contentJson) as TranscriptMessage[];
+  const spans = rows
+    .filter(x => x.startIdx !== null && x.endIdx !== null)
+    .map(x => [Math.max(0, x.startIdx! - radius), Math.min(messages.length - 1, x.endIdx! + radius)] as const)
+    .sort((a, b) => a[0] - b[0]);
+  if (!spans.length) return "";
+  const merged: [number, number][] = [];
+  for (const [s, e] of spans) {
+    const last = merged.at(-1);
+    if (last && s <= last[1] + 1) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  const blocks = merged.map(([s, e]) =>
+    messages
+      .slice(s, e + 1)
+      .map((m, i) => `**[${s + i}] ${m.role === "user" ? "me" : "claude"}:** ${m.content.slice(0, 600)}`)
+      .join("\n\n"),
+  );
+  return (
+    `\n## How it was said (surrounding conversation, message indices match the spans above)\n\n` +
+    blocks.join("\n\n_[…]_\n\n") +
+    "\n"
+  );
+}
+
+// Pending proposals: what already awaits the human. The deriver's first duty
+// is NOT duplicating these — the budget is spent on genuinely new material.
+function pendingProposalsMd(): string {
+  const rows = db.select().from(proposal).where(eq(proposal.status, "pending")).all();
+  if (!rows.length) return "# Proposals already awaiting ratification\n\n_(none pending)_\n";
+  const lines = rows.map(p => {
+    const payload = JSON.parse(p.payloadJson) as Record<string, unknown>;
+    const title =
+      (payload.title as string) ??
+      (payload.identity_clause as string) ??
+      (payload.note as string)?.slice(0, 80) ??
+      "(untitled)";
+    const body =
+      (payload.hypothesis_md as string) ?? (payload.synthesis_md as string) ?? (payload.detail as string) ?? "";
+    const cited = Array.isArray(payload.extraction_ids) ? (payload.extraction_ids as string[]) : [];
+    return (
+      `- **${p.kind}**: ${title}` +
+      (body ? `\n  ${String(body).slice(0, 240).replaceAll("\n", " ")}` : "") +
+      (cited.length ? `\n  cites: ${cited.map(id => `\`${id}\``).join(", ")}` : "")
+    );
+  });
+  return `# Proposals already awaiting ratification\n\n${lines.join("\n")}\n`;
+}
+
+export function projectDerive(conversationId: string, dir: string) {
+  const convo = db.select().from(conversation).where(eq(conversation.id, conversationId)).get();
+  if (!convo) throw new Error(`conversation ${conversationId} not found`);
+  const markers = linkMarkers();
+
+  const trigger = db
+    .select()
+    .from(extraction)
+    .where(eq(extraction.conversationId, conversationId))
+    .orderBy(asc(extraction.createdAt))
+    .all()
+    .filter(x => x.confirmedAt);
   write(
     dir,
-    "corpus.md",
-    `# Everything the user has said (confirmed extractions, oldest first)\n\n` +
-      (corpusSections.length ? corpusSections.join("\n\n") : "_(corpus is empty)_") +
-      "\n",
+    "trigger.md",
+    `# The new rant: ${convo.title ?? "(untitled)"} (${(convo.sourceUpdatedAt ?? "").slice(0, 10)})\n\n` +
+      `These freshly-confirmed extractions are the occasion for this run.\n\n` +
+      (trigger.length ? trigger.map(x => extractionMd(x, markers)).join("\n") : "_(none)_") +
+      "\n" +
+      triggerContextMd(convo.contentJson, trigger),
   );
 
+  write(dir, "pending-proposals.md", pendingProposalsMd());
+
+  write(dir, "corpus.md", corpusMd(markers));
   write(dir, "state.md", stateMd());
   write(dir, "budget.md", budgetMd());
 }
@@ -200,6 +258,48 @@ export function projectRevision(
   );
 
   write(dir, "state.md", stateMd());
+}
+
+// --- steer revision: one pending proposal, redone per a steering chat ---
+// (the steering notes travel as hints; this projects the same proposal.md
+// shape the reviser already knows plus current state)
+
+export function projectSteerRevision(proposalRow: { id: string; kind: string; payloadJson: string }, dir: string) {
+  const markers = linkMarkers();
+  const payload = JSON.parse(proposalRow.payloadJson) as { extraction_ids?: string[] };
+  const cited = payload.extraction_ids?.length
+    ? db.select().from(extraction).where(inArray(extraction.id, payload.extraction_ids)).all()
+    : [];
+  write(
+    dir,
+    "proposal.md",
+    `# The pending proposal being steered (kind: ${proposalRow.kind})\n\n` +
+      "```json\n" +
+      JSON.stringify(JSON.parse(proposalRow.payloadJson), null, 2) +
+      "\n```\n\n" +
+      `## Its current citations\n\n${cited.length ? cited.map(x => extractionMd(x, markers)).join("\n") : "_(none)_"}\n`,
+  );
+  write(dir, "state.md", stateMd());
+}
+
+// --- proposal enricher: one BRAND-NEW proposal against the whole corpus ---
+
+export function projectEnrichment(proposalRow: { id: string; kind: string; payloadJson: string }, dir: string) {
+  const markers = linkMarkers();
+  const payload = JSON.parse(proposalRow.payloadJson) as { extraction_ids?: string[] };
+  const cited = payload.extraction_ids?.length
+    ? db.select().from(extraction).where(inArray(extraction.id, payload.extraction_ids)).all()
+    : [];
+  write(
+    dir,
+    "proposal.md",
+    `# The brand-new proposal (kind: ${proposalRow.kind})\n\n` +
+      "```json\n" +
+      JSON.stringify(JSON.parse(proposalRow.payloadJson), null, 2) +
+      "\n```\n\n" +
+      `## Its current citations (from the rant that birthed it)\n\n${cited.length ? cited.map(x => extractionMd(x, markers)).join("\n") : "_(none)_"}\n`,
+  );
+  write(dir, "corpus.md", corpusMd(markers));
 }
 
 // --- current-state renderings (shared by deriver / prompt generator / schedule agent) ---
@@ -315,19 +415,6 @@ export function budgetMd(): string {
 export function daysSinceLastVisit(): number | null {
   const lastVisit = getConfig<string | null>("LAST_VISIT_AT");
   return lastVisit ? Math.floor((Date.now() - new Date(lastVisit).getTime()) / 86_400_000) : null;
-}
-
-// --- prompt generator: full state, for the paste-into-Claude-app prompt ---
-
-export function projectPromptGenerator(dir: string, freeTimeReport: string) {
-  write(dir, "state.md", stateMd());
-  write(dir, "budget.md", budgetMd());
-  write(dir, "free-time.md", freeTimeReport);
-  write(
-    dir,
-    "marker.md",
-    `# Marker slug\n\nThe user marks a conversation for import by typing this on its own message: \`${getConfig<string>("SLUG_MARKER")}\`\n`,
-  );
 }
 
 // --- writeup: pipeline counts + state, demoted glance bait ---

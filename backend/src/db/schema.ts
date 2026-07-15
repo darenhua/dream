@@ -32,6 +32,15 @@ export const conversation = sqliteTable(
     sourceUpdatedAt: text("source_updated_at"),
     slugDetected: integer("slug_detected", { mode: "boolean" }).notNull().default(false),
     slugMessageIdx: integer("slug_message_idx"),
+    // The intake gate: every imported chat is auto-classified (rant_detector),
+    // candidates surface on the dashboard, and a human accept — not a slug —
+    // is what admits a conversation into distill. slug columns are legacy;
+    // a detected slug just auto-accepts during the transition.
+    rantVerdict: text("rant_verdict", { enum: ["candidate", "not_candidate"] }), // null = not yet detected
+    rantStatus: text("rant_status", { enum: ["proposed", "accepted", "rejected"] }),
+    rantDetectedAt: text("rant_detected_at"),
+    rantResolvedAt: text("rant_resolved_at"),
+    detectorNote: text("detector_note"), // one line: why this looks like a rant
     distillRequested: integer("distill_requested", { mode: "boolean" }).notNull().default(false),
     distilledAt: text("distilled_at"),
     extractionsReviewedAt: text("extractions_reviewed_at"),
@@ -267,11 +276,80 @@ export const experimentTask = sqliteTable("experiment_task", {
   updatedAt: updatedAt(),
 });
 
-// The in-dashboard schedule-agent conversation for activating an experiment.
+// Which goals a specific task addresses — sub-experiment granularity for
+// witness scoping. A task with no rows here is invisible to every witness
+// (fail closed); commitPlan defaults untagged tasks to the experiment's goals.
+export const experimentTaskGoal = sqliteTable(
+  "experiment_task_goal",
+  {
+    id: id(),
+    experimentTaskId: text("experiment_task_id")
+      .notNull()
+      .references(() => experimentTask.id),
+    goalId: text("goal_id")
+      .notNull()
+      .references(() => goal.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("experiment_task_goal_unique").on(t.experimentTaskId, t.goalId)],
+);
+
+// The witness registry: accountability friends. The seat is the feature, the
+// occupant is replaceable. chatId binds the friend's chat once a transport
+// links it; until then the manual copy-paste protocol carries everything.
+export const witness = sqliteTable("witness", {
+  id: id(),
+  name: text("name").notNull(),
+  platform: text("platform", { enum: ["manual", "imessage", "telegram"] })
+    .notNull()
+    .default("manual"),
+  handle: text("handle"), // phone/email on the platform
+  timezone: text("timezone").notNull().default("America/New_York"),
+  status: text("status", { enum: ["invited", "active", "paused", "removed"] })
+    .notNull()
+    .default("invited"),
+  isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false), // ≤1 enforced in service
+  inviteCode: text("invite_code").unique(), // one-time chat-link code
+  chatId: text("chat_id"), // transport chat GUID; null until linked
+  linkedAt: text("linked_at"),
+  promptCadenceDays: integer("prompt_cadence_days").notNull().default(4), // friend-tunable (less/more)
+  lastPromptAt: text("last_prompt_at"),
+  mutedUntil: text("muted_until"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// Goal-scoped visibility: a witness sees ONLY content reachable from these
+// goals. Enforced at the query layer (witnessScope.ts), not the prompt layer.
+export const witnessGoal = sqliteTable(
+  "witness_goal",
+  {
+    id: id(),
+    witnessId: text("witness_id")
+      .notNull()
+      .references(() => witness.id),
+    goalId: text("goal_id")
+      .notNull()
+      .references(() => goal.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("witness_goal_unique").on(t.witnessId, t.goalId)],
+);
+
+// The in-dashboard agent conversations: scheduling, review interviews,
+// experiment shaping, and "steer" — the universal EDIT next to accept/deny.
+// A steer session anchors to the generation it revises via targetType/targetId
+// ("distill" → conversation, "proposal" → pending proposal, "goal" → goal);
+// finishing re-runs that generation with the chat as steering hints and
+// REPLACES the artifact in place — never a duplicate.
 export const chatSession = sqliteTable("chat_session", {
   id: id(),
-  purpose: text("purpose", { enum: ["schedule"] }).notNull().default("schedule"),
+  purpose: text("purpose", { enum: ["schedule", "review_interview", "experiment_shaping", "steer"] })
+    .notNull()
+    .default("schedule"),
   experimentId: text("experiment_id").references(() => experiment.id),
+  targetType: text("target_type", { enum: ["distill", "proposal", "goal"] }),
+  targetId: text("target_id"),
   status: text("status", { enum: ["open", "committed", "cancelled"] }).notNull().default("open"),
   planJson: text("plan_json"), // latest structured plan draft the chat converges on
   createdAt: createdAt(),
@@ -382,7 +460,20 @@ export const proposal = sqliteTable(
 export const agentRun = sqliteTable("agent_run", {
   id: id(),
   agentName: text("agent_name", {
-    enum: ["distiller", "deriver", "proposal_reviser", "schedule_agent", "prompt_generator", "daily_writeup"],
+    enum: [
+      "distiller",
+      "deriver",
+      "proposal_reviser",
+      "proposal_enricher",
+      "schedule_agent",
+      "prompt_generator",
+      "daily_writeup",
+      "rant_detector",
+      "review_writeup",
+      "witness_composer",
+      "witness_prompter",
+      "goal_editor",
+    ],
   }).notNull(),
   trigger: text("trigger", { enum: ["daily", "manual"] }).notNull(),
   workspacePath: text("workspace_path"),
@@ -413,6 +504,69 @@ export const event = sqliteTable(
 export const config = sqliteTable("config", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
+  updatedAt: updatedAt(),
+});
+
+// The review artifact endExperiment lacked: agent-drafted from the run's
+// evidence, human-edited, frozen at approve — approval fans out per-witness
+// goal-filtered shares into the outbox.
+export const reviewWriteup = sqliteTable("review_writeup", {
+  id: id(),
+  experimentId: text("experiment_id")
+    .notNull()
+    .unique()
+    .references(() => experiment.id),
+  draftMd: text("draft_md"),
+  finalMd: text("final_md"), // user-edited, frozen at approve
+  status: text("status", { enum: ["drafting", "draft_ready", "approved"] })
+    .notNull()
+    .default("drafting"),
+  agentRunId: text("agent_run_id").references(() => agentRun.id),
+  approvedAt: text("approved_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// The approval gate + durable queue: NOTHING reaches a transport without
+// status=approved. Every agent-composed message lands here as
+// pending_approval; the user reads/edits/copies before anything moves.
+export const outboundMessage = sqliteTable(
+  "outbound_message",
+  {
+    id: id(),
+    witnessId: text("witness_id")
+      .notNull()
+      .references(() => witness.id),
+    kind: text("kind", {
+      enum: ["review_share", "experiment_announcement", "random_prompt", "strike_alert", "duty_ping"],
+    }).notNull(),
+    bodyText: text("body_text").notNull(), // user-editable pre-send
+    contextJson: text("context_json"), // e.g. suggested follow-up questions
+    relatedType: text("related_type"),
+    relatedId: text("related_id"),
+    dedupeKey: text("dedupe_key"), // one ping per staleness episode
+    status: text("status", { enum: ["pending_approval", "approved", "sent", "failed", "cancelled"] })
+      .notNull()
+      .default("pending_approval"),
+    notBefore: text("not_before"), // quiet-hours / spacing gate
+    sentAt: text("sent_at"),
+    transportMessageId: text("transport_message_id"),
+    error: text("error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("outbound_status").on(t.status), index("outbound_dedupe").on(t.dedupeKey)],
+);
+
+// Strike bookkeeping ONLY — the counts themselves are always computed live
+// from existing tables (strikes.ts), never stored. This singleton holds the
+// two things that aren't derivable: pause mode and one-alert-per-episode.
+export const strikeState = sqliteTable("strike_state", {
+  id: text("id").primaryKey().default("singleton"),
+  pausedUntil: text("paused_until"), // YYYY-MM-DD; "pause 10d — traveling"
+  pauseReason: text("pause_reason"),
+  armed: integer("armed", { mode: "boolean" }).notNull().default(true), // re-arms when total < threshold
+  lastAlertAt: text("last_alert_at"),
   updatedAt: updatedAt(),
 });
 

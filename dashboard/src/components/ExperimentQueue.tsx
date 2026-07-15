@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, Check, ClipboardCopy, FlaskConical, Play, X } from "lucide-react";
+import { Archive, Check, FlaskConical, MessagesSquare, Play, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,10 +17,14 @@ export function ExperimentQueue({
   tick,
   onChanged,
   onOpenScheduleChat,
+  onOpenReview,
+  onOpenShaping,
 }: {
   tick: number;
   onChanged: () => void;
   onOpenScheduleChat: (sessionId: string) => void;
+  onOpenReview: (experimentId: string) => void;
+  onOpenShaping: (sessionId: string) => void;
 }) {
   const { data: current } = useApiData(() => api.currentExperiment(), [tick]);
   const { data: queue } = useApiData(() => api.experimentQueue(), [tick]);
@@ -58,7 +62,12 @@ export function ExperimentQueue({
       <CardContent className="flex flex-col gap-4">
         {current ? (
           current.isRunning ? (
-            <RunningExperimentCard experiment={current} onChanged={onChanged} onOpen={() => setOpenId(current.id)} />
+            <RunningExperimentCard
+              experiment={current}
+              onChanged={onChanged}
+              onOpen={() => setOpenId(current.id)}
+              onEnded={onOpenReview}
+            />
           ) : (
             <QueueRow
               experiment={current}
@@ -79,8 +88,8 @@ export function ExperimentQueue({
           )
         ) : (
           <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
-            no experiments yet — new candidates arrive from your rants. want one? copy the prompt
-            below, rant in the Claude app, import.
+            no experiments yet — new candidates arrive from your rants. want one now? shape it in a
+            quick chat below.
           </p>
         )}
 
@@ -101,7 +110,7 @@ export function ExperimentQueue({
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <ExperimentPromptButton />
+        <ShapeNextButton onOpenShaping={onOpenShaping} />
       </CardContent>
 
       {openId && openDetail && (
@@ -197,10 +206,12 @@ function RunningExperimentCard({
   experiment,
   onChanged,
   onOpen,
+  onEnded,
 }: {
   experiment: CurrentExperiment;
   onChanged: () => void;
   onOpen: () => void;
+  onEnded: (experimentId: string) => void;
 }) {
   const [ending, setEnding] = useState<"succeeded" | "failed" | null>(null);
   const [note, setNote] = useState("");
@@ -210,6 +221,9 @@ function RunningExperimentCard({
     setEnding(null);
     setNote("");
     onChanged();
+    // Ending routes straight into the review moment — the draft is already
+    // being written fire-and-forget on the backend.
+    onEnded(experiment.id);
   };
 
   return (
@@ -288,23 +302,14 @@ function TaskRowView({ task, onChanged }: { task: TaskRow; onChanged: () => void
           <span className="text-xs text-muted-foreground">{task.scheduledFor.slice(5, 16).replace("T", " ")}</span>
         )}
       </button>
-      <Button
-        size="sm"
-        variant="ghost"
-        title="copy a prompt to talk this task through in a fresh Claude thread"
-        onClick={async () => {
-          const md = await api.taskCopyPrompt(task.id);
-          await navigator.clipboard.writeText(md);
-        }}
-      >
-        <ClipboardCopy className="size-3" />
-      </Button>
     </li>
   );
 }
 
-function ExperimentPromptButton() {
-  const [state, setState] = useState<"idle" | "working" | "copied" | "error">("idle");
+// The copy-paste loop's replacement: shaping the next experiment is a quick
+// in-app conversation whose transcript enters the pipeline like any rant.
+function ShapeNextButton({ onOpenShaping }: { onOpenShaping: (sessionId: string) => void }) {
+  const [state, setState] = useState<"idle" | "working" | "error">("idle");
   return (
     <div className="flex items-center gap-2">
       <Button
@@ -314,22 +319,18 @@ function ExperimentPromptButton() {
         onClick={async () => {
           setState("working");
           try {
-            const md = await api.experimentPrompt();
-            await navigator.clipboard.writeText(md);
-            setState("copied");
+            const { sessionId } = await api.startShaping();
+            onOpenShaping(sessionId);
+            setState("idle");
           } catch {
             setState("error");
           }
         }}
       >
-        <ClipboardCopy className="size-3" />
-        {state === "working"
-          ? "generating…"
-          : state === "copied"
-            ? "copied — go rant in the Claude app"
-            : "copy prompt for a new experiment rant"}
+        <MessagesSquare className="size-3" />
+        {state === "working" ? "opening…" : "shape the next experiment"}
       </Button>
-      {state === "error" && <span className="text-xs text-destructive">generation failed — try again</span>}
+      {state === "error" && <span className="text-xs text-destructive">couldn't open — try again</span>}
     </div>
   );
 }

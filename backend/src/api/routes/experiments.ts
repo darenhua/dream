@@ -8,9 +8,7 @@ import {
   listQueue,
   patchTask,
   pickExperiment,
-  taskCopyPrompt,
 } from "../../services/experiments";
-import { generateExperimentPrompt } from "../../services/promptGenerator";
 import { openingTurn } from "../../services/scheduleChat";
 
 export const experimentRoutes = new Hono();
@@ -21,20 +19,9 @@ experimentRoutes.get("/current", c => c.json({ experiment: currentExperiment() }
 
 experimentRoutes.get("/history", c => c.json(experimentHistory()));
 
-// The prompt-generator output: paste into the Claude app, rant, import — the
-// rant becomes the next candidate. The system never designs in-app.
-experimentRoutes.get("/prompt", async c => {
-  const result = await generateExperimentPrompt();
-  if (!result.ok) return c.json({ error: result.error }, 502);
-  return c.text(result.markdown, 200, { "content-type": "text/markdown; charset=utf-8" });
-});
-
-// Per-task copy-prompt for a fresh Claude thread.
-experimentRoutes.get("/tasks/:taskId/copy-prompt", c => {
-  const md = taskCopyPrompt(c.req.param("taskId"));
-  if (md === null) return c.json({ error: "task not found" }, 404);
-  return c.text(md, 200, { "content-type": "text/markdown; charset=utf-8" });
-});
+// The copy-a-prompt flows (experiment prompt package, per-task copy) are
+// gone: shaping the next experiment is an in-app L3 conversation now
+// (routes/shaping.ts) whose transcript enters the pipeline directly.
 
 experimentRoutes.patch("/tasks/:taskId", async c => {
   const body = await c.req.json().catch(() => ({}));
@@ -61,12 +48,20 @@ experimentRoutes.post("/:id/pick", async c => {
 });
 
 // running → succeeded | failed. Blame-free; notes feed the next attempt.
+// Ending triggers the review-writeup draft fire-and-forget — a failed draft
+// never blocks the end, and the review screen has a regenerate button.
 experimentRoutes.post("/:id/end", async c => {
   const body = await c.req.json().catch(() => ({}));
   if (body.verdict !== "succeeded" && body.verdict !== "failed") {
     return c.json({ error: 'verdict must be "succeeded" or "failed"' }, 400);
   }
-  const result = endExperiment(c.req.param("id"), body.verdict, body.outcomeMd ?? body.outcome_md);
+  const id = c.req.param("id");
+  const result = endExperiment(id, body.verdict, body.outcomeMd ?? body.outcome_md);
+  if (result.ok) {
+    import("../../services/reviewWriteup")
+      .then(({ generateDraft }) => generateDraft(id, "manual"))
+      .catch(() => {});
+  }
   return c.json(result, result.ok ? 200 : 400);
 });
 

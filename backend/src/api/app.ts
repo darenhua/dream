@@ -13,6 +13,13 @@ import { jobRoutes } from "./routes/jobs";
 import { proposalRoutes } from "./routes/proposals";
 import { environmentRoutes, experienceRoutes, habitRoutes } from "./routes/registries";
 import { userRoutes, writeupRoutes } from "./routes/user";
+import { strikeRoutes, vitalsRoutes } from "./routes/vitals";
+import { witnessRoutes } from "./routes/witnesses";
+import { reviewRoutes } from "./routes/reviews";
+import { outboxRoutes } from "./routes/outbox";
+import { l3Routes } from "./routes/l3";
+import { shapingRoutes } from "./routes/shaping";
+import { steeringRoutes } from "./routes/steering";
 
 export const app = new Hono();
 
@@ -33,4 +40,12 @@ app.route("/api/calendar", calendarRoutes);
 app.route("/api/anchors", anchorRoutes);
 app.route("/api/user", userRoutes);
 app.route("/api/writeup", writeupRoutes);
+app.route("/api/vitals", vitalsRoutes);
+app.route("/api/strikes", strikeRoutes);
+app.route("/api/witnesses", witnessRoutes);
+app.route("/api/reviews", reviewRoutes);
+app.route("/api/outbox", outboxRoutes);
+app.route("/api/l3", l3Routes);
+app.route("/api/shaping", shapingRoutes);
+app.route("/api/steer", steeringRoutes);
 app.route("/api/agent-runs", agentRunRoutes);

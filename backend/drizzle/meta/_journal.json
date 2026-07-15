@@ -15,6 +15,41 @@
       "when": 1783667632879,
       "tag": "0001_huge_mariko_yashida",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784014962358,
+      "tag": "0002_lucky_killer_shrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784015867049,
+      "tag": "0003_third_mach_iv",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784016862929,
+      "tag": "0004_rare_lethal_legion",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1784022814645,
+      "tag": "0005_aspiring_colleen_wing",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784098516142,
+      "tag": "0006_abnormal_toad",
+      "breakpoints": true
     }
   ]
 }

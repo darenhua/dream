@@ -6,12 +6,16 @@
     "serve": "bun run src/api/server.ts",
     "dev": "bun --hot src/api/server.ts",
     "daily": "bun run src/cli/daily.ts",
+    "heartbeat": "bun run src/cli/daily.ts",
     "db:generate": "drizzle-kit generate",
     "test": "bun test"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^5.0.20",
     "@anthropic-ai/bedrock-sdk": "^0.32.0",
     "@anthropic-ai/sdk": "^0.110.0",
+    "@aws-sdk/credential-provider-node": "^3.972.67",
+    "ai": "^7.0.26",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.28",
     "zod": "^4.4.3"
