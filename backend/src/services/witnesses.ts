@@ -63,7 +63,12 @@ export function createInvite(fields: {
 
 export function patchWitness(
   id: string,
-  patch: Partial<Pick<WitnessRow, "name" | "handle" | "timezone" | "status" | "promptCadenceDays">>,
+  patch: Partial<
+    Pick<
+      WitnessRow,
+      "name" | "handle" | "timezone" | "status" | "promptCadenceDays" | "chatId" | "linkRequestedAt"
+    >
+  >,
 ) {
   const row = getWitness(id);
   if (!row) return null;

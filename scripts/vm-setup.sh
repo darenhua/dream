@@ -58,6 +58,26 @@ EOF
 "${SSH[@]}" 'sudo systemctl daemon-reload && sudo systemctl enable dream-backend >/dev/null 2>&1'
 echo "   unit installed + enabled (starts on first deploy)"
 
+echo "== messenger systemd unit (Photon iMessage daemon; side-by-side with backend)"
+"${SSH[@]}" 'sudo tee /etc/systemd/system/dream-messenger.service > /dev/null' <<'EOF'
+[Unit]
+Description=Dream Coach messenger (Photon iMessage wire daemon)
+After=network.target dream-backend.service
+Wants=dream-backend.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/dream/messenger
+ExecStart=/home/ubuntu/.bun/bin/bun run start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+"${SSH[@]}" 'sudo systemctl daemon-reload && sudo systemctl enable dream-messenger >/dev/null 2>&1'
+echo "   unit installed + enabled — needs messenger/.env (PROJECT_ID/SECRET) + TRANSPORT=external in config"
+
 echo "== heartbeat cron (§11.9; 09:00 ET — social pings land in the morning)"
 "${SSH[@]}" 'crontab -l 2>/dev/null | grep -v "dream/backend && .*bun run \(daily\|heartbeat\)" > /tmp/cron.$$ || true
 grep -q CRON_TZ /tmp/cron.$$ 2>/dev/null || echo "CRON_TZ=America/New_York" >> /tmp/cron.$$

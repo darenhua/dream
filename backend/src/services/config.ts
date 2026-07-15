@@ -123,6 +123,10 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
     "Heads up: {{FACTS}}. Don't ask whether he did the thing — ask what's in the way.",
   // Witness messaging (outbox + duty pings). All friend-facing timing/copy
   // knobs live here, in daylight.
+  TRANSPORT: "mock", // "mock" = in-process event-row wire; "external" = the messenger/ daemon owns delivery
+  USER_IMESSAGE_HANDLE: null, // the user's own phone/email — added to witness groups, and tells their replies apart
+  "TEMPLATE.witness_welcome":
+    "Hey {{FRIEND}} — this is the dream coach bot. This chat is where his experiment updates land: {{GOALS}}. You never have to remember anything; every message carries its own context. If it ever says he's gone quiet, don't ask whether he did the thing — ask what's in the way. Reply 'mute 1w', 'less', or 'more' anytime to tune how often I ping you.",
   WITNESS_AUTOSEND: false, // first weeks: every outbound message is hand-approved
   WITNESS_PROMPT_MIN_HOURS: 48, // never two prompts to the same friend inside this window
   WITNESS_QUIET_HOURS: { start: "21:00", end: "10:00" }, // interpreted in each witness's timezone

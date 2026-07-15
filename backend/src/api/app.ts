@@ -18,6 +18,7 @@ import { witnessRoutes } from "./routes/witnesses";
 import { reviewRoutes } from "./routes/reviews";
 import { outboxRoutes } from "./routes/outbox";
 import { l3Routes } from "./routes/l3";
+import { messagingRoutes } from "./routes/messaging";
 import { shapingRoutes } from "./routes/shaping";
 import { steeringRoutes } from "./routes/steering";
 
@@ -47,5 +48,6 @@ app.route("/api/reviews", reviewRoutes);
 app.route("/api/outbox", outboxRoutes);
 app.route("/api/l3", l3Routes);
 app.route("/api/shaping", shapingRoutes);
+app.route("/api/messaging", messagingRoutes);
 app.route("/api/steer", steeringRoutes);
 app.route("/api/agent-runs", agentRunRoutes);

@@ -311,6 +311,7 @@ export const witness = sqliteTable("witness", {
   isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false), // ≤1 enforced in service
   inviteCode: text("invite_code").unique(), // one-time chat-link code
   chatId: text("chat_id"), // transport chat GUID; null until linked
+  linkRequestedAt: text("link_requested_at"), // dashboard asked the messenger to create the group
   linkedAt: text("linked_at"),
   promptCadenceDays: integer("prompt_cadence_days").notNull().default(4), // friend-tunable (less/more)
   lastPromptAt: text("last_prompt_at"),
@@ -556,6 +557,25 @@ export const outboundMessage = sqliteTable(
     updatedAt: updatedAt(),
   },
   t => [index("outbound_status").on(t.status), index("outbound_dedupe").on(t.dedupeKey)],
+);
+
+// Raw inbound firehose from the messenger daemon. witnessId is resolved at
+// ingest when the chat is linked; unlinked chats keep null (JOIN handshake,
+// strangers). transportMessageId dedupes redeliveries after reconnects.
+export const inboundMessage = sqliteTable(
+  "inbound_message",
+  {
+    id: id(),
+    witnessId: text("witness_id").references(() => witness.id),
+    chatId: text("chat_id").notNull(),
+    senderHandle: text("sender_handle").notNull(),
+    fromUser: integer("from_user", { mode: "boolean" }).notNull().default(false),
+    text: text("text").notNull(),
+    transportMessageId: text("transport_message_id").unique(),
+    processedAt: text("processed_at"),
+    createdAt: createdAt(),
+  },
+  t => [index("inbound_chat").on(t.chatId)],
 );
 
 // Strike bookkeeping ONLY — the counts themselves are always computed live

@@ -1,4 +1,4 @@
-import { Eye, Star, UserPlus } from "lucide-react";
+import { Eye, Link2, Loader2, Star, UserPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +66,28 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
                 {w.status === "invited" && w.inviteCode && (
                   <span className="font-mono text-xs text-muted-foreground">code {w.inviteCode}</span>
                 )}
+                {w.chatId ? (
+                  <Badge variant="outline" className="text-xs text-emerald-700 dark:text-emerald-300">
+                    <Link2 className="mr-1 size-3" /> chat linked
+                  </Badge>
+                ) : w.linkRequestedAt ? (
+                  <Badge variant="outline" className="text-xs text-muted-foreground">
+                    <Loader2 className="mr-1 size-3 animate-spin" /> creating group…
+                  </Badge>
+                ) : w.handle ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs"
+                    title="create the iMessage group (you + friend + bot)"
+                    onClick={async () => {
+                      await api.requestWitnessLink(w.id).catch(() => {});
+                      onChanged();
+                    }}
+                  >
+                    <Link2 className="size-3" /> link chat
+                  </Button>
+                ) : null}
                 <span className="flex-1" />
                 <Button
                   size="sm"

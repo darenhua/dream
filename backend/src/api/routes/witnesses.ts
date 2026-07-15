@@ -44,6 +44,17 @@ witnessRoutes.put("/:id/goals", async c => {
   return c.json({ ok: true, goalIds });
 });
 
+// Ask the messenger daemon to create the iMessage group (user + friend + bot).
+// It picks the request up on its next poll; witness_chat_linked lands when done.
+witnessRoutes.post("/:id/request-link", c => {
+  const w = getWitness(c.req.param("id"));
+  if (!w) return c.json({ error: "witness not found" }, 404);
+  if (w.chatId) return c.json({ error: "already linked" }, 400);
+  if (!w.handle) return c.json({ error: "witness has no handle — add their phone/email first" }, 400);
+  const updated = patchWitness(w.id, { linkRequestedAt: new Date().toISOString() });
+  return c.json({ ok: true, witness: updated });
+});
+
 witnessRoutes.post("/:id/primary", c => {
   try {
     setPrimary(c.req.param("id"));

@@ -101,6 +101,7 @@ export interface WitnessRow {
   isPrimary: boolean;
   inviteCode: string | null;
   chatId: string | null;
+  linkRequestedAt: string | null;
   linkedAt: string | null;
   promptCadenceDays: number;
   goalIds: string[];
@@ -426,6 +427,8 @@ export const api = {
   setWitnessPrimary: (id: string) =>
     request<{ ok: boolean }>(`/witnesses/${id}/primary`, { method: "POST", body: "{}" }),
   witnessPreview: (id: string) => request<{ contextMd: string }>(`/witnesses/${id}/preview`),
+  requestWitnessLink: (id: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/request-link`, { method: "POST", body: "{}" }),
   removeWitness: (id: string) => request<{ ok: boolean }>(`/witnesses/${id}`, { method: "DELETE" }),
 
   // --- review writeups + outbox ---

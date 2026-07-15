@@ -32,6 +32,19 @@ export interface ScopedExperimentView {
   habits: { title: string; note: string | null; status: string }[];
 }
 
+// Scoped goal titles — used for the group-welcome message ("what this chat
+// will hear about"), never for content beyond the boundary above.
+export function witnessGoalTitles(witnessId: string): string[] {
+  const ids = scopedGoalIds(witnessId);
+  if (!ids.length) return [];
+  return db
+    .select({ title: goal.title })
+    .from(goal)
+    .where(inArray(goal.id, ids))
+    .all()
+    .map(g => g.title);
+}
+
 export function visibleExperimentIds(witnessId: string): string[] {
   const scope = scopedGoalIds(witnessId);
   if (scope.length === 0) return []; // fail closed
