@@ -21,6 +21,13 @@ export const env = {
   // --- google calendar (Desktop-app OAuth client) ---
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ?? "",
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  // The externally-reachable base URL for THIS server, used to build the
+  // OAuth redirect. Local dev: unset → falls back to localhost:$PORT, which
+  // Google allows unregistered for loopback addresses. Deployed (VM, etc.):
+  // set to the public origin (e.g. http://100.48.129.170:8130) — Google
+  // requires any non-loopback redirect_uri to be pre-registered in the
+  // OAuth client's "Authorized redirect URIs" (Google Cloud Console).
+  PUBLIC_URL: (process.env.PUBLIC_URL ?? "").replace(/\/$/, ""),
 
   // --- outbound proxy ---
   // Bun's fetch honors HTTP(S)_PROXY from process.env at request time, so the
