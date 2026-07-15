@@ -82,6 +82,12 @@ const PROMPT_REVIEW_INTERVIEW = `You are interviewing the user to flesh out an e
 
 Ask 3-4 pointed questions, ONE at a time, that surface what the draft is missing: the resistance story behind skipped tasks, what a specific day actually looked like, what surprised him, what he'd renegotiate. Short questions, his words matter more than yours. When he's said what matters, tell him to hit finish — the transcript regenerates the draft.`;
 
+const PROMPT_STEER = `You are the steering conversation for one generation the user is reviewing (an extraction pass, a pending proposal, or a ratified goal record). Your context carries the generation's ORIGINAL instructions, its inputs, and its current output — you know exactly what the job was and what came out.
+
+The user will say what's wrong: wrong splits, missed material, wrong register, wrong emphasis, wrong depth. Ask at most one clarifying question at a time, and only when their intent is genuinely ambiguous — mostly, reflect back concretely what you'd change ("I'd merge #2 and #3, drop #5, and recover the phrasing about X from message 4") so they can correct you cheaply. Never apply anything yourself: when the user is satisfied, tell them to hit finish — the redo runs with this conversation as its steering.`;
+
+const PROMPT_GOAL_EDITOR = `Rewrite the goal record in goal.md according to the steering conversation in your instructions. Re-emit the COMPLETE record — title, identity_clause, synthesis_md — not a diff; unchanged parts are re-stated verbatim. Honor the record rules from the original instructions (identity clause = one sharp sentence; synthesis = multiple substantial paragraphs in the user's own register, root-cause understanding plus what days concretely look like when the goal is true). The steering conversation overrides your defaults where they conflict; never invent material the evidence and conversation don't support.`;
+
 const PROMPT_EXPERIMENT_SHAPING = `You are interviewing the user toward their NEXT experiment idea, in a quick in-app chat. You must NOT design the experiment yourself — this conversation becomes a rant that re-enters the system and is distilled like any other; the deriver proposes, the human ratifies.
 
 Your context shows the full current state (prioritized goals with identity clauses, habits, environment, experiment history with outcomes and improvement notes, the free-time report). Interview, ONE question at a time, about what change would actually help right now: bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding. Help the user talk through ONE concrete experiment-worthy idea in their own words — their phrasing, not yours. When the idea is concrete enough to distill, tell them to hit finish.`;
@@ -96,6 +102,11 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   MODEL: "sonnet",
   DETECTOR_MODEL: "haiku", // intake classification is cheap-model work
   DETECTOR_BATCH_SIZE: 10,
+  // When false, importing NEVER classifies (and the heartbeat sweep skips
+  // detection too) — the rant explorer's manual buttons are the only path.
+  // Turn off before a bulk backlog import; classification then happens at
+  // the user's own pace, page by page.
+  AUTO_DETECT: true,
   LAST_VISIT_AT: null,
   TIMEZONE: "America/New_York",
   SLEEP_WINDOW: { start: "23:30", end: "07:30" },
@@ -129,6 +140,8 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.proposal_enricher": PROMPT_PROPOSAL_ENRICHER,
   "PROMPT.schedule_agent": PROMPT_SCHEDULE_AGENT,
   "PROMPT.experiment_shaping": PROMPT_EXPERIMENT_SHAPING,
+  "PROMPT.steer": PROMPT_STEER,
+  "PROMPT.goal_editor": PROMPT_GOAL_EDITOR,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
   "PROMPT.review_writeup": PROMPT_REVIEW_WRITEUP,
   "PROMPT.witness_composer": PROMPT_WITNESS_COMPOSER,

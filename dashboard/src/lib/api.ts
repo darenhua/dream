@@ -44,16 +44,21 @@ export type PipelineState =
 export interface ConversationRow {
   id: string;
   title: string | null;
+  source: string;
+  createdAt: string;
+  sourceCreatedAt: string | null;
   sourceUpdatedAt: string | null;
   slugDetected: boolean;
   rantVerdict: "candidate" | "not_candidate" | null;
   rantStatus: "proposed" | "accepted" | "rejected" | null;
+  rantDetectedAt: string | null;
   detectorNote: string | null;
   distillRequested: boolean;
   distilledAt: string | null;
   extractionsReviewedAt: string | null;
   derivedAt: string | null;
   parseError: string | null;
+  messageCount: number | null;
   pipelineState: PipelineState;
 }
 
@@ -461,6 +466,45 @@ export const api = {
     if (params.rant) q.set("rant", params.rant);
     return request<{ conversations: ConversationRow[] }>(`/conversations?${q}`).then(r => r.conversations);
   },
+  // The rant explorer's paged envelope (total included).
+  conversationsPaged: (params: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    rant?: string;
+    verdict?: string;
+    detected?: string;
+  }) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
+    return request<{ page: number; pageSize: number; total: number; conversations: ConversationRow[] }>(
+      `/conversations?${q}`,
+    );
+  },
+  detectConversation: (id: string) =>
+    request<{ processed: number; candidates: number; skipped: number }>(`/conversations/${id}/detect`, {
+      method: "POST",
+      body: "{}",
+    }),
+  runDetectLimited: (limit: number) =>
+    request<{ processed: number; candidates: number; autoAccepted: number; remaining: number }>("/jobs/detect", {
+      method: "POST",
+      body: JSON.stringify({ limit }),
+    }),
+
+  // --- steering (the universal EDIT next to accept/deny) ---
+  startSteer: (targetType: "distill" | "proposal" | "goal", targetId: string) =>
+    request<{ sessionId: string; opener: string }>("/steer", {
+      method: "POST",
+      body: JSON.stringify({ targetType, targetId }),
+    }),
+  finishSteer: (sessionId: string) =>
+    request<{ targetType: string; targetId: string; result: unknown }>(`/steer/${sessionId}/finish`, {
+      method: "POST",
+      body: "{}",
+    }),
+  cancelSteer: (sessionId: string) =>
+    request<{ ok: boolean }>(`/steer/${sessionId}/cancel`, { method: "POST", body: "{}" }),
   conversation: (id: string) =>
     request<
       ConversationRow & {

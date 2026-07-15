@@ -336,13 +336,20 @@ export const witnessGoal = sqliteTable(
   t => [uniqueIndex("witness_goal_unique").on(t.witnessId, t.goalId)],
 );
 
-// The in-dashboard schedule-agent conversation for activating an experiment.
+// The in-dashboard agent conversations: scheduling, review interviews,
+// experiment shaping, and "steer" — the universal EDIT next to accept/deny.
+// A steer session anchors to the generation it revises via targetType/targetId
+// ("distill" → conversation, "proposal" → pending proposal, "goal" → goal);
+// finishing re-runs that generation with the chat as steering hints and
+// REPLACES the artifact in place — never a duplicate.
 export const chatSession = sqliteTable("chat_session", {
   id: id(),
-  purpose: text("purpose", { enum: ["schedule", "review_interview", "experiment_shaping"] })
+  purpose: text("purpose", { enum: ["schedule", "review_interview", "experiment_shaping", "steer"] })
     .notNull()
     .default("schedule"),
   experimentId: text("experiment_id").references(() => experiment.id),
+  targetType: text("target_type", { enum: ["distill", "proposal", "goal"] }),
+  targetId: text("target_id"),
   status: text("status", { enum: ["open", "committed", "cancelled"] }).notNull().default("open"),
   planJson: text("plan_json"), // latest structured plan draft the chat converges on
   createdAt: createdAt(),
@@ -465,6 +472,7 @@ export const agentRun = sqliteTable("agent_run", {
       "review_writeup",
       "witness_composer",
       "witness_prompter",
+      "goal_editor",
     ],
   }).notNull(),
   trigger: text("trigger", { enum: ["daily", "manual"] }).notNull(),

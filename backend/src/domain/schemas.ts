@@ -154,6 +154,17 @@ export type DeriverOutputT = z.infer<typeof DeriverOutput>;
 export const ReviserOutput = z.object({ proposal: DeriverProposal });
 export type ReviserOutputT = z.infer<typeof ReviserOutput>;
 
+// Goal editor (steering a RATIFIED goal): re-emits the complete record —
+// idempotent replace, applied only on the user's explicit finish click.
+export const GoalEditOutput = z.object({
+  title: z.string(),
+  identity_clause: z.string().describe('one sharp sentence: "I am becoming someone who..."'),
+  synthesis_md: z
+    .string()
+    .describe("the full multi-paragraph synthesis in the user's register — complete, not a diff"),
+});
+export type GoalEditOutputT = z.infer<typeof GoalEditOutput>;
+
 // Review writeup drafter: the full experiment recap, from the run's evidence.
 export const ReviewWriteupOutput = z.object({
   review_md: z

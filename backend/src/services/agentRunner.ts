@@ -64,7 +64,8 @@ type AgentName =
   | "rant_detector"
   | "review_writeup"
   | "witness_composer"
-  | "witness_prompter";
+  | "witness_prompter"
+  | "goal_editor";
 
 // Agents get read-only file context only (§8.5): the projected workspace is
 // inlined into the prompt; the files stay on disk as the audit trail (A4).

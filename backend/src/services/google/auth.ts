@@ -12,10 +12,13 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const SCOPE = "https://www.googleapis.com/auth/calendar";
 // The API server hosts the callback itself, so the dashboard's "connect"
-// button completes the whole flow with nothing else running (Desktop-app
-// clients accept any localhost port without pre-registration). Remote (VM)
-// setups forward this port over ssh, or use the manual code-paste fallback.
-export const LOOPBACK_REDIRECT = `http://localhost:${env.PORT}/api/calendar/oauth/callback`;
+// button completes the whole flow with nothing else running. Locally this is
+// a loopback address (Desktop-app clients accept any localhost port without
+// pre-registration); deployed, PUBLIC_URL points it at the server's real
+// public origin instead — that origin must be added to the OAuth client's
+// "Authorized redirect URIs" in Google Cloud Console (Google only exempts
+// loopback addresses from pre-registration).
+export const OAUTH_REDIRECT = `${env.PUBLIC_URL || `http://localhost:${env.PORT}`}/api/calendar/oauth/callback`;
 
 export function authRow() {
   return db.select().from(googleAuth).where(eq(googleAuth.id, "singleton")).get() ?? null;
@@ -29,7 +32,7 @@ export function consentUrl(): string {
   if (!env.GOOGLE_CLIENT_ID) throw new Error("GOOGLE_CLIENT_ID not set in .env");
   const params = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
-    redirect_uri: LOOPBACK_REDIRECT,
+    redirect_uri: OAUTH_REDIRECT,
     response_type: "code",
     scope: SCOPE,
     access_type: "offline",
@@ -67,7 +70,7 @@ export async function exchangeCode(code: string) {
   const tok = await tokenRequest({
     grant_type: "authorization_code",
     code,
-    redirect_uri: LOOPBACK_REDIRECT,
+    redirect_uri: OAUTH_REDIRECT,
   });
   if (!tok.refresh_token) {
     throw new Error("google did not return a refresh token — re-run consent with prompt=consent");

@@ -1,4 +1,4 @@
-import { and, desc, eq, like } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, isNull, like } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../../db";
 import { conversation } from "../../db/schema";
@@ -6,42 +6,63 @@ import { deriveConversation, rederiveConversation } from "../../services/derive"
 import { distillPending, redistill } from "../../services/distill";
 import { confirmExtractions, listExtractions } from "../../services/extractions";
 import { pipelineState } from "../../services/pipeline";
-import { acceptRant, rejectRant } from "../../services/rantDetection";
+import { acceptRant, detectConversations, rejectRant } from "../../services/rantDetection";
 
 export const conversationRoutes = new Hono();
 
 const PAGE_SIZE = 50;
 
 conversationRoutes.get("/", c => {
-  const { slugged, state, q, page, rant } = c.req.query();
+  const { slugged, state, q, page, pageSize, rant, verdict, detected } = c.req.query();
   const conds = [];
   if (slugged === "true") conds.push(eq(conversation.slugDetected, true));
   if (slugged === "false") conds.push(eq(conversation.slugDetected, false));
-  // Direct column filter (not the post-page FSM filter) so the candidates
-  // gate sees every proposed rant, not just the newest page.
+  // Direct column filters (not the post-page FSM filter) so the candidates
+  // gate and the rant explorer see every matching row, not just a page slice.
   if (rant === "proposed" || rant === "accepted" || rant === "rejected") {
     conds.push(eq(conversation.rantStatus, rant));
   }
+  if (verdict === "candidate" || verdict === "not_candidate") {
+    conds.push(eq(conversation.rantVerdict, verdict));
+  }
+  if (detected === "true") conds.push(isNotNull(conversation.rantVerdict));
+  if (detected === "false") conds.push(isNull(conversation.rantVerdict));
   if (q) conds.push(like(conversation.title, `%${q}%`));
+  const where = conds.length ? and(...conds) : undefined;
 
   const pageNum = Math.max(1, Number(page) || 1);
+  const size = Math.min(200, Math.max(1, Number(pageSize) || PAGE_SIZE));
+  const total = db.select({ n: count() }).from(conversation).where(where).get()?.n ?? 0;
   const rows = db
     .select()
     .from(conversation)
-    .where(conds.length ? and(...conds) : undefined)
+    .where(where)
     .orderBy(desc(conversation.sourceUpdatedAt))
-    .limit(PAGE_SIZE)
-    .offset((pageNum - 1) * PAGE_SIZE)
+    .limit(size)
+    .offset((pageNum - 1) * size)
     .all();
 
   const shaped = rows
     .map(row => {
       const { rawJson, contentJson, ...meta } = row;
-      return { ...meta, pipelineState: pipelineState(row) };
+      let messageCount: number | null = null;
+      try {
+        messageCount = contentJson ? (JSON.parse(contentJson) as unknown[]).length : null;
+      } catch {}
+      return { ...meta, messageCount, pipelineState: pipelineState(row) };
     })
     .filter(row => !state || row.pipelineState === state);
 
-  return c.json({ page: pageNum, pageSize: PAGE_SIZE, conversations: shaped });
+  return c.json({ page: pageNum, pageSize: size, total, conversations: shaped });
+});
+
+// Targeted classification — the rant explorer's per-row button.
+conversationRoutes.post("/:id/detect", async c => {
+  try {
+    return c.json(await detectConversations([c.req.param("id")], "manual"));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
 });
 
 conversationRoutes.get("/:id", c => {

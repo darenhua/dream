@@ -260,6 +260,28 @@ export function projectRevision(
   write(dir, "state.md", stateMd());
 }
 
+// --- steer revision: one pending proposal, redone per a steering chat ---
+// (the steering notes travel as hints; this projects the same proposal.md
+// shape the reviser already knows plus current state)
+
+export function projectSteerRevision(proposalRow: { id: string; kind: string; payloadJson: string }, dir: string) {
+  const markers = linkMarkers();
+  const payload = JSON.parse(proposalRow.payloadJson) as { extraction_ids?: string[] };
+  const cited = payload.extraction_ids?.length
+    ? db.select().from(extraction).where(inArray(extraction.id, payload.extraction_ids)).all()
+    : [];
+  write(
+    dir,
+    "proposal.md",
+    `# The pending proposal being steered (kind: ${proposalRow.kind})\n\n` +
+      "```json\n" +
+      JSON.stringify(JSON.parse(proposalRow.payloadJson), null, 2) +
+      "\n```\n\n" +
+      `## Its current citations\n\n${cited.length ? cited.map(x => extractionMd(x, markers)).join("\n") : "_(none)_"}\n`,
+  );
+  write(dir, "state.md", stateMd());
+}
+
 // --- proposal enricher: one BRAND-NEW proposal against the whole corpus ---
 
 export function projectEnrichment(proposalRow: { id: string; kind: string; payloadJson: string }, dir: string) {

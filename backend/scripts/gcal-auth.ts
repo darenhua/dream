@@ -10,8 +10,8 @@
 // — then open the printed URL locally. No forwarding? Let the redirect fail,
 // copy the `code` query param, and paste it into the admin Calendar panel
 // (or: curl -X POST localhost:3001/api/calendar/auth/token -d '{"code":"..."}').
-import { consentUrl, LOOPBACK_REDIRECT } from "../src/services/google/auth";
+import { consentUrl, OAUTH_REDIRECT } from "../src/services/google/auth";
 
 console.log("\nOpen this URL in a browser (the running API server completes the flow):\n");
 console.log(consentUrl());
-console.log(`\nThe redirect lands on ${LOOPBACK_REDIRECT} — make sure the backend is running.`);
+console.log(`\nThe redirect lands on ${OAUTH_REDIRECT} — make sure the backend is running.`);

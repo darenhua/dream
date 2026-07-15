@@ -19,6 +19,7 @@ import { reviewRoutes } from "./routes/reviews";
 import { outboxRoutes } from "./routes/outbox";
 import { l3Routes } from "./routes/l3";
 import { shapingRoutes } from "./routes/shaping";
+import { steeringRoutes } from "./routes/steering";
 
 export const app = new Hono();
 
@@ -46,4 +47,5 @@ app.route("/api/reviews", reviewRoutes);
 app.route("/api/outbox", outboxRoutes);
 app.route("/api/l3", l3Routes);
 app.route("/api/shaping", shapingRoutes);
+app.route("/api/steer", steeringRoutes);
 app.route("/api/agent-runs", agentRunRoutes);

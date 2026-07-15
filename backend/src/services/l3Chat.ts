@@ -51,6 +51,12 @@ async function systemFor(session: typeof chatSession.$inferSelect): Promise<stri
     // The same full-state briefing the old paste-into-Claude prompt carried.
     context = `\n\n${stateMd()}\n\n${budgetMd()}\n\n# Free time (coming days)\n\n${await freeTimeReport()}`;
   }
+  if (session.purpose === "steer") {
+    // The original generation's instructions + inputs + current output, so
+    // the user's complaints land with full context.
+    const { steerContextMd } = await import("./steering");
+    context = `\n\n${steerContextMd(session)}`;
+  }
   return `${preamble}\n\n${prompt}${context}`;
 }
 

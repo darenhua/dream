@@ -80,12 +80,13 @@ async function detectBatch(batch: ConvoRow[], trigger: "daily" | "manual") {
   return { detected: run.output.conversations.length, candidates };
 }
 
-export async function detectPendingRants(trigger: "daily" | "manual") {
-  const pending = pendingDetections();
-  if (pending.length === 0) return { processed: 0, candidates: 0, autoAccepted: 0 };
+// Classify a set of rows (slug fast path + batched LLM). Shared by the full
+// pending sweep and the explorer's targeted/paced runs.
+async function detectRows(rows: ConvoRow[], trigger: "daily" | "manual") {
+  if (rows.length === 0) return { processed: 0, candidates: 0, autoAccepted: 0 };
 
   // Legacy fast path: a slug is an explicit past request — auto-accept, no LLM.
-  const slugged = pending.filter(c => c.slugDetected);
+  const slugged = rows.filter(c => c.slugDetected);
   const now = new Date().toISOString();
   for (const c of slugged) {
     db.update(conversation)
@@ -102,7 +103,7 @@ export async function detectPendingRants(trigger: "daily" | "manual") {
     emit("conversation", c.id, "rant_accepted", { via: "slug" });
   }
 
-  const toClassify = pending.filter(c => !c.slugDetected);
+  const toClassify = rows.filter(c => !c.slugDetected);
   const batchSize = getConfig<number>("DETECTOR_BATCH_SIZE");
   let candidates = 0;
   let processed = 0;
@@ -116,6 +117,31 @@ export async function detectPendingRants(trigger: "daily" | "manual") {
     });
   }
   return { processed, candidates, autoAccepted: slugged.length };
+}
+
+// The full sweep (import chain + heartbeat, when AUTO_DETECT allows). `limit`
+// is the explorer's pacing valve: classify only the N oldest-undetected now.
+export async function detectPendingRants(trigger: "daily" | "manual", limit?: number) {
+  const pending = pendingDetections();
+  const remaining = limit && limit > 0 ? Math.max(0, pending.length - limit) : 0;
+  const rows = limit && limit > 0 ? pending.slice(0, limit) : pending;
+  const result = await detectRows(rows, trigger);
+  return { ...result, remaining };
+}
+
+// Targeted classification by id — the explorer's per-row button. Re-classifies
+// undecided rows freely; never touches a human decision (accepted/rejected).
+export async function detectConversations(ids: string[], trigger: "daily" | "manual") {
+  const rows = ids
+    .map(id => db.select().from(conversation).where(eq(conversation.id, id)).get())
+    .filter((r): r is ConvoRow => r !== undefined && r !== null)
+    .filter(r => r.contentJson !== null && r.parseError === null)
+    .filter(r => r.rantStatus !== "accepted" && r.rantStatus !== "rejected");
+  if (rows.length === 0) return { processed: 0, candidates: 0, autoAccepted: 0, skipped: ids.length };
+  // Re-detection replaces a prior undecided verdict: clear it so the pipeline
+  // FSM reflects the fresh call.
+  const result = await detectRows(rows, trigger);
+  return { ...result, skipped: ids.length - rows.length };
 }
 
 // The human gate: accept admits the conversation into distill.

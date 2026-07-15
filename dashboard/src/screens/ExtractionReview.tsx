@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,9 +22,11 @@ import { EXTRACTION_KIND_LABELS } from "../data";
 export function ExtractionReview({
   conversationId,
   onDone,
+  onOpenSteer,
 }: {
   conversationId: string;
   onDone: () => void;
+  onOpenSteer: (sessionId: string) => void;
 }) {
   const [tick, setTick] = useState(0);
   const bump = () => setTick(t => t + 1);
@@ -72,9 +74,25 @@ export function ExtractionReview({
             paraphrase you wouldn't sign.
           </p>
         </div>
-        <Button size="sm" disabled={frozen || confirming} onClick={confirm}>
-          <Check className="size-4" /> {frozen ? "confirmed" : confirming ? "confirming…" : "you heard me right"}
-        </Button>
+        <div className="flex shrink-0 gap-1">
+          {!frozen && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={confirming}
+              title="not quite right? steer the extraction pass in a chat — it redoes the pass your way"
+              onClick={async () => {
+                const { sessionId } = await api.startSteer("distill", conversationId);
+                onOpenSteer(sessionId);
+              }}
+            >
+              <MessagesSquare className="size-4" /> steer
+            </Button>
+          )}
+          <Button size="sm" disabled={frozen || confirming} onClick={confirm}>
+            <Check className="size-4" /> {frozen ? "confirmed" : confirming ? "confirming…" : "you heard me right"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
