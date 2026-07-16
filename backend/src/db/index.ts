@@ -27,6 +27,7 @@ export function wipeAllTables() {
   const tables = [
     // children first
     "draft_change_set",
+    "collaboration_workspace_index",
     "collaboration_workspace",
     "collaboration_invite",
     "experiment_group_project",

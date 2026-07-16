@@ -103,10 +103,40 @@ describe("collaboration MCP transport", () => {
       async getWorkspace(id) {
         return id === workspace.id ? { ok: true, value: workspace } : { ok: false, error: "workspace not found" };
       },
-      async readWorkspaceContext({ section }) {
-        calls.read++;
-        return { ok: true, value: { markdown: `# ${section}` } };
-      },
+    async readWorkspaceContext({ section }) {
+      calls.read++;
+      return { ok: true, value: { markdown: `# ${section}` } };
+    },
+    async getWorkspaceIndex(id) {
+      return id === workspace.id
+        ? {
+            ok: true,
+            value: {
+              workspaceId: id,
+              indexVersion: 1,
+              generatedAt: new Date().toISOString(),
+              markdown: "# Workspace index\n\nHigher agency",
+              manifest: { referenceCount: 1 },
+            },
+          }
+        : { ok: false, error: "workspace not found" };
+    },
+    async searchWorkspaceIndex({ query }) {
+      return {
+        ok: true,
+        value: {
+          markdown: `# Search\n\n${query}`,
+          matches: [{ referenceType: "raw_goal", id: crypto.randomUUID(), title: "Act with agency" }],
+          nextCursor: null,
+        },
+      };
+    },
+    async readEntityContext() {
+      return { ok: true, value: { markdown: "# Indexed entity context" } };
+    },
+    async followProvenance() {
+      return { ok: true, value: { markdown: "# Indexed provenance" } };
+    },
       async saveDraftChangeSet({ summaryMd, operations, sourceRefs }) {
         calls.save++;
         return {
@@ -143,11 +173,15 @@ describe("collaboration MCP transport", () => {
 
     const tools = await client.listTools();
     expect(tools.tools.map(tool => tool.name).sort()).toEqual([
+      "follow_provenance",
       "get_draft_operation_contract",
       "get_workspace",
+      "get_workspace_index",
+      "read_entity_context",
       "read_workspace_context",
       "redeem_collaboration_code",
       "save_draft_change_set",
+      "search_workspace_index",
       "submit_draft_for_review",
     ]);
     expect(tools.tools.some(tool => tool.name.includes("apply") || tool.name.includes("calendar"))).toBe(false);
@@ -159,6 +193,14 @@ describe("collaboration MCP transport", () => {
     expect(redeemed.isError).not.toBe(true);
     expect(text(redeemed)).toContain("higher agency");
     expect(text(redeemed)).toContain("do not invent a different organized goal");
+
+    const index = await client.callTool({ name: "get_workspace_index", arguments: {} });
+    expect(index.isError).not.toBe(true);
+    expect(text(index)).toContain("Higher agency");
+
+    const indexSearch = await client.callTool({ name: "search_workspace_index", arguments: { query: "agency" } });
+    expect(indexSearch.isError).not.toBe(true);
+    expect(text(indexSearch)).toContain("agency");
 
     // Goal conversations cannot pull group history; the server rejects this
     // before it reaches the backend context reader.

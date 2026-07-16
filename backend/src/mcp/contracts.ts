@@ -57,6 +57,21 @@ export interface McpSourceRef {
   note?: string;
 }
 
+/** A persisted, code-linked orientation artifact for a creator workspace. */
+export interface McpWorkspaceIndex {
+  workspaceId: string;
+  indexVersion: number;
+  generatedAt: string;
+  markdown: string;
+  manifest: Record<string, unknown>;
+}
+
+export interface McpWorkspaceIndexSearchResult {
+  markdown: string;
+  matches: Array<{ referenceType: string; id: string; title: string; summary?: string | null }>;
+  nextCursor: string | null;
+}
+
 export interface RedeemedMcpWorkspace {
   workspace: McpWorkspace;
 }
@@ -76,6 +91,23 @@ export interface CollaborationMcpBackend {
     section: CollaborationContextSection;
     query?: string;
   }): Promise<McpResult<{ markdown: string; nextCursor?: string | null }>>;
+  getWorkspaceIndex(workspaceId: string): Promise<McpResult<McpWorkspaceIndex>>;
+  searchWorkspaceIndex(input: {
+    workspaceId: string;
+    query: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<McpResult<McpWorkspaceIndexSearchResult>>;
+  readEntityContext(input: {
+    workspaceId: string;
+    referenceType: string;
+    entityId: string;
+  }): Promise<McpResult<{ markdown: string }>>;
+  followProvenance(input: {
+    workspaceId: string;
+    referenceType: string;
+    entityId: string;
+  }): Promise<McpResult<{ markdown: string }>>;
   saveDraftChangeSet(input: {
     workspaceId: string;
     summaryMd: string;

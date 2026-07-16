@@ -6,6 +6,7 @@ import {
   calendarEvent,
   collaborationInvite,
   collaborationWorkspace,
+  collaborationWorkspaceIndex,
   draftChangeSet,
   event,
   experiment,
@@ -21,6 +22,7 @@ import {
   applyCollaborationChangeSet,
   assertDashboardInviteCapability,
   createCollaborationInvite,
+  collaborationMcpBackend,
   getCollaborationWorkspace,
   redeemCollaborationCode,
   saveCollaborationDraft,
@@ -114,6 +116,49 @@ describe("collaboration invites and change sets", () => {
     expect(() => redeemCollaborationCode(invite.code)).toThrow("already been redeemed");
     expect(db.select().from(collaborationWorkspace).all()).toHaveLength(1);
     expect(db.select().from(organizedGoal).all()).toHaveLength(0);
+  });
+
+  test("redeeming a creator code persists a bounded index and only lets MCP drill into indexed references", async () => {
+    const raw = rawGoal("build higher agency through small social risks");
+    const invite = createCollaborationInvite({ mode: "organized_goal", userSeedMd: "higher agency" });
+    const redeemed = redeemCollaborationCode(invite.code);
+    const persisted = db
+      .select()
+      .from(collaborationWorkspaceIndex)
+      .where(eq(collaborationWorkspaceIndex.workspaceId, redeemed.workspace.id))
+      .get();
+
+    expect(persisted).toBeTruthy();
+    expect(persisted!.markdownIndex).toContain("higher agency");
+    const index = await collaborationMcpBackend.getWorkspaceIndex(redeemed.workspace.id);
+    expect(index.ok).toBe(true);
+    if (!index.ok) throw new Error(index.error);
+    expect(index.value.manifest.referenceCount).toBeGreaterThanOrEqual(1);
+
+    const search = await collaborationMcpBackend.searchWorkspaceIndex({
+      workspaceId: redeemed.workspace.id,
+      query: "social risks",
+    });
+    expect(search.ok).toBe(true);
+    if (!search.ok) throw new Error(search.error);
+    const match = search.value.matches.find(item => item.id === raw.id);
+    expect(match).toMatchObject({ referenceType: "raw_goal", title: raw.title });
+
+    const detail = await collaborationMcpBackend.readEntityContext({
+      workspaceId: redeemed.workspace.id,
+      referenceType: "raw_goal",
+      entityId: raw.id,
+    });
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) throw new Error(detail.error);
+    expect(detail.value.markdown).toContain(raw.title);
+
+    const outsideScope = await collaborationMcpBackend.readEntityContext({
+      workspaceId: redeemed.workspace.id,
+      referenceType: "raw_goal",
+      entityId: crypto.randomUUID(),
+    });
+    expect(outsideScope.ok).toBe(false);
   });
 
   test("an expired code creates no workspace and records one expiry audit event", () => {

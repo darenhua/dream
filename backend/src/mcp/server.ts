@@ -126,12 +126,102 @@ export function createCollaborationMcpServer(session: McpSessionBinding): McpSer
         draft_operation_contract_md: draftOperationContract(workspace.mode),
         allowed_context_sections: allowedContextSections(workspace.mode),
         next_steps: [
-          "Use get_workspace and read_workspace_context only when relevant to the user's conversation.",
+          "Start with get_workspace_index so you understand the named direction, accepted material, and available evidence before asking questions.",
+          "Use search_workspace_index, read_entity_context, and follow_provenance to inspect relevant detail; do not treat index relevance as the user's decision.",
           "Ask only for missing decision-critical information.",
           "Save one complete atomic draft, then submit it for dashboard review.",
           "Do not claim that any organized/raw record, task, calendar event, or witness message was changed.",
         ],
       });
+    },
+  );
+
+  server.registerTool(
+    "get_workspace_index",
+    {
+      title: "Get code-linked workspace index",
+      description:
+        "Read the persisted orientation index generated for this redeemed creator workspace. Start here: it maps the user-named direction to accepted proposal-derived material, organized records, IDs, provenance handles, and the permitted drill-down tools. It is evidence, not authorization to invent a direction.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      const workspaceId = currentWorkspace(session);
+      if (typeof workspaceId !== "string") return workspaceId;
+      if (!configuredBackend) return unavailable();
+      const result = await configuredBackend.getWorkspaceIndex(workspaceId);
+      return result.ok ? resultText(result.value) : errorText(result.error);
+    },
+  );
+
+  server.registerTool(
+    "search_workspace_index",
+    {
+      title: "Search code-linked workspace index",
+      description:
+        "Search the persisted, workspace-scoped index for a word, theme, or named thing. Use it to find relevant accepted material before requesting detailed context. It cannot search outside this redeemed workspace.",
+      inputSchema: {
+        query: z.string().trim().min(1).max(500),
+        cursor: z.string().trim().min(1).max(200).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ query, cursor, limit }) => {
+      const workspaceId = currentWorkspace(session);
+      if (typeof workspaceId !== "string") return workspaceId;
+      if (!configuredBackend) return unavailable();
+      const result = await configuredBackend.searchWorkspaceIndex({ workspaceId, query, cursor, limit });
+      return result.ok ? resultText(result.value) : errorText(result.error);
+    },
+  );
+
+  server.registerTool(
+    "read_entity_context",
+    {
+      title: "Read indexed entity context",
+      description:
+        "Read current detail for an entity that appears in this workspace index. Supply the reference type and ID returned by the index/search; the server rejects arbitrary database IDs. This is read-only and does not change any record.",
+      inputSchema: {
+        reference_type: z.string().trim().min(1).max(100),
+        entity_id: z.string().trim().min(1).max(200),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ reference_type, entity_id }) => {
+      const workspaceId = currentWorkspace(session);
+      if (typeof workspaceId !== "string") return workspaceId;
+      if (!configuredBackend) return unavailable();
+      const result = await configuredBackend.readEntityContext({
+        workspaceId,
+        referenceType: reference_type,
+        entityId: entity_id,
+      });
+      return result.ok ? resultText(result.value) : errorText(result.error);
+    },
+  );
+
+  server.registerTool(
+    "follow_provenance",
+    {
+      title: "Follow indexed provenance",
+      description:
+        "Follow an indexed raw or organized entity through its source links, confirmed extractions, and source conversations. Use citations to ground claims; this read-only tool cannot expose an arbitrary record outside the workspace index.",
+      inputSchema: {
+        reference_type: z.string().trim().min(1).max(100),
+        entity_id: z.string().trim().min(1).max(200),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ reference_type, entity_id }) => {
+      const workspaceId = currentWorkspace(session);
+      if (typeof workspaceId !== "string") return workspaceId;
+      if (!configuredBackend) return unavailable();
+      const result = await configuredBackend.followProvenance({
+        workspaceId,
+        referenceType: reference_type,
+        entityId: entity_id,
+      });
+      return result.ok ? resultText(result.value) : errorText(result.error);
     },
   );
 

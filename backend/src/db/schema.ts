@@ -660,6 +660,29 @@ export const collaborationWorkspace = sqliteTable(
   t => [index("collaboration_workspace_status").on(t.status)],
 );
 
+// A code-linked, immutable orientation artifact for a creator workspace. It
+// gives a blank cloud agent a bounded map of accepted/raw material and the
+// related organized layer without turning relevance heuristics into writes.
+// It is persisted rather than held in a deploy-local file so a redeemed code
+// remains reproducible across process restarts.
+export const collaborationWorkspaceIndex = sqliteTable(
+  "collaboration_workspace_index",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .unique()
+      .references(() => collaborationWorkspace.id),
+    indexVersion: integer("index_version").notNull().default(1),
+    markdownIndex: text("markdown_index").notNull(),
+    referenceManifestJson: text("reference_manifest_json").notNull(),
+    sourceSnapshotJson: text("source_snapshot_json").notNull(),
+    generatedAt: text("generated_at").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [index("collaboration_workspace_index_workspace").on(t.workspaceId)],
+);
+
 // MCP can create and revise only this record. Applying it is a separate,
 // dashboard-only transactional service operation.
 export const draftChangeSet = sqliteTable(

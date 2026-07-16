@@ -6,6 +6,7 @@ import type {
   CollaborationMcpBackend,
   McpDraftChangeSet,
   McpResult,
+  McpWorkspaceIndex,
   McpWorkspace,
 } from "../mcp/contracts";
 import { collaborationInstructions as mcpCollaborationInstructions } from "../mcp/instructions";
@@ -13,6 +14,7 @@ import { db } from "../db";
 import {
   collaborationInvite,
   collaborationWorkspace,
+  collaborationWorkspaceIndex,
   conversation,
   draftChangeSet,
   environmentItem,
@@ -27,6 +29,7 @@ import {
   goal,
   habit,
   project,
+  proposal,
 } from "../db/schema";
 import { emit } from "./events";
 import {
@@ -35,12 +38,20 @@ import {
   CollaborationModeSchema,
   confirmedExtractionSources,
   DraftOperationsSchema,
+  organizedDetailPayload,
   organizedEntityDetail,
   organizedFeed,
   type CollaborationMode,
   type SourceRef,
   SourceRefSchema,
 } from "./organized";
+import {
+  buildWorkspaceIndex,
+  findWorkspaceIndexReference,
+  parseWorkspaceIndexSnapshot,
+  searchWorkspaceIndexSnapshot,
+  type WorkspaceIndexReference,
+} from "./workspaceIndex";
 
 const PRIMARY_TYPE_BY_MODE: Record<CollaborationMode, string> = {
   organized_goal: "organized_goal",
@@ -120,6 +131,36 @@ function json<T>(value: string | null, fallback: T): T {
 
 function now() {
   return new Date().toISOString();
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> {
+  const parsed = json<unknown>(value, {});
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+}
+
+function ensureWorkspaceIndex(workspaceId: string) {
+  const existing = db
+    .select()
+    .from(collaborationWorkspaceIndex)
+    .where(eq(collaborationWorkspaceIndex.workspaceId, workspaceId))
+    .get();
+  if (existing) return existing;
+  const build = buildWorkspaceIndex(workspaceId);
+  return db
+    .insert(collaborationWorkspaceIndex)
+    .values({ workspaceId, ...build.persistence })
+    .returning()
+    .get();
+}
+
+function serializeWorkspaceIndex(row: typeof collaborationWorkspaceIndex.$inferSelect): McpWorkspaceIndex {
+  return {
+    workspaceId: row.workspaceId,
+    indexVersion: row.indexVersion,
+    generatedAt: row.generatedAt,
+    markdown: row.markdownIndex,
+    manifest: parseJsonRecord(row.referenceManifestJson),
+  };
 }
 
 function isExpired(expiresAt: string) {
@@ -349,6 +390,14 @@ export function redeemCollaborationCode(code: string) {
         })
         .returning()
         .get();
+      // The creator's code is linked to a reproducible orientation artifact.
+      // Build it while redemption is still transactional: if indexing fails,
+      // the code remains unredeemed rather than leaving a workspace the MCP
+      // cannot safely orient itself within.
+      const indexBuild = buildWorkspaceIndex(created.id);
+      db.insert(collaborationWorkspaceIndex)
+        .values({ workspaceId: created.id, ...indexBuild.persistence })
+        .run();
       db.update(collaborationInvite)
         .set({ redeemedAt: now(), workspaceId: created.id })
         .where(eq(collaborationInvite.id, invite.id))
@@ -838,6 +887,113 @@ function rawEvidenceContext(query?: string) {
   };
 }
 
+function indexedReference(workspaceId: string, referenceType: string, entityId: string): WorkspaceIndexReference {
+  const stored = ensureWorkspaceIndex(workspaceId);
+  const snapshot = parseWorkspaceIndexSnapshot(stored.sourceSnapshotJson);
+  const reference = findWorkspaceIndexReference(snapshot, referenceType, entityId);
+  if (!reference) throw new Error("entity is not present in this workspace index");
+  return reference;
+}
+
+function indexedEntityContext(reference: WorkspaceIndexReference) {
+  switch (reference.referenceType) {
+    case "approved_proposal": {
+      const row = db.select().from(proposal).where(and(eq(proposal.id, reference.id), eq(proposal.status, "approved"))).get();
+      return row ? { ...row, payload: json<unknown>(row.payloadJson, {}) } : null;
+    }
+    case "raw_goal":
+      return db.select().from(goal).where(eq(goal.id, reference.id)).get() ?? null;
+    case "raw_habit":
+      return db.select().from(habit).where(eq(habit.id, reference.id)).get() ?? null;
+    case "raw_environment":
+      return db.select().from(environmentItem).where(eq(environmentItem.id, reference.id)).get() ?? null;
+    case "raw_experience":
+      return db.select().from(experience).where(eq(experience.id, reference.id)).get() ?? null;
+    case "raw_project":
+      return db.select().from(project).where(eq(project.id, reference.id)).get() ?? null;
+    case "raw_candidate":
+      return db
+        .select()
+        .from(experiment)
+        .where(and(eq(experiment.id, reference.id), eq(experiment.kind, "candidate")))
+        .get() ?? null;
+    case "organized_goal":
+      return organizedDetailPayload("organized_goal", reference.id);
+    case "organized_habit":
+      return organizedDetailPayload("organized_habit", reference.id);
+    case "organized_environment":
+      return organizedDetailPayload("organized_environment", reference.id);
+    case "experiment_group":
+      return organizedDetailPayload("experiment_group", reference.id);
+  }
+}
+
+function rawSourceForIndexedReference(reference: WorkspaceIndexReference): SourceRef | null {
+  switch (reference.referenceType) {
+    case "raw_goal":
+      return { entityType: "goal", entityId: reference.id };
+    case "raw_habit":
+      return { entityType: "habit", entityId: reference.id };
+    case "raw_environment":
+      return { entityType: "environment_item", entityId: reference.id };
+    case "raw_experience":
+      return { entityType: "experience", entityId: reference.id };
+    case "raw_project":
+      return { entityType: "project", entityId: reference.id };
+    case "raw_candidate":
+      return { entityType: "experiment", entityId: reference.id };
+    default:
+      return null;
+  }
+}
+
+function proposalExtractionProvenance(id: string) {
+  const row = db.select().from(proposal).where(and(eq(proposal.id, id), eq(proposal.status, "approved"))).get();
+  if (!row) return [];
+  const parsed = json<{ extraction_ids?: unknown }>(row.payloadJson, {});
+  const ids = Array.isArray(parsed.extraction_ids)
+    ? parsed.extraction_ids.filter((item): item is string => typeof item === "string")
+    : [];
+  if (!ids.length) return [];
+  return db
+    .select({ extraction: extraction, conversationTitle: conversation.title, conversationDate: conversation.sourceUpdatedAt })
+    .from(extraction)
+    .innerJoin(conversation, eq(conversation.id, extraction.conversationId))
+    .where(inArray(extraction.id, ids))
+    .all();
+}
+
+function provenanceForIndexedReference(reference: WorkspaceIndexReference) {
+  if (reference.referenceType === "approved_proposal") {
+    return { rawSources: [], confirmedExtractions: proposalExtractionProvenance(reference.id) };
+  }
+  if (
+    reference.referenceType === "organized_goal" ||
+    reference.referenceType === "organized_habit" ||
+    reference.referenceType === "organized_environment" ||
+    reference.referenceType === "experiment_group"
+  ) {
+    const type =
+      reference.referenceType === "organized_goal"
+        ? "organized_goal"
+        : reference.referenceType === "organized_habit"
+          ? "organized_habit"
+          : reference.referenceType === "organized_environment"
+            ? "organized_environment"
+            : "experiment_group";
+    const detail = organizedDetailPayload(type, reference.id);
+    return {
+      rawSources: detail?.sources ?? [],
+      confirmedExtractions: detail?.extractions ?? [],
+    };
+  }
+  const source = rawSourceForIndexedReference(reference);
+  return {
+    rawSources: source ? [source] : [],
+    confirmedExtractions: source ? confirmedExtractionSources([source]) : [],
+  };
+}
+
 /**
  * Adapter installed into the MCP transport at API startup.  The MCP package
  * never receives a database handle: all it can do is invoke this workspace-
@@ -863,6 +1019,69 @@ export const collaborationMcpBackend: CollaborationMcpBackend = {
       const value = { markdown: markdownForContext(collaborationMcpContext(workspaceId), section, query), nextCursor: null };
       emit("collaboration_workspace", workspaceId, "collaboration_context_read", { section, hasQuery: Boolean(query) });
       return mcpOk(value);
+    } catch (error) {
+      return mcpError(error);
+    }
+  },
+  async getWorkspaceIndex(workspaceId) {
+    try {
+      if (!getCollaborationWorkspace(workspaceId)) return mcpError("workspace not found");
+      const stored = ensureWorkspaceIndex(workspaceId);
+      emit("collaboration_workspace", workspaceId, "collaboration_workspace_index_read", { indexVersion: stored.indexVersion });
+      return mcpOk(serializeWorkspaceIndex(stored));
+    } catch (error) {
+      return mcpError(error);
+    }
+  },
+  async searchWorkspaceIndex({ workspaceId, query, cursor, limit }) {
+    try {
+      const stored = ensureWorkspaceIndex(workspaceId);
+      const result = searchWorkspaceIndexSnapshot(parseWorkspaceIndexSnapshot(stored.sourceSnapshotJson), query, { cursor, limit });
+      const matches = result.matches.map(reference => ({
+        referenceType: reference.referenceType,
+        id: reference.id,
+        title: reference.title,
+        summary: reference.summary,
+      }));
+      emit("collaboration_workspace", workspaceId, "collaboration_workspace_index_searched", {
+        queryLength: query.length,
+        resultCount: result.totalMatches,
+      });
+      return mcpOk({
+        markdown: [
+          "# Workspace index search",
+          "",
+          `Query: ${query}`,
+          `Matches: ${result.totalMatches}`,
+          "",
+          ...(matches.length
+            ? matches.map(match => `- [${match.referenceType}] ${match.title} (${match.id})${match.summary ? ` — ${match.summary}` : ""}`)
+            : ["_No indexed match. Try a narrower term or ask the user for a name/relationship._"]),
+        ].join("\n"),
+        matches,
+        nextCursor: result.nextCursor,
+      });
+    } catch (error) {
+      return mcpError(error);
+    }
+  },
+  async readEntityContext({ workspaceId, referenceType, entityId }) {
+    try {
+      const reference = indexedReference(workspaceId, referenceType, entityId);
+      const entity = indexedEntityContext(reference);
+      if (!entity) return mcpError("indexed entity no longer exists in current state");
+      emit("collaboration_workspace", workspaceId, "collaboration_indexed_entity_read", { referenceType, entityId });
+      return mcpOk({ markdown: JSON.stringify({ reference, entity }, null, 2) });
+    } catch (error) {
+      return mcpError(error);
+    }
+  },
+  async followProvenance({ workspaceId, referenceType, entityId }) {
+    try {
+      const reference = indexedReference(workspaceId, referenceType, entityId);
+      const provenance = provenanceForIndexedReference(reference);
+      emit("collaboration_workspace", workspaceId, "collaboration_indexed_provenance_read", { referenceType, entityId });
+      return mcpOk({ markdown: JSON.stringify({ reference, provenance }, null, 2) });
     } catch (error) {
       return mcpError(error);
     }
