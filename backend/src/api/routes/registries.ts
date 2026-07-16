@@ -1,11 +1,12 @@
 import { Hono } from "hono";
-import { environmentDetail, experienceDetail, habitDetail } from "../../services/entityDetail";
+import { environmentDetail, experienceDetail, habitDetail, projectDetail } from "../../services/entityDetail";
 import {
   createEnvironmentItem,
   listEnvironment,
   patchEnvironmentItem,
 } from "../../services/environment";
 import { createExperience, listExperiences, markExperienceHad } from "../../services/experiences";
+import { listProjects } from "../../services/projects";
 import {
   createHabit,
   linkHabitToGoal,
@@ -137,4 +138,16 @@ experienceRoutes.post("/:id/had", async c => {
   const row = markExperienceHad(c.req.param("id"), body.note);
   if (!row) return c.json({ error: "experience not found" }, 404);
   return c.json(row);
+});
+
+// --- projects (proposal-derived context; no manual project-management CRUD) ---
+
+export const projectRoutes = new Hono();
+
+projectRoutes.get("/", c => c.json(listProjects()));
+
+projectRoutes.get("/:id", c => {
+  const detail = projectDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "project not found" }, 404);
+  return c.json(detail);
 });

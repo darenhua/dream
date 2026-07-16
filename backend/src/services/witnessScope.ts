@@ -53,7 +53,8 @@ export function visibleExperimentIds(witnessId: string): string[] {
       db
         .select({ experimentId: experimentGoal.experimentId })
         .from(experimentGoal)
-        .where(inArray(experimentGoal.goalId, scope))
+        .innerJoin(experiment, eq(experiment.id, experimentGoal.experimentId))
+        .where(and(inArray(experimentGoal.goalId, scope), eq(experiment.kind, "actionable")))
         .all()
         .map(r => r.experimentId),
     ),
@@ -66,7 +67,7 @@ export function scopedExperimentView(witnessId: string, experimentId: string): S
   if (!visibleExperimentIds(witnessId).includes(experimentId)) return null;
 
   const row = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
-  if (!row) return null;
+  if (!row || row.kind !== "actionable") return null;
 
   const sharedGoals = db
     .select({ id: goal.id, title: goal.title, identityClause: goal.identityClause })

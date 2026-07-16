@@ -10,12 +10,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { api, type EnvironmentRow, type ExperienceRow, type HabitRow } from "@/lib/api";
+import { api, type EnvironmentRow, type ExperienceRow, type HabitRow, type ProjectRow } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { cn } from "@/lib/utils";
 import { DetailModal } from "./DetailModal";
 
-type OpenEntity = { type: "habit" | "environment" | "experience"; id: string } | null;
+type OpenEntity = { type: "habit" | "environment" | "experience" | "project"; id: string } | null;
+type RegistryDetail =
+  | Awaited<ReturnType<typeof api.habit>>
+  | Awaited<ReturnType<typeof api.environmentItem>>
+  | Awaited<ReturnType<typeof api.experience>>
+  | Awaited<ReturnType<typeof api.project>>;
 
 // The self-map cards: habits (established + building), environment, and the
 // append-only experiences log. Every item clicks into the shared detail modal.
@@ -23,6 +28,7 @@ export function ListCards({ tick, onChanged }: { tick: number; onChanged: () => 
   const { data: habits } = useApiData(() => api.habits(), [tick]);
   const { data: environment } = useApiData(() => api.environment(), [tick]);
   const { data: experiences } = useApiData(() => api.experiences(), [tick]);
+  const { data: projects } = useApiData(() => api.projects(), [tick]);
   const [open, setOpen] = useState<OpenEntity>(null);
 
   return (
@@ -38,6 +44,7 @@ export function ListCards({ tick, onChanged }: { tick: number; onChanged: () => 
         onChanged={onChanged}
         onOpen={id => setOpen({ type: "experience", id })}
       />
+      <ProjectsCard projects={projects ?? []} onOpen={id => setOpen({ type: "project", id })} />
       {open && <EntityModalHost entity={open} tick={tick} onClose={() => setOpen(null)} />}
     </>
   );
@@ -45,9 +52,10 @@ export function ListCards({ tick, onChanged }: { tick: number; onChanged: () => 
 
 // Fetches the right detail endpoint and maps it onto the shared modal.
 function EntityModalHost({ entity, tick, onClose }: { entity: NonNullable<OpenEntity>; tick: number; onClose: () => void }) {
-  const { data } = useApiData(() => {
+  const { data } = useApiData<RegistryDetail>(() => {
     if (entity.type === "habit") return api.habit(entity.id);
     if (entity.type === "environment") return api.environmentItem(entity.id);
+    if (entity.type === "project") return api.project(entity.id);
     return api.experience(entity.id);
   }, [entity.type, entity.id, tick]);
   if (!data) return null;
@@ -82,6 +90,20 @@ function EntityModalHost({ entity, tick, onClose }: { entity: NonNullable<OpenEn
         relations={{ goals: e.goals }}
         calendar={e.calendarEvents}
         extractions={e.extractions}
+      />
+    );
+  }
+  if (entity.type === "project") {
+    const p = data as Awaited<ReturnType<typeof api.project>>;
+    return (
+      <DetailModal
+        open
+        onClose={onClose}
+        kindLabel="project · raw context"
+        title={p.title}
+        detail={p.note}
+        relations={{ sources: p.sources }}
+        extractions={p.extractions}
       />
     );
   }
@@ -360,6 +382,42 @@ function ExperiencesCard({
               </button>
             ))}
             {had.length === 0 && <p className="text-sm text-muted-foreground">none logged yet.</p>}
+          </section>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+
+function ProjectsCard({ projects, onOpen }: { projects: ProjectRow[]; onOpen: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Card className="flex flex-col border-dashed py-4">
+        <CardContent className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-muted-foreground">
+          <p className="text-center text-sm">
+            {projects.length} project{projects.length === 1 ? "" : "s"} in view
+          </p>
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            open
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent className="flex w-full flex-col gap-4 overflow-y-auto sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>projects</SheetTitle>
+            <SheetDescription>approved proposal-derived context, not a task list.</SheetDescription>
+          </SheetHeader>
+          <section className="flex flex-col gap-2">
+            {projects.map(p => (
+              <button key={p.id} className="rounded-lg border p-2 text-left hover:bg-muted/50" onClick={() => onOpen(p.id)}>
+                <p className="text-sm">{p.title}</p>
+                {p.note && <p className="text-xs text-muted-foreground">{p.note}</p>}
+              </button>
+            ))}
+            {projects.length === 0 && <p className="text-sm text-muted-foreground">none derived yet.</p>}
           </section>
         </SheetContent>
       </Sheet>

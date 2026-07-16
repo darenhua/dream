@@ -8,6 +8,7 @@ export const ExtractionKind = z.enum([
   "habit_talk",
   "environment_talk",
   "experience_talk",
+  "project_talk",
   "experiment_idea",
   "feeling",
 ]);
@@ -117,6 +118,21 @@ export const DeriverProposal = z.discriminatedUnion("kind", [
     title: z.string(),
     note: z.string().optional(),
     state: z.enum(["planned", "had"]).describe("had = it already happened; planned = the user wants it"),
+    extraction_ids: extractionIds,
+  }),
+  z.object({
+    kind: z.literal("project_add"),
+    title: z.string().describe("a concrete thing the user wants to make, build, or bring into the world"),
+    note: z.string().optional().describe("short factual context; not a task plan or project-management status"),
+    source_entity_refs: z
+      .array(
+        z.object({
+          entity_type: z.enum(["goal", "habit", "environment_item", "experience", "experiment"]),
+          entity_id: z.string(),
+        }),
+      )
+      .optional()
+      .describe("existing raw records that directly contextualize this project; omit rather than guessing ids"),
     extraction_ids: extractionIds,
   }),
   z.object({

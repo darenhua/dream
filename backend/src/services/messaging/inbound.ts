@@ -108,7 +108,11 @@ export function handleInbound(payload: InboundPayload): {
   // The user's own substantive reply in a witness chat → evidence on the live
   // experiment's goals. The friend asked; the answer is diagnostic material.
   if (payload.text.trim().length >= 20) {
-    const running = db.select().from(experiment).where(eq(experiment.status, "running")).get();
+    const running = db
+      .select()
+      .from(experiment)
+      .where(and(eq(experiment.kind, "actionable"), eq(experiment.status, "running")))
+      .get();
     if (running) {
       const goals = db
         .select({ goalId: experimentGoal.goalId })

@@ -37,7 +37,11 @@ beforeEach(() => {
   musicGoal = db.insert(goal).values({ title: "ship music", identityClause: "I ship a track a month", status: "active", origin: "manual" }).returning().get();
   careerGoal = db.insert(goal).values({ title: "stop people-pleasing", identityClause: "I say the uncomfortable true thing", status: "active", origin: "manual" }).returning().get();
 
-  exp = db.insert(experiment).values({ title: "two-front week", status: "running", startedAt: new Date().toISOString() }).returning().get();
+  exp = db
+    .insert(experiment)
+    .values({ title: "two-front week", kind: "actionable", status: "running", startedAt: new Date().toISOString() })
+    .returning()
+    .get();
   for (const g of [musicGoal, careerGoal]) {
     db.insert(experimentGoal).values({ experimentId: exp.id, goalId: g.id }).run();
   }
@@ -91,6 +95,16 @@ describe("witness goal scoping (fail closed)", () => {
     expect(visibleExperimentIds(stranger.id)).toHaveLength(0);
     expect(scopedExperimentView(stranger.id, exp.id)).toBeNull();
     expect(witnessContextMd(stranger.id)).not.toContain("two-front week");
+  });
+
+  test("raw candidates never enter a witness projection", () => {
+    const candidate = db.insert(experiment).values({ title: "private raw idea", kind: "candidate", status: "queued" }).returning().get();
+    db.insert(experimentGoal).values({ experimentId: candidate.id, goalId: musicGoal.id }).run();
+    const friend = createInvite({ name: "A", goalIds: [musicGoal.id] });
+
+    expect(visibleExperimentIds(friend.id)).toContain(exp.id);
+    expect(visibleExperimentIds(friend.id)).not.toContain(candidate.id);
+    expect(witnessContextMd(friend.id)).not.toContain("private raw idea");
   });
 
   test("witness with no goals sees nothing (empty scope is closed, not open)", () => {

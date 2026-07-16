@@ -7,7 +7,7 @@ A single-user self-coaching system ("Dream System"): rants exported from the Cla
 ## Deploy targets
 
 - frontend: repo root → Vercel (existing project `dream-coach`, team `darenhuas-projects`); root `vercel.json` holds install/build commands and the `/api/*` rewrite → **the rewrite destination must point at the backend's VM port** (see Gotchas — it currently says `:3001`, the legacy port)
-- backend: `backend/src/api/server.ts` (`bun run serve`) → VM, HTTP on `$PORT`, binds `0.0.0.0` (verified: `lsof` shows `*:8130`)
+- backend: `backend/src/api/server.ts` (`bun run serve`) → VM, HTTP on `$PORT`; it defaults to `BIND_HOST=0.0.0.0` for the legacy direct API setup, but the recommended TLS-proxied deployment binds it to `127.0.0.1`
 
 ## Runtimes
 
@@ -18,6 +18,7 @@ Built and verified with: bun 1.3.14 (VM) / 1.3.5 (dev — no incompatibilities o
 | var | needed by | purpose / where to get it |
 |---|---|---|
 | PORT | backend | injected by service.sh — do NOT put in secrets.env |
+| BIND_HOST | backend | `127.0.0.1` when the reverse proxy is the public boundary; default `0.0.0.0` preserves the old direct setup |
 | DB_PATH | backend | sqlite file; MUST be `./data/dream.db` so state survives rsync `--delete` |
 | WORKSPACE_PATH | backend | agent-run audit dirs; set `./data/workspace` (default `./workspace` is NOT rsync-safe) |
 | USE_BEDROCK | backend | `true` → AWS Bedrock (the production setup) |
@@ -26,8 +27,65 @@ Built and verified with: bun 1.3.14 (VM) / 1.3.5 (dev — no incompatibilities o
 | ANTHROPIC_API_KEY | backend | fallback provider when `USE_BEDROCK=false`; kept seeded |
 | USE_PROXY | backend | `false` on the VM (also actively clears inherited proxy vars) |
 | GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET | backend | Google Calendar OAuth (Desktop-app client from console.cloud.google.com) |
+| MCP_PUBLIC_URL | backend | public **HTTPS origin** for cloud MCP, e.g. `https://mcp.example.com` (no `/mcp` suffix) |
+| MCP_ALLOWED_HOSTS | backend | exact public MCP host, e.g. `mcp.example.com`; rejects unexpected Host headers |
+| MCP_ALLOWED_ORIGINS | backend | comma-separated browser origins only when browser MCP access is intended; leave blank for server-to-server clients |
+| MCP_TRUST_PROXY | backend | `true` only when the backend is private behind a proxy that overwrites `X-Forwarded-*`; otherwise `false` |
+| MCP_SESSION_IDLE_MINUTES / MCP_MAX_SESSIONS | backend | short-lived MCP capability/session bounds (defaults: 30 minutes / 100) |
+| MCP_REDEEM_MAX_ATTEMPTS / MCP_REDEEM_WINDOW_MINUTES / MCP_REDEEM_MAX_TRACKED_CLIENTS | backend | OTP brute-force and memory bounds (defaults: 8 / 15 / 10000) |
 
 Secrets: **seeded to the VM store (`~/deployments/.secrets/dream-coach/secrets.env`, 10 vars) on 2026-07-15**, composed from the proven legacy `~/dream/backend/.env` plus the Google OAuth pair. Frontend needs no env (the rewrite is in `vercel.json`).
+
+## Remote MCP endpoint (cloud ChatGPT / Claude)
+
+`/mcp` is a stateful Streamable HTTP endpoint, not an `/api/*` route. The
+current Vercel rewrite only forwards `/api/*`, so it does **not** expose MCP.
+Give the cloud client a dedicated HTTPS URL such as
+`https://mcp.example.com/mcp`; never give it the VM's clear-text `:8130` URL.
+
+Recommended production boundary:
+
+1. Put a TLS reverse proxy in front of the backend, route both `/api/*` and
+   `/mcp` through it, set `BIND_HOST=127.0.0.1`, and firewall port 8130 from
+   public networks. This prevents a caller from bypassing the proxy and
+   spoofing its forwarded headers.
+2. Set `MCP_PUBLIC_URL=https://mcp.example.com`,
+   `MCP_ALLOWED_HOSTS=mcp.example.com`, and `MCP_TRUST_PROXY=true`. Leave
+   `MCP_ALLOWED_ORIGINS` empty for normal server-to-server MCP clients. If a
+   browser MCP client genuinely needs CORS, list each exact origin (for
+   example `https://chatgpt.com`) instead of using `*`.
+3. The endpoint permits only MCP's `GET`, `POST`, and `DELETE` methods (plus
+   CORS preflight), returns `Cache-Control: no-store`, validates Host/Origin,
+   caps live sessions, expires idle sessions, and rate-limits OTP redemption.
+   Those application checks complement—never replace—the private backend and
+   TLS proxy boundary.
+
+Minimal Nginx shape (TLS certificate directives omitted):
+
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name mcp.example.com;
+
+  location = /mcp {
+    proxy_pass http://127.0.0.1:8130;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    # Overwrite, do not append: MCP_TRUST_PROXY relies on these values.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+  }
+}
+```
+
+If the old direct-VM API path must remain temporarily, leave
+`MCP_TRUST_PROXY=false` until the backend is private. The MCP rate limiter
+will then key off the actual socket peer rather than an attacker-supplied
+forwarded header, at the cost of coarser limits behind a shared proxy.
 
 ## Reproduce in a clean checkout (verified 2026-07-15)
 

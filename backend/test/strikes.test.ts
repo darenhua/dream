@@ -11,6 +11,7 @@ import {
   runStrikeCheck,
   type StrikeReport,
 } from "../src/services/strikes";
+import { computeVitals } from "../src/services/vitals";
 
 // All-derived tripwire: these tests fabricate ONLY normal domain rows
 // (conversations, experiments) — there is no counter to seed, which is the
@@ -43,7 +44,7 @@ function acceptedRant(agoDays: number) {
 function endedExperiment(agoDays: number, status: "succeeded" | "failed" = "succeeded") {
   return db
     .insert(experiment)
-    .values({ title: "done", status, endedAt: daysAgo(agoDays) })
+    .values({ title: "done", kind: "actionable", status, endedAt: daysAgo(agoDays) })
     .returning()
     .get();
 }
@@ -83,6 +84,25 @@ describe("rant clock", () => {
 });
 
 describe("queue clock", () => {
+  test("raw candidates do not load the heartbeat or queue clock", () => {
+    acceptedRant(0);
+    db.insert(experiment)
+      .values({ title: "candidate that looks live", kind: "candidate", status: "running", startedAt: daysAgo(3) })
+      .run();
+    db.insert(experiment)
+      .values({ title: "candidate that looks queued", kind: "candidate", status: "queued" })
+      .run();
+    db.insert(experiment)
+      .values({ title: "candidate that looks ended", kind: "candidate", status: "failed", endedAt: daysAgo(4) })
+      .run();
+
+    const vitals = computeVitals(ASOF);
+    expect(vitals.experiment.running).toBeNull();
+    expect(vitals.experiment.queueDepth).toBe(0);
+    expect(vitals.experiment.lastEndedAt).toBeNull();
+    expect(computeStrikes(ASOF).queueStrikes).toBe(0);
+  });
+
   test("1 strike per empty-queue day after an experiment ends", () => {
     acceptedRant(0); // keep the rant clock quiet
     endedExperiment(4);
@@ -94,7 +114,7 @@ describe("queue clock", () => {
   test("queueing or running anything zeroes it", () => {
     acceptedRant(0);
     endedExperiment(4);
-    db.insert(experiment).values({ title: "next", status: "queued" }).run();
+    db.insert(experiment).values({ title: "next", kind: "actionable", status: "queued" }).run();
     expect(computeStrikes(ASOF).queueStrikes).toBe(0);
   });
 
@@ -107,13 +127,13 @@ describe("queue clock", () => {
   test("day-5 nudge is a heads-up on a RUNNING experiment, never a strike", () => {
     acceptedRant(0);
     db.insert(experiment)
-      .values({ title: "live", status: "running", startedAt: daysAgo(5), plannedDurationDays: 7 })
+      .values({ title: "live", kind: "actionable", status: "running", startedAt: daysAgo(5), plannedDurationDays: 7 })
       .run();
     const r = computeStrikes(ASOF);
     expect(r.queueNudge).toBe(true);
     expect(r.queueStrikes).toBe(0);
     // queue something → nudge clears
-    db.insert(experiment).values({ title: "next", status: "queued" }).run();
+    db.insert(experiment).values({ title: "next", kind: "actionable", status: "queued" }).run();
     expect(computeStrikes(ASOF).queueNudge).toBe(false);
   });
 });

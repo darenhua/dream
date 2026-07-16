@@ -12,6 +12,7 @@ import {
   extractionLink,
   goal,
   habit,
+  project,
   proposal,
 } from "../db/schema";
 import type { TranscriptMessage } from "../domain/parser";
@@ -100,6 +101,8 @@ function entityTitles(): Map<string, string> {
     map.set(`environment_item:${e.id}`, e.t);
   for (const x of db.select({ id: experience.id, t: experience.title }).from(experience).all())
     map.set(`experience:${x.id}`, x.t);
+  for (const p of db.select({ id: project.id, t: project.title }).from(project).all())
+    map.set(`project:${p.id}`, p.t);
   for (const ex of db.select({ id: experiment.id, t: experiment.title }).from(experiment).all())
     map.set(`experiment:${ex.id}`, ex.t);
   return map;
@@ -329,7 +332,7 @@ function attemptCountMap(): Map<string, number> {
     .select({ goalId: experimentGoal.goalId, status: experiment.status })
     .from(experimentGoal)
     .innerJoin(experiment, eq(experimentGoal.experimentId, experiment.id))
-    .where(inArray(experiment.status, ["succeeded", "failed"]))
+    .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["succeeded", "failed"])))
     .all();
   const map = new Map<string, number>();
   for (const r of rows) map.set(r.goalId, (map.get(r.goalId) ?? 0) + 1);
@@ -365,8 +368,23 @@ export function experiencesMd(): string {
   return `## Experiences (append-only)\n\n${lines.join("\n")}`;
 }
 
+export function projectsMd(): string {
+  const rows = db.select().from(project).orderBy(asc(project.createdAt)).all();
+  if (!rows.length) return "## Projects\n\n_(none yet)_";
+  const lines = rows.map(p => `- ${p.title} (id: \`${p.id}\`)${p.note ? ` — ${p.note}` : ""}`);
+  return `## Projects (lightweight, proposal-derived context)\n\n${lines.join("\n")}`;
+}
+
 export function experimentsMd(): string {
-  const rows = db.select().from(experiment).orderBy(desc(experiment.createdAt)).all();
+  // Raw proposal-derived candidates remain available through their proposal
+  // context; they are not operational experiments and must never make the
+  // current-state projection look like work was queued or attempted.
+  const rows = db
+    .select()
+    .from(experiment)
+    .where(eq(experiment.kind, "actionable"))
+    .orderBy(desc(experiment.createdAt))
+    .all();
   const queue = rows.filter(e => e.status === "queued" || e.status === "scheduling");
   const running = rows.find(e => e.status === "running");
   const ended = rows.filter(e => e.status === "succeeded" || e.status === "failed");
@@ -397,7 +415,7 @@ export function experimentsMd(): string {
 export function stateMd(): string {
   return (
     `# Current state\n\n` +
-    [goalsMd(), habitsMd(), environmentMd(), experiencesMd(), experimentsMd()].join("\n\n") +
+    [goalsMd(), habitsMd(), environmentMd(), experiencesMd(), projectsMd(), experimentsMd()].join("\n\n") +
     "\n"
   );
 }
@@ -434,6 +452,7 @@ export function projectWriteup(dir: string, pipelineCounts: { awaitingReview: nu
 export function scheduleContextMd(experimentId: string, freeTimeReport: string): string {
   const exp = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
   if (!exp) throw new Error(`experiment ${experimentId} not found`);
+  if (exp.kind !== "actionable") throw new Error("raw experiment candidates do not have scheduling context");
   const goalIds = db
     .select({ goalId: experimentGoal.goalId })
     .from(experimentGoal)
@@ -464,9 +483,9 @@ export function scheduleContextMd(experimentId: string, freeTimeReport: string):
     : "_(no derived checklist — design from the hypothesis and evidence)_";
 
   return [
-    `# Candidate experiment: ${exp.title}`,
+    `# Actionable experiment: ${exp.title}`,
     `id: \`${exp.id}\`\n\n${exp.hypothesisMd ?? ""}`,
-    `## The derived checklist (your starting material — schedule THESE changes)\n\n${checklistMd}`,
+    `## The derived checklist (legacy starting material — schedule THESE changes)\n\n${checklistMd}`,
     `## Target goals\n\n${
       goals.length
         ? goals.map(g => `- ${g.title}${g.identityClause ? ` — ${g.identityClause}` : ""} (id: \`${g.id}\`)`).join("\n")

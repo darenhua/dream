@@ -91,6 +91,7 @@ export const NEW_PROPOSAL_KINDS = new Set([
   "habit_add",
   "environment_add",
   "experience_add",
+  "project_add",
   "experiment_propose",
 ]);
 

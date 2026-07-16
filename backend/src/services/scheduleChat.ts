@@ -9,9 +9,10 @@ import { cancelScheduling, commitPlan } from "./experiments";
 import { freeTimeReport } from "./promptGenerator";
 import { scheduleContextMd } from "./projector";
 
-// The in-dashboard scheduling conversation: a backend agent that sees the
-// picked candidate, current state, and real free time, and converges on ONE
-// concrete plan the user commits.
+// The legacy in-dashboard scheduling conversation: it is retained for older
+// actionables without a reviewed MCP task plan. New group actionables use the
+// explicit confirmation route instead, so this path can never duplicate their
+// pre-created tasks or habits.
 
 // The opener is implicit — shown to the agent, never stored or displayed.
 const OPENER =
@@ -131,7 +132,15 @@ function createCalendarRows(experimentId: string, plan: SchedulePlanT): string[]
     .all();
   for (const t of plan.tasks) {
     const task = tasks.find(row => row.title === t.title);
-    if (!task) continue;
+    // Calendar is opt-in. This also protects a legacy plan from creating a
+    // calendar row for a task the persisted model marks unscheduled.
+    if (!task || task.scheduleMode !== "calendar") continue;
+    const existing = db
+      .select({ id: calendarEvent.id })
+      .from(calendarEvent)
+      .where(and(eq(calendarEvent.entityType, "experiment_task"), eq(calendarEvent.entityId, task.id)))
+      .get();
+    if (existing) continue;
     const row = db
       .insert(calendarEvent)
       .values({

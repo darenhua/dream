@@ -1,25 +1,30 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
+  calendarEvent,
   chatSession,
   experiment,
+  experimentGroup,
   experimentGoal,
   experimentTask,
   experimentTaskGoal,
   extraction,
   extractionLink,
   goalEvidence,
+  habit,
 } from "../db/schema";
 import type { SchedulePlanT } from "../domain/schemas";
+import { hhmmToMin, zonedIso } from "../lib/time";
+import { isConnected, pushEvent } from "./calendarSync";
 import { getConfig } from "./config";
 import { experimentRelations, extractionsFor } from "./entityDetail";
 import { emit } from "./events";
 import { createExperience } from "./experiences";
 import { createHabit, graduateExperimentHabits, lapseExperimentHabits } from "./habits";
 
-// The experiment FSM: queued → scheduling → running → succeeded | failed.
-// Candidates enter the queue only via approved experiment_propose proposals;
-// there is no draft state and no system nudge at any duration.
+// The executable experiment FSM: queued → scheduling → running → succeeded |
+// failed. Raw proposal-derived experiments are *candidates*, not work in this
+// FSM. Only user-reviewed weekly actionables may enter it.
 
 type ExperimentRow = typeof experiment.$inferSelect;
 
@@ -28,12 +33,13 @@ export function liveExperiment(): ExperimentRow | null {
     db
       .select()
       .from(experiment)
-      .where(inArray(experiment.status, ["scheduling", "running"]))
+      .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["scheduling", "running"])))
       .get() ?? null
   );
 }
 
-// Called by the proposal apply-switch on approval.
+// Called by the raw proposal apply-switch on approval. This records material
+// the user can later draw on; it does not enqueue executable work.
 export function enqueueExperiment(fields: {
   title: string;
   hypothesisMd: string;
@@ -46,6 +52,7 @@ export function enqueueExperiment(fields: {
     .values({
       title: fields.title,
       hypothesisMd: fields.hypothesisMd,
+      kind: "candidate",
       status: "queued",
       proposalId: fields.proposalId,
       proposedChangesJson: fields.proposedChanges ? JSON.stringify(fields.proposedChanges) : null,
@@ -56,7 +63,7 @@ export function enqueueExperiment(fields: {
   for (const goalId of fields.goalIds) {
     db.insert(experimentGoal).values({ experimentId: row.id, goalId }).onConflictDoNothing().run();
   }
-  emit("experiment", row.id, "experiment_queued", { title: row.title });
+  emit("experiment", row.id, "experiment_candidate_created", { title: row.title });
   return row;
 }
 
@@ -64,14 +71,31 @@ export function listQueue() {
   return db
     .select()
     .from(experiment)
-    .where(inArray(experiment.status, ["queued", "scheduling"]))
+    .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["queued", "scheduling"])))
     .orderBy(asc(experiment.queuedAt))
+    .all();
+}
+
+// Proposal-derived candidates are durable reference material, not a hidden
+// execution queue. Keep even user-archived candidates visible here: archiving
+// only says "do not foreground this right now," not "erase the idea or its
+// provenance."
+export function listCandidates() {
+  return db
+    .select()
+    .from(experiment)
+    .where(eq(experiment.kind, "candidate"))
+    .orderBy(desc(experiment.createdAt))
     .all();
 }
 
 export function currentExperiment() {
   // The running one, else the queue head — the feed card never blanks needlessly.
-  const running = db.select().from(experiment).where(eq(experiment.status, "running")).get();
+  const running = db
+    .select()
+    .from(experiment)
+    .where(and(eq(experiment.kind, "actionable"), eq(experiment.status, "running")))
+    .get();
   const row = running ?? listQueue()[0] ?? null;
   if (!row) return null;
   const daysRunning = row.startedAt
@@ -90,7 +114,7 @@ export function experimentHistory() {
   return db
     .select()
     .from(experiment)
-    .where(inArray(experiment.status, ["succeeded", "failed"]))
+    .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["succeeded", "failed"])))
     .orderBy(desc(experiment.endedAt))
     .all();
 }
@@ -132,6 +156,15 @@ export function listTasks(experimentId: string) {
 export function pickExperiment(id: string): { ok: true; sessionId: string } | { ok: false; error: string } {
   const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
   if (!row) return { ok: false, error: "experiment not found" };
+  if (row.kind !== "actionable") {
+    return { ok: false, error: "raw experiment candidates are reference material, not runnable experiments" };
+  }
+  if (row.experimentGroupId) {
+    return {
+      ok: false,
+      error: "this reviewed weekly actionable already has its task plan; confirm its schedule instead",
+    };
+  }
   if (row.status !== "queued") return { ok: false, error: `experiment is ${row.status}, not queued` };
   const live = liveExperiment();
   if (live) {
@@ -150,6 +183,7 @@ export function pickExperiment(id: string): { ok: true; sessionId: string } | { 
 export function cancelScheduling(id: string): { ok: boolean; error?: string } {
   const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
   if (!row) return { ok: false, error: "experiment not found" };
+  if (row.kind !== "actionable") return { ok: false, error: "raw experiment candidates cannot be scheduled" };
   if (row.status !== "scheduling") return { ok: false, error: `experiment is ${row.status}, not scheduling` };
   db.update(experiment).set({ status: "queued" }).where(eq(experiment.id, id)).run();
   db.update(chatSession)
@@ -169,6 +203,13 @@ export function commitPlan(
 ): { ok: true; experiment: ExperimentRow } | { ok: false; error: string } {
   const row = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
   if (!row) return { ok: false, error: "experiment not found" };
+  if (row.kind !== "actionable") return { ok: false, error: "raw experiment candidates cannot receive a schedule plan" };
+  if (row.experimentGroupId) {
+    return {
+      ok: false,
+      error: "reviewed weekly actionables already have a task plan; use explicit schedule confirmation",
+    };
+  }
   if (row.status !== "scheduling") return { ok: false, error: `experiment is ${row.status}, not scheduling` };
 
   // Goal tags gate witness visibility, so they must always resolve to real
@@ -268,11 +309,12 @@ export function endExperiment(
 ): { ok: boolean; error?: string } {
   const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
   if (!row) return { ok: false, error: "experiment not found" };
+  if (row.kind !== "actionable") return { ok: false, error: "raw experiment candidates cannot be ended" };
   if (row.status !== "running") return { ok: false, error: `experiment is ${row.status}, not running` };
 
   db.transaction(() => {
     db.update(experiment)
-      .set({ status: verdict, endedAt: new Date().toISOString(), outcomeMd: outcomeMd ?? null })
+      .set({ status: verdict, endedAt: new Date().toISOString(), outcomeMd: outcomeMd ?? null, reviewMd: outcomeMd ?? null })
       .where(eq(experiment.id, id))
       .run();
 
@@ -319,16 +361,167 @@ export function archiveExperiment(id: string): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
+const DEFAULT_ACTIONABLE_TASK_DURATION_MINUTES = 60;
+const DEFAULT_ACTIONABLE_HABIT_DURATION_MINUTES = 15;
+const DEFAULT_ACTIONABLE_HABIT_TIME = "09:00";
+
+type ScheduleConfirmation =
+  | {
+      ok: true;
+      experiment: ExperimentRow;
+      calendarEvents: number;
+      pushed: number;
+    }
+  | { ok: false; error: string };
+
+function validPreferredTime(value: string | null): string {
+  return value && /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : DEFAULT_ACTIONABLE_HABIT_TIME;
+}
+
+// A reviewed weekly actionable already owns its task and habit rows when the
+// change set is applied. This is deliberately not `commitPlan`: it merely
+// activates those existing rows and creates calendar mappings for the subset
+// the user explicitly marked calendar-backed. It never creates a second task,
+// habit, experience, or witness-facing record.
+export async function confirmActionableSchedule(id: string): Promise<ScheduleConfirmation> {
+  let updated: ExperimentRow | null = null;
+  const eventIds: string[] = [];
+
+  try {
+    db.transaction(() => {
+      const row = db.select().from(experiment).where(eq(experiment.id, id)).get();
+      if (!row) throw new Error("experiment not found");
+      if (row.kind !== "actionable" || !row.experimentGroupId) {
+        throw new Error("only a reviewed weekly actionable can be schedule-confirmed");
+      }
+      const group = db.select().from(experimentGroup).where(eq(experimentGroup.id, row.experimentGroupId)).get();
+      if (!group || group.status !== "active") {
+        throw new Error("the actionable's change group is no longer active");
+      }
+      if (row.status !== "queued") throw new Error(`experiment is ${row.status}, not queued`);
+
+      const live = liveExperiment();
+      if (live) {
+        throw new Error(`"${live.title}" is ${live.status} — one experiment at a time; end or cancel it first`);
+      }
+
+      const tasks = db
+        .select()
+        .from(experimentTask)
+        .where(eq(experimentTask.experimentId, row.id))
+        .all();
+      for (const task of tasks) {
+        if (task.scheduleMode !== "calendar" || !task.scheduledFor) continue;
+        const existing = db
+          .select({ id: calendarEvent.id })
+          .from(calendarEvent)
+          .where(and(eq(calendarEvent.entityType, "experiment_task"), eq(calendarEvent.entityId, task.id)))
+          .get();
+        if (!existing) {
+          const start = new Date(task.scheduledFor);
+          if (Number.isNaN(start.getTime())) continue; // tolerate malformed legacy task rows without creating a bad event
+          const event = db
+            .insert(calendarEvent)
+            .values({
+              entityType: "experiment_task",
+              entityId: task.id,
+              title: task.title,
+              startAt: start.toISOString(),
+              endAt: new Date(start.getTime() + DEFAULT_ACTIONABLE_TASK_DURATION_MINUTES * 60_000).toISOString(),
+              blockStyle: "task",
+            })
+            .returning()
+            .get();
+          eventIds.push(event.id);
+        }
+        if (task.status === "pending") {
+          db.update(experimentTask).set({ status: "scheduled" }).where(eq(experimentTask.id, task.id)).run();
+        }
+      }
+
+      // Organized draft application represents an unscheduled habit by
+      // clearing its rrule. Existing rrule-bearing rows are therefore the
+      // only habit blocks eligible for calendar confirmation.
+      const habits = db.select().from(habit).where(eq(habit.experimentId, row.id)).all();
+      for (const block of habits) {
+        if (!block.rrule || !row.weekOf) continue;
+        const existing = db
+          .select({ id: calendarEvent.id })
+          .from(calendarEvent)
+          .where(and(eq(calendarEvent.entityType, "habit"), eq(calendarEvent.entityId, block.id)))
+          .get();
+        if (existing) continue;
+        const startAt = zonedIso(
+          getConfig<string>("TIMEZONE"),
+          row.weekOf,
+          hhmmToMin(validPreferredTime(block.preferredTime)),
+        );
+        const start = new Date(startAt);
+        const event = db
+          .insert(calendarEvent)
+          .values({
+            entityType: "habit",
+            entityId: block.id,
+            title: block.title,
+            startAt,
+            endAt: new Date(
+              start.getTime() + (block.durationMinutes ?? DEFAULT_ACTIONABLE_HABIT_DURATION_MINUTES) * 60_000,
+            ).toISOString(),
+            rrule: block.rrule,
+            blockStyle: "experiment",
+          })
+          .returning()
+          .get();
+        eventIds.push(event.id);
+      }
+
+      updated = db
+        .update(experiment)
+        .set({
+          status: "running",
+          startedAt: new Date().toISOString(),
+          plannedDurationDays: row.plannedDurationDays ?? 7,
+        })
+        .where(eq(experiment.id, row.id))
+        .returning()
+        .get();
+    });
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  let pushed = 0;
+  if (isConnected()) {
+    for (const eventId of eventIds) {
+      try {
+        await pushEvent(eventId);
+        pushed++;
+      } catch (error) {
+        emit("calendar_event", eventId, "push_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+  emit("experiment", id, "actionable_schedule_confirmed", { calendarEvents: eventIds.length, pushed });
+  return { ok: true, experiment: updated!, calendarEvents: eventIds.length, pushed };
+}
+
 export function patchTask(taskId: string, status: "pending" | "scheduled" | "done" | "skipped") {
-  const existing = db.select().from(experimentTask).where(eq(experimentTask.id, taskId)).get();
-  if (!existing) return null;
+  const existing = db
+    .select({ task: experimentTask, kind: experiment.kind })
+    .from(experimentTask)
+    .innerJoin(experiment, eq(experiment.id, experimentTask.experimentId))
+    .where(eq(experimentTask.id, taskId))
+    .get();
+  if (!existing || existing.kind !== "actionable") return null;
   const updated = db
     .update(experimentTask)
     .set({ status })
     .where(eq(experimentTask.id, taskId))
     .returning()
     .get();
-  emit("experiment_task", taskId, "task_status_changed", { from: existing.status, to: status });
+  emit("experiment_task", taskId, "task_status_changed", { from: existing.task.status, to: status });
   return updated;
 }
 

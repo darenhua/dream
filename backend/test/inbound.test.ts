@@ -77,7 +77,11 @@ describe("inbound routing", () => {
   test("the user's own substantive reply becomes evidence on the running experiment's goals", () => {
     const w = makeWitness({ chatId: CHAT });
     const g = db.insert(goal).values({ title: "ship music", status: "active", origin: "manual" }).returning().get();
-    const e = db.insert(experiment).values({ title: "studio saturdays", status: "running" }).returning().get();
+    const e = db
+      .insert(experiment)
+      .values({ title: "studio saturdays", kind: "actionable", status: "running" })
+      .returning()
+      .get();
     db.insert(experimentGoal).values({ experimentId: e.id, goalId: g.id }).run();
 
     const result = handleInbound({
@@ -95,7 +99,7 @@ describe("inbound routing", () => {
   test("the user's short acks are stored, not evidence; friend chatter is stored, never evidence", () => {
     makeWitness({ chatId: CHAT });
     const g = db.insert(goal).values({ title: "ship music", status: "active", origin: "manual" }).returning().get();
-    const e = db.insert(experiment).values({ title: "x", status: "running" }).returning().get();
+    const e = db.insert(experiment).values({ title: "x", kind: "actionable", status: "running" }).returning().get();
     db.insert(experimentGoal).values({ experimentId: e.id, goalId: g.id }).run();
 
     expect(handleInbound({ chatId: CHAT, senderHandle: ME, text: "ha yeah" }).action).toBe("stored");
@@ -103,6 +107,25 @@ describe("inbound routing", () => {
       handleInbound({ chatId: CHAT, senderHandle: FRIEND, text: "so how did the studio thing actually go??" })
         .action,
     ).toBe("stored");
+    expect(db.select().from(goalEvidence).all()).toHaveLength(0);
+  });
+
+  test("a raw candidate cannot become the witness chat's active evidence sink", () => {
+    const w = makeWitness({ chatId: CHAT });
+    const g = db.insert(goal).values({ title: "ship music", status: "active", origin: "manual" }).returning().get();
+    const candidate = db
+      .insert(experiment)
+      .values({ title: "uncommitted raw idea", kind: "candidate", status: "running" })
+      .returning()
+      .get();
+    db.insert(experimentGoal).values({ experimentId: candidate.id, goalId: g.id }).run();
+
+    const result = handleInbound({
+      chatId: CHAT,
+      senderHandle: ME,
+      text: "this is a long enough update but should not be attached to raw candidate work",
+    });
+    expect(result).toEqual({ action: "stored", witnessId: w.id });
     expect(db.select().from(goalEvidence).all()).toHaveLength(0);
   });
 });

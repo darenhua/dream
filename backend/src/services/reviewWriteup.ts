@@ -54,6 +54,7 @@ function projectReview(experimentId: string, dir: string, interviewMd?: string) 
 export async function generateDraft(experimentId: string, trigger: "daily" | "manual") {
   const e = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
   if (!e) throw new Error(`experiment ${experimentId} not found`);
+  if (e.kind !== "actionable") throw new Error("raw experiment candidates do not receive review writeups");
   if (e.status !== "succeeded" && e.status !== "failed") {
     throw new Error(`experiment is ${e.status} — reviews are written after it ends`);
   }
@@ -104,6 +105,9 @@ export async function approveReview(experimentId: string, finalMd: string) {
     .set({ finalMd, status: "approved", approvedAt: new Date().toISOString() })
     .where(eq(reviewWriteup.experimentId, experimentId))
     .run();
+  // The approved review becomes durable learning context for the next
+  // manually initiated actionable MCP workspace.
+  db.update(experiment).set({ reviewMd: finalMd }).where(eq(experiment.id, experimentId)).run();
   emit("experiment", experimentId, "review_approved", {});
 
   const experimentGoals = new Set(goalIdsFor(experimentId));
@@ -142,6 +146,9 @@ export async function approveReview(experimentId: string, finalMd: string) {
 // --- the optional L3 interview ---
 
 export function startInterview(experimentId: string): { sessionId: string } {
+  const experimentRow = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
+  if (!experimentRow) throw new Error(`experiment ${experimentId} not found`);
+  if (experimentRow.kind !== "actionable") throw new Error("raw experiment candidates do not receive review interviews");
   const open = db
     .select()
     .from(chatSession)

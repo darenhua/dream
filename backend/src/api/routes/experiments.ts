@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import {
   archiveExperiment,
+  confirmActionableSchedule,
   currentExperiment,
   endExperiment,
   experimentHistory,
   getExperiment,
+  listCandidates,
   listQueue,
   patchTask,
   pickExperiment,
@@ -13,15 +15,19 @@ import { openingTurn } from "../../services/scheduleChat";
 
 export const experimentRoutes = new Hono();
 
+// Raw proposal-derived candidates are deliberately a separate, read-only
+// archive. They can inform an organized experiment, but never enter the
+// executable queue from this endpoint.
+experimentRoutes.get("/candidates", c => c.json(listCandidates()));
+
 experimentRoutes.get("/queue", c => c.json(listQueue()));
 
 experimentRoutes.get("/current", c => c.json({ experiment: currentExperiment() }));
 
 experimentRoutes.get("/history", c => c.json(experimentHistory()));
 
-// The copy-a-prompt flows (experiment prompt package, per-task copy) are
-// gone: shaping the next experiment is an in-app L3 conversation now
-// (routes/shaping.ts) whose transcript enters the pipeline directly.
+// Weekly authoring now happens in a user-opened MCP collaboration workspace.
+// There is deliberately no experiment-idea capture endpoint on this route.
 
 experimentRoutes.patch("/tasks/:taskId", async c => {
   const body = await c.req.json().catch(() => ({}));
@@ -45,6 +51,14 @@ experimentRoutes.post("/:id/pick", async c => {
   if (!result.ok) return c.json(result, 409);
   const turn = await openingTurn(result.sessionId);
   return c.json({ ...result, openingTurn: turn });
+});
+
+// A reviewed MCP-authored weekly actionable already has its task plan. This
+// explicit confirmation is the only transition that creates its calendar rows;
+// it does not open the legacy schedule chat or create duplicate task/habit rows.
+experimentRoutes.post("/:id/confirm-schedule", async c => {
+  const result = await confirmActionableSchedule(c.req.param("id"));
+  return c.json(result, result.ok ? 200 : 409);
 });
 
 // running → succeeded | failed. Blame-free; notes feed the next attempt.

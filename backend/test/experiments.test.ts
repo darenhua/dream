@@ -3,7 +3,10 @@ import { eq } from "drizzle-orm";
 import { db, wipeAllTables } from "../src/db";
 import {
   chatSession,
+  calendarEvent,
   experiment,
+  experimentGroup,
+  experimentGoal,
   experimentTask,
   experimentTaskGoal,
   goal,
@@ -16,9 +19,11 @@ import {
   archiveExperiment,
   cancelScheduling,
   commitPlan,
+  confirmActionableSchedule,
   currentExperiment,
   endExperiment,
   enqueueExperiment,
+  listCandidates,
   listQueue,
   patchTask,
   pickExperiment,
@@ -32,12 +37,21 @@ function makeGoal(title = "wake at 6am") {
 }
 
 function queued(title = "phone out of the bedroom", goalIds: string[] = []) {
-  return enqueueExperiment({
-    title,
-    hypothesisMd: "hypothesis",
-    goalIds,
-    proposalId: null as unknown as string, // FK is nullable; candidates in tests skip the proposal step
-  });
+  const row = db
+    .insert(experiment)
+    .values({
+      title,
+      hypothesisMd: "hypothesis",
+      kind: "actionable",
+      status: "queued",
+      queuedAt: new Date().toISOString(),
+    })
+    .returning()
+    .get();
+  for (const goalId of goalIds) {
+    db.insert(experimentGoal).values({ experimentId: row.id, goalId }).run();
+  }
+  return row;
 }
 
 const PLAN: SchedulePlanT = {
@@ -65,6 +79,44 @@ beforeEach(() => {
 });
 
 describe("experiment FSM", () => {
+  test("raw derived candidates stay outside the executable experiment lifecycle", () => {
+    const candidate = enqueueExperiment({
+      title: "a proposal-shaped idea",
+      hypothesisMd: "Useful context, not a weekly commitment.",
+      goalIds: [],
+      proposalId: null as unknown as string,
+    });
+
+    expect(candidate.kind).toBe("candidate");
+    expect(listQueue()).toEqual([]);
+    expect(currentExperiment()).toBeNull();
+    expect(pickExperiment(candidate.id)).toMatchObject({ ok: false });
+  });
+
+  test("candidate archive keeps proposal-derived ideas inspectable without mixing them into execution", () => {
+    const visible = enqueueExperiment({
+      title: "try a week of low-friction music practice",
+      hypothesisMd: "An idea to revisit with an organized group.",
+      goalIds: [],
+      proposalId: null as unknown as string,
+    });
+    const archived = enqueueExperiment({
+      title: "older idea worth retaining",
+      hypothesisMd: "Still useful context.",
+      goalIds: [],
+      proposalId: null as unknown as string,
+    });
+    const actionable = queued("a real weekly commitment");
+
+    expect(archiveExperiment(archived.id)).toEqual({ ok: true });
+    const candidates = listCandidates();
+
+    expect(candidates.map(row => row.id)).toEqual(expect.arrayContaining([visible.id, archived.id]));
+    expect(candidates.map(row => row.id)).not.toContain(actionable.id);
+    expect(candidates.find(row => row.id === archived.id)?.status).toBe("archived");
+    expect(listQueue().map(row => row.id)).toEqual([actionable.id]);
+  });
+
   test("queued → scheduling → running via pick + commitPlan", () => {
     const exp = queued();
     const picked = pickExperiment(exp.id);
@@ -208,6 +260,82 @@ describe("experiment FSM", () => {
     expect(currentExperiment()!.id).toBe(a.id);
     expect(currentExperiment()!.isRunning).toBe(true);
     expect(listQueue().map(e => e.id)).toEqual([b.id]);
+  });
+
+  test("reviewed weekly actionable confirms its existing plan without duplicating work", async () => {
+    const group = db.insert(experimentGroup).values({ title: "make music easier" }).returning().get();
+    const action = db
+      .insert(experiment)
+      .values({
+        title: "tiny music week",
+        kind: "actionable",
+        experimentGroupId: group.id,
+        weekOf: "2026-07-20",
+        status: "queued",
+      })
+      .returning()
+      .get();
+    const calendarTask = db
+      .insert(experimentTask)
+      .values({
+        experimentId: action.id,
+        kind: "experience",
+        title: "book a studio hour",
+        status: "pending",
+        scheduleMode: "calendar",
+        scheduledFor: "2026-07-21T16:00:00.000Z",
+      })
+      .returning()
+      .get();
+    const unscheduledTask = db
+      .insert(experimentTask)
+      .values({
+        experimentId: action.id,
+        kind: "momentum",
+        title: "open the project",
+        status: "pending",
+        scheduleMode: "none",
+      })
+      .returning()
+      .get();
+    const scheduledHabit = db
+      .insert(habit)
+      .values({
+        title: "touch the guitar daily",
+        status: "building",
+        valence: "good",
+        rrule: "FREQ=DAILY",
+        preferredTime: "09:00",
+        durationMinutes: 15,
+        experimentId: action.id,
+        origin: "experiment",
+      })
+      .returning()
+      .get();
+    db.insert(habit)
+      .values({
+        title: "notice a riff whenever",
+        status: "building",
+        valence: "good",
+        experimentId: action.id,
+        origin: "experiment",
+      })
+      .run();
+
+    const confirmed = await confirmActionableSchedule(action.id);
+    expect(confirmed).toMatchObject({ ok: true, calendarEvents: 2 });
+    expect(db.select().from(experiment).where(eq(experiment.id, action.id)).get()!.status).toBe("running");
+    expect(db.select().from(experimentTask).where(eq(experimentTask.id, calendarTask.id)).get()!.status).toBe("scheduled");
+    expect(db.select().from(experimentTask).where(eq(experimentTask.id, unscheduledTask.id)).get()!.status).toBe("pending");
+    const events = db.select().from(calendarEvent).all();
+    expect(events.map(event => event.entityId).sort()).toEqual([calendarTask.id, scheduledHabit.id].sort());
+    expect(db.select().from(experimentTask).where(eq(experimentTask.experimentId, action.id)).all()).toHaveLength(2);
+    expect(db.select().from(habit).where(eq(habit.experimentId, action.id)).all()).toHaveLength(2);
+
+    // A retry cannot append a second set of calendar rows after the weekly
+    // actionable has already become live.
+    expect(await confirmActionableSchedule(action.id)).toMatchObject({ ok: false });
+    expect(db.select().from(calendarEvent).all()).toHaveLength(2);
   });
 
   test("entity detail: goal shows attempt archaeology; habit shows lineage", () => {

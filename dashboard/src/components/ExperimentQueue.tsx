@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, Check, FlaskConical, MessagesSquare, Play, X } from "lucide-react";
+import { Archive, CalendarCheck, Check, FlaskConical, Lightbulb, Play, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,16 +18,15 @@ export function ExperimentQueue({
   onChanged,
   onOpenScheduleChat,
   onOpenReview,
-  onOpenShaping,
 }: {
   tick: number;
   onChanged: () => void;
   onOpenScheduleChat: (sessionId: string) => void;
   onOpenReview: (experimentId: string) => void;
-  onOpenShaping: (sessionId: string) => void;
 }) {
   const { data: current } = useApiData(() => api.currentExperiment(), [tick]);
   const { data: queue } = useApiData(() => api.experimentQueue(), [tick]);
+  const { data: candidates } = useApiData(() => api.experimentCandidates(), [tick]);
   const [picking, setPicking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -43,6 +42,16 @@ export function ExperimentQueue({
     setPicking(id);
     setError(null);
     try {
+      const queued = (queue ?? []).find(experiment => experiment.id === id) ?? (current?.id === id ? current : null);
+      // MCP-reviewed group actionables already own their tasks. The user
+      // explicitly confirms their calendar subset here instead of reopening
+      // the legacy schedule chat and duplicating the plan.
+      if (queued?.experimentGroupId) {
+        const result = await api.confirmActionableSchedule(id);
+        if (!result.ok) throw new Error(result.error ?? "could not confirm this actionable's schedule");
+        onChanged();
+        return;
+      }
       const result = await api.pickExperiment(id);
       onOpenScheduleChat(result.sessionId);
     } catch (e) {
@@ -88,8 +97,8 @@ export function ExperimentQueue({
           )
         ) : (
           <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
-            no experiments yet — new candidates arrive from your rants. want one now? shape it in a
-            quick chat below.
+            no active weekly actionables yet — create one from an organized experiment group when you choose. Raw proposal ideas remain below as
+            reference.
           </p>
         )}
 
@@ -101,7 +110,7 @@ export function ExperimentQueue({
                 key={e.id}
                 experiment={e}
                 picking={picking === e.id}
-                onPick={() => pick(e.id)}
+              onPick={() => pick(e.id)}
                 onArchived={onChanged}
                 onOpen={() => setOpenId(e.id)}
               />
@@ -109,15 +118,22 @@ export function ExperimentQueue({
           </div>
         )}
 
+        <CandidateArchive candidates={candidates ?? []} onOpen={setOpenId} />
+
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <ShapeNextButton onOpenShaping={onOpenShaping} />
       </CardContent>
 
       {openId && openDetail && (
         <DetailModal
           open
           onClose={() => setOpenId(null)}
-          kindLabel={openDetail.status === "running" ? "running experiment" : `experiment · ${openDetail.status}`}
+          kindLabel={
+            openDetail.kind === "candidate"
+              ? `raw experiment candidate · ${openDetail.status}`
+              : openDetail.status === "running"
+                ? "running experiment"
+                : `experiment · ${openDetail.status}`
+          }
           title={openDetail.title}
           detail={openDetail.hypothesisMd}
           checklist={openDetail.proposedChanges}
@@ -144,6 +160,45 @@ export function ExperimentQueue({
   );
 }
 
+function CandidateArchive({ candidates, onOpen }: { candidates: ExperimentRow[]; onOpen: (id: string) => void }) {
+  return (
+    <section className="flex flex-col gap-2 border-t pt-4">
+      <div className="flex items-center gap-2">
+        <Lightbulb className="size-4 text-muted-foreground" />
+        <p className="text-xs font-medium uppercase text-muted-foreground">candidate archive</p>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Accepted proposal ideas are reference material for future organized experiments. They cannot be picked or scheduled here.
+      </p>
+      {candidates.length === 0 ? (
+        <p className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+          No accepted experiment ideas yet.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {candidates.map(candidate => (
+            <button
+              key={candidate.id}
+              className="flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left hover:bg-muted/50"
+              onClick={() => onOpen(candidate.id)}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{candidate.title}</span>
+                {candidate.hypothesisMd && (
+                  <span className="block line-clamp-1 text-xs text-muted-foreground">{candidate.hypothesisMd}</span>
+                )}
+              </span>
+              <Badge variant="outline" className="shrink-0 text-xs">
+                {candidate.status === "archived" ? "archived" : "reference"}
+              </Badge>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function QueueRow({
   experiment,
   highlighted = false,
@@ -162,6 +217,7 @@ function QueueRow({
   onOpen: () => void;
 }) {
   const scheduling = experiment.status === "scheduling";
+  const reviewedActionable = Boolean(experiment.experimentGroupId);
   return (
     <div
       className={cn(
@@ -181,7 +237,8 @@ function QueueRow({
           ) : (
             <>
               <Button size="sm" variant="outline" disabled={picking} onClick={onPick}>
-                <Play className="size-3" /> {picking ? "opening…" : "pick"}
+                {reviewedActionable ? <CalendarCheck className="size-3" /> : <Play className="size-3" />}
+                {picking ? "confirming…" : reviewedActionable ? "confirm schedule" : "pick"}
               </Button>
               <Button
                 size="sm"
@@ -303,34 +360,5 @@ function TaskRowView({ task, onChanged }: { task: TaskRow; onChanged: () => void
         )}
       </button>
     </li>
-  );
-}
-
-// The copy-paste loop's replacement: shaping the next experiment is a quick
-// in-app conversation whose transcript enters the pipeline like any rant.
-function ShapeNextButton({ onOpenShaping }: { onOpenShaping: (sessionId: string) => void }) {
-  const [state, setState] = useState<"idle" | "working" | "error">("idle");
-  return (
-    <div className="flex items-center gap-2">
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={state === "working"}
-        onClick={async () => {
-          setState("working");
-          try {
-            const { sessionId } = await api.startShaping();
-            onOpenShaping(sessionId);
-            setState("idle");
-          } catch {
-            setState("error");
-          }
-        }}
-      >
-        <MessagesSquare className="size-3" />
-        {state === "working" ? "opening…" : "shape the next experiment"}
-      </Button>
-      {state === "error" && <span className="text-xs text-destructive">couldn't open — try again</span>}
-    </div>
   );
 }

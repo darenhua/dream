@@ -76,6 +76,7 @@ export const extraction = sqliteTable(
         "habit_talk",
         "environment_talk",
         "experience_talk",
+        "project_talk",
         "experiment_idea",
         "feeling",
       ],
@@ -187,6 +188,196 @@ export const experience = sqliteTable("experience", {
   updatedAt: updatedAt(),
 });
 
+// Projects are intentionally a lightweight raw registry for now. They are
+// proposal-derived context that can serve an organized goal/group or an
+// actionable experiment, without prematurely becoming a project-management
+// system.
+export const project = sqliteTable("project", {
+  id: id(),
+  title: text("title").notNull(),
+  note: text("note"),
+  origin: text("origin", { enum: ["derived", "manual"] }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// The organized layer is deliberately separate from proposal-derived rows.
+// It is user-initiated through a collaboration change set; raw rows remain
+// evidence and agent-readable material rather than being overwritten.
+export const organizedGoal = sqliteTable("organized_goal", {
+  id: id(),
+  title: text("title").notNull(),
+  identityClause: text("identity_clause"),
+  synthesisMd: text("synthesis_md"),
+  // A null rank means "out of priority". Non-null ranks form the user's
+  // drag-and-drop priority list; this is intentionally not a top-three cap.
+  priorityRank: integer("priority_rank"),
+  status: text("status", { enum: ["active", "sunset"] }).notNull().default("active"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const organizedGoalSource = sqliteTable(
+  "organized_goal_source",
+  {
+    id: id(),
+    organizedGoalId: text("organized_goal_id")
+      .notNull()
+      .references(() => organizedGoal.id),
+    // Polymorphic raw reference: goal|habit|environment_item|experience|
+    // experiment|project. It gives the missing organized → raw provenance hop.
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [
+    uniqueIndex("organized_goal_source_unique").on(t.organizedGoalId, t.entityType, t.entityId),
+    index("organized_goal_source_entity").on(t.entityType, t.entityId),
+  ],
+);
+
+export const organizedHabit = sqliteTable("organized_habit", {
+  id: id(),
+  title: text("title").notNull(),
+  note: text("note"),
+  synthesisMd: text("synthesis_md"),
+  status: text("status", { enum: ["active", "sunset"] }).notNull().default("active"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const organizedEnvironmentItem = sqliteTable("organized_environment_item", {
+  id: id(),
+  title: text("title").notNull(),
+  note: text("note"),
+  synthesisMd: text("synthesis_md"),
+  status: text("status", { enum: ["active", "sunset"] }).notNull().default("active"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const organizedRegistrySource = sqliteTable(
+  "organized_registry_source",
+  {
+    id: id(),
+    organizedEntityType: text("organized_entity_type", { enum: ["habit", "environment"] }).notNull(),
+    organizedEntityId: text("organized_entity_id").notNull(),
+    rawEntityType: text("raw_entity_type").notNull(),
+    rawEntityId: text("raw_entity_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [
+    uniqueIndex("organized_registry_source_unique").on(
+      t.organizedEntityType,
+      t.organizedEntityId,
+      t.rawEntityType,
+      t.rawEntityId,
+    ),
+    index("organized_registry_source_raw").on(t.rawEntityType, t.rawEntityId),
+  ],
+);
+
+export const projectSource = sqliteTable(
+  "project_source",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [
+    uniqueIndex("project_source_unique").on(t.projectId, t.entityType, t.entityId),
+    index("project_source_entity").on(t.entityType, t.entityId),
+  ],
+);
+
+// A group is the long-lived user-approved "change". It intentionally has no
+// calendar or witness linkage: only a child actionable experiment can reach
+// those execution systems.
+export const experimentGroup = sqliteTable("experiment_group", {
+  id: id(),
+  title: text("title").notNull(),
+  motivationMd: text("motivation_md"),
+  status: text("status", { enum: ["active", "done", "sunset"] }).notNull().default("active"),
+  closingReviewMd: text("closing_review_md"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const experimentGroupGoal = sqliteTable(
+  "experiment_group_goal",
+  {
+    id: id(),
+    experimentGroupId: text("experiment_group_id")
+      .notNull()
+      .references(() => experimentGroup.id),
+    organizedGoalId: text("organized_goal_id")
+      .notNull()
+      .references(() => organizedGoal.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("experiment_group_goal_unique").on(t.experimentGroupId, t.organizedGoalId)],
+);
+
+export const experimentGroupTarget = sqliteTable("experiment_group_target", {
+  id: id(),
+  experimentGroupId: text("experiment_group_id")
+    .notNull()
+    .references(() => experimentGroup.id),
+  kind: text("kind", { enum: ["habit", "environment", "experience", "project"] }).notNull(),
+  title: text("title").notNull(),
+  detailMd: text("detail_md"),
+  status: text("status", { enum: ["pending", "done"] }).notNull().default("pending"),
+  doneAt: text("done_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const experimentGroupContext = sqliteTable("experiment_group_context", {
+  id: id(),
+  experimentGroupId: text("experiment_group_id")
+    .notNull()
+    .references(() => experimentGroup.id),
+  textMd: text("text_md").notNull(),
+  sourceChangeSetId: text("source_change_set_id"),
+  createdAt: createdAt(),
+});
+
+export const experimentGroupProject = sqliteTable(
+  "experiment_group_project",
+  {
+    id: id(),
+    experimentGroupId: text("experiment_group_id")
+      .notNull()
+      .references(() => experimentGroup.id),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("experiment_group_project_unique").on(t.experimentGroupId, t.projectId)],
+);
+
+export const experimentGroupSource = sqliteTable(
+  "experiment_group_source",
+  {
+    id: id(),
+    experimentGroupId: text("experiment_group_id")
+      .notNull()
+      .references(() => experimentGroup.id),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [
+    uniqueIndex("experiment_group_source_unique").on(t.experimentGroupId, t.entityType, t.entityId),
+    index("experiment_group_source_entity").on(t.entityType, t.entityId),
+  ],
+);
+
 // A goal's persistent ideal sets — which habits/environment constitute it.
 export const goalHabit = sqliteTable(
   "goal_habit",
@@ -224,6 +415,12 @@ export const experiment = sqliteTable("experiment", {
   id: id(),
   title: text("title").notNull(),
   hypothesisMd: text("hypothesis_md"),
+  // Candidate = raw proposal-derived learning material. Actionable = a
+  // user-approved weekly child of an experiment group and the only kind that
+  // can enter scheduling/calendar/witness flows.
+  kind: text("kind", { enum: ["candidate", "actionable"] }).notNull().default("candidate"),
+  experimentGroupId: text("experiment_group_id").references(() => experimentGroup.id),
+  weekOf: text("week_of"), // local Monday YYYY-MM-DD for an actionable week
   status: text("status", {
     enum: ["queued", "scheduling", "running", "succeeded", "failed", "archived"],
   })
@@ -238,6 +435,7 @@ export const experiment = sqliteTable("experiment", {
   startedAt: text("started_at"),
   endedAt: text("ended_at"),
   outcomeMd: text("outcome_md"), // self-reported notes at end
+  reviewMd: text("review_md"), // why the actionable succeeded/failed; next week reads it
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -258,6 +456,24 @@ export const experimentGoal = sqliteTable(
   t => [uniqueIndex("experiment_goal_unique").on(t.experimentId, t.goalId)],
 );
 
+// Product-semantic goal links. The legacy experiment_goal table remains the
+// raw-goal/witness bridge; this table records which organized goals a weekly
+// actionable or group-directed change actually serves.
+export const experimentOrganizedGoal = sqliteTable(
+  "experiment_organized_goal",
+  {
+    id: id(),
+    experimentId: text("experiment_id")
+      .notNull()
+      .references(() => experiment.id),
+    organizedGoalId: text("organized_goal_id")
+      .notNull()
+      .references(() => organizedGoal.id),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("experiment_organized_goal_unique").on(t.experimentId, t.organizedGoalId)],
+);
+
 // One-off deliverables of an experiment (experiences to have, things to buy,
 // environment setup); recurring habit blocks live on the habit rows instead.
 export const experimentTask = sqliteTable("experiment_task", {
@@ -265,12 +481,15 @@ export const experimentTask = sqliteTable("experiment_task", {
   experimentId: text("experiment_id")
     .notNull()
     .references(() => experiment.id),
-  kind: text("kind", { enum: ["experience", "purchase", "setup"] }).notNull(),
+  kind: text("kind", { enum: ["experience", "purchase", "setup", "project", "momentum"] }).notNull(),
   title: text("title").notNull(),
   detail: text("detail"),
   status: text("status", { enum: ["pending", "scheduled", "done", "skipped"] })
     .notNull()
     .default("pending"),
+  // Calendar is opt-in task by task. "none" remains a first-class dashboard
+  // task and must never be silently sent to Google Calendar.
+  scheduleMode: text("schedule_mode", { enum: ["calendar", "none"] }).notNull().default("calendar"),
   scheduledFor: text("scheduled_for"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -374,6 +593,109 @@ export const chatMessage = sqliteTable(
   t => [index("chat_message_session").on(t.sessionId)],
 );
 
+// A dashboard-created code grants a cloud MCP conversation access to one
+// narrowly scoped drafting workspace. The secret itself is never persisted.
+export const collaborationInvite = sqliteTable(
+  "collaboration_invite",
+  {
+    id: id(),
+    mode: text("mode", {
+      enum: [
+        "organized_goal",
+        "organized_habit",
+        "organized_environment",
+        "experiment_group",
+        "actionable_experiment",
+      ],
+    }).notNull(),
+    primaryEntityType: text("primary_entity_type"),
+    primaryEntityId: text("primary_entity_id"),
+    experimentGroupId: text("experiment_group_id").references(() => experimentGroup.id),
+    // Seed/goal selections are chosen in the dashboard before the user hands
+    // the one-time code to MCP; redemption copies them into the workspace.
+    userSeedMd: text("user_seed_md"),
+    selectedOrganizedGoalIdsJson: text("selected_organized_goal_ids_json"),
+    secretHash: text("secret_hash").notNull().unique(),
+    // Separate dashboard capability. The OTP binds an MCP connection; this
+    // value authorizes the dashboard's later read/review/apply operations.
+    // It stays nullable only so installations that briefly ran an earlier
+    // pre-release migration can upgrade safely; new invites always set it.
+    dashboardSecretHash: text("dashboard_secret_hash").unique(),
+    expiresAt: text("expires_at").notNull(),
+    redeemedAt: text("redeemed_at"),
+    workspaceId: text("workspace_id"),
+    createdAt: createdAt(),
+  },
+  t => [index("collaboration_invite_expiry").on(t.expiresAt)],
+);
+
+export const collaborationWorkspace = sqliteTable(
+  "collaboration_workspace",
+  {
+    id: id(),
+    inviteId: text("invite_id")
+      .notNull()
+      .unique()
+      .references(() => collaborationInvite.id),
+    mode: text("mode", {
+      enum: [
+        "organized_goal",
+        "organized_habit",
+        "organized_environment",
+        "experiment_group",
+        "actionable_experiment",
+      ],
+    }).notNull(),
+    status: text("status", { enum: ["open", "draft_ready", "applied", "rejected", "expired"] })
+      .notNull()
+      .default("open"),
+    primaryEntityType: text("primary_entity_type").notNull(),
+    primaryEntityId: text("primary_entity_id"),
+    experimentGroupId: text("experiment_group_id").references(() => experimentGroup.id),
+    userSeedMd: text("user_seed_md"),
+    selectedOrganizedGoalIdsJson: text("selected_organized_goal_ids_json"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("collaboration_workspace_status").on(t.status)],
+);
+
+// MCP can create and revise only this record. Applying it is a separate,
+// dashboard-only transactional service operation.
+export const draftChangeSet = sqliteTable(
+  "draft_change_set",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => collaborationWorkspace.id),
+    mode: text("mode", {
+      enum: [
+        "organized_goal",
+        "organized_habit",
+        "organized_environment",
+        "experiment_group",
+        "actionable_experiment",
+      ],
+    }).notNull(),
+    primaryEntityType: text("primary_entity_type").notNull(),
+    primaryEntityId: text("primary_entity_id"),
+    summaryMd: text("summary_md").notNull(),
+    operationsJson: text("operations_json").notNull(),
+    sourceRefsJson: text("source_refs_json"),
+    auditJson: text("audit_json"),
+    status: text("status", { enum: ["drafting", "ready_for_review", "applied", "rejected", "expired"] })
+      .notNull()
+      .default("drafting"),
+    rejectionNote: text("rejection_note"),
+    appliedAt: text("applied_at"),
+    rejectedAt: text("rejected_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("draft_change_set_workspace").on(t.workspaceId), index("draft_change_set_status").on(t.status)],
+);
+
 // Local ↔ Google Calendar mapping for everything on the dream calendar.
 // blockStyle drives the GCal colorId (experiment blocks visually distinct).
 export const calendarEvent = sqliteTable(
@@ -443,6 +765,7 @@ export const proposal = sqliteTable(
         "environment_add",
         "environment_update",
         "experience_add",
+        "project_add",
         "experiment_propose",
       ],
     }).notNull(),

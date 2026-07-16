@@ -5,6 +5,7 @@ export const EXTRACTION_KIND_LABELS: Record<string, string> = {
   habit_talk: "habit",
   environment_talk: "environment",
   experience_talk: "experience",
+  project_talk: "project",
   experiment_idea: "experiment idea",
   feeling: "feeling",
 };
@@ -18,5 +19,6 @@ export const PROPOSAL_KIND_LABELS: Record<string, string> = {
   environment_add: "environment",
   environment_update: "environment update",
   experience_add: "experience",
+  project_add: "project",
   experiment_propose: "experiment candidate",
 };

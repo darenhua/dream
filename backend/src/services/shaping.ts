@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { chatMessage, chatSession, conversation, experiment } from "../db/schema";
 import { emit } from "./events";
@@ -15,11 +15,15 @@ function hashContent(contentJson: string): string {
 }
 
 export function startShaping(): { sessionId: string; opener: string } {
-  const running = db.select().from(experiment).where(eq(experiment.status, "running")).get();
+  const running = db
+    .select()
+    .from(experiment)
+    .where(and(eq(experiment.kind, "actionable"), eq(experiment.status, "running")))
+    .get();
   const queued = db
     .select({ id: experiment.id })
     .from(experiment)
-    .where(inArray(experiment.status, ["queued", "scheduling"]))
+    .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["queued", "scheduling"])))
     .all().length;
 
   // Deterministic opener — context-aware but zero LLM spend. The real

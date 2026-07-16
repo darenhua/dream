@@ -13,6 +13,8 @@ import {
   goalEvidence,
   goalHabit,
   habit,
+  project,
+  projectSource,
 } from "../src/db/schema";
 import { seedConfig, setConfig } from "../src/services/config";
 import { patchEnvironmentItem } from "../src/services/environment";
@@ -26,6 +28,7 @@ import {
   supersedePending,
 } from "../src/services/proposals";
 import { applyRevision, revisionGuard } from "../src/services/revise";
+import { projectsMd } from "../src/services/projector";
 
 function makeConversation(title = "a rant") {
   return db
@@ -236,6 +239,35 @@ describe("apply-switch per kind, with provenance", () => {
     expect(e.state).toBe("had");
     expect(e.hadAt).toBeTruthy();
     expect(linksFor("experience", e.id)).toHaveLength(1);
+  });
+
+  test("project_add creates raw proposal-derived context with direct and rant provenance", () => {
+    const g = makeGoal("make more music");
+    const p = createProposal(
+      "project_add",
+      {
+        kind: "project_add",
+        title: "finish a three-song EP",
+        note: "a small body of work to share this year",
+        source_entity_refs: [{ entity_type: "goal", entity_id: g.id }],
+        extraction_ids: [x1.id],
+      },
+      `conversation:${convo.id}`,
+      null,
+    );
+    expect(approveProposal(p.id).ok).toBe(true);
+
+    const created = db.select().from(project).where(eq(project.title, "finish a three-song EP")).get()!;
+    expect(created.origin).toBe("derived");
+    expect(linksFor("project", created.id)).toHaveLength(1);
+    expect(
+      db
+        .select()
+        .from(projectSource)
+        .where(and(eq(projectSource.projectId, created.id), eq(projectSource.entityType, "goal"), eq(projectSource.entityId, g.id)))
+        .get(),
+    ).toBeTruthy();
+    expect(projectsMd()).toContain("finish a three-song EP");
   });
 
   test("experiment_propose → queued experiment + goal links + provenance", () => {

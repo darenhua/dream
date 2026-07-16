@@ -10,6 +10,7 @@ const PROMPT_DISTILLER = `Read the transcript in conversation.md (messages are n
 - habit_talk: a recurring behavior they have, want, or struggle with
 - environment_talk: physical setups, obligations they've signed up for, or social structures around them
 - experience_talk: one-time experiences they had or want to have
+- project_talk: a concrete thing they want to make, build, or bring into the world
 - experiment_idea: a concrete actionable change they're considering trying
 - feeling: a significant emotional state or reaction worth remembering
 
@@ -17,7 +18,7 @@ Rules: distill each passage in the user's own first-person register — no coach
 
 const PROMPT_DERIVER = `You are interpreting ONE newly-reviewed rant against everything already known.
 
-Files: trigger.md (the new rant's confirmed extractions — the occasion for this run — plus the surrounding conversation each passage came from), pending-proposals.md (proposals already awaiting the human's ratification), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, experiment queue and history), budget.md.
+Files: trigger.md (the new rant's confirmed extractions — the occasion for this run — plus the surrounding conversation each passage came from), pending-proposals.md (proposals already awaiting the human's ratification), corpus.md (ALL confirmed extractions from every rant, dated, with markers showing which entities they already feed), state.md (current goals, habits, environment, experiences, projects, experiment queue and history), budget.md.
 
 Read pending-proposals.md FIRST. NEVER propose something a pending proposal already covers — the budget is for genuinely new material only. If the new extractions merely reinforce a pending proposal, propose nothing for it; once it's ratified, a future run can enrich it through an update citing this rant. Only propose when your new extractions point at something no pending proposal and no existing entity accounts for, or add a genuinely different dimension to a RATIFIED entity (via an update).
 
@@ -28,6 +29,7 @@ The new extractions are the occasion; the whole corpus is the evidence. Propose 
 - The ONE status you may propose: habit_update with status "lapsed" when the user's own words say they've stopped following through on an existing habit (or back to "established" if their words say it recovered).
 - STRONGLY prefer goal_update / synthesis_update / habit_update over creating a new entity. Create only what is genuinely new.
 - habit_add is ONLY for habits the user ALREADY has (mapping the current self). Habits the user WANTS are not habits yet — they surface inside experiment_propose, or not at all. Habit and environment titles/notes stay short and factual.
+- project_add is for a concrete thing the user wants to make, build, or bring into the world. A project is a lightweight accumulating context record, not a task list, status tracker, or another goal. Add it only when it is genuinely distinct from an existing project or pending proposal; keep title/note short and factual. Use source_entity_refs only for ids shown in state.md that directly contextualize it; never guess ids.
 - GOALS must read like a mirror into the person the user wants to be. synthesis_md is multiple substantial paragraphs in the user's own register: (1) the root-cause understanding — what is actually going on, woven from their own words across rants; (2) what their days concretely look like when this goal is true — specific mornings, specific evenings, the felt difference. Never a one-liner. identity_clause stays one sharp sentence ("I am becoming someone who...").
 - EXPERIMENT candidates must read like detailed steps. experiment_propose is a checklist: hypothesis_md explains why these changes work TOGETHER toward these goal_ids and why they matter right now; changes[] lists every concrete change (habit_change | experience | environment_change), each with: detail (what it concretely constitutes, step by step), easier (the smallest version that still counts / how to lower the bar), why (why this change matters, connected to what the user said), and its own extraction_ids where specific passages back that specific change.
 - Every proposal MUST cite extraction_ids that justify it — from the new rant, old rants, or both (cross-rant citation is expected and good).
@@ -60,7 +62,7 @@ Your one job: find extractions from OTHER rants that genuinely speak to the same
 
 const PROMPT_RANT_DETECTOR = `candidates.md lists imported conversations (id, title, message count, opening excerpt). For each, decide: is this a RANT — self-discovery material worth distilling into the user's growth system?
 
-A rant is the user digging into their own life: complaints about their situation or themselves, goals and who they want to become, habits they have or struggle with, their environment and obligations, experiences they want, changes they're considering. It is about the USER's inner or outer life.
+A rant is the user digging into their own life: complaints about their situation or themselves, goals and who they want to become, habits they have or struggle with, their environment and obligations, experiences or personal projects they want, changes they're considering. It is about the USER's inner or outer life.
 
 NOT a rant: coding/work sessions, how-to questions, research, drafting documents, planning logistics, anything where the user is producing output rather than examining themselves. When a conversation mixes both, ask: would distilling it yield evidence about who this person is and wants to be? If yes → candidate.
 
@@ -132,10 +134,13 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   WITNESS_QUIET_HOURS: { start: "21:00", end: "10:00" }, // interpreted in each witness's timezone
   DUTY_PING_REVIEW_HOURS: 48, // experiment ended this long without an approved writeup → ping
   DUTY_PING_PROPOSAL_DAYS: 4, // pending proposals/candidates older than this while active → ping
+  DUTY_PING_ACTIONABLE_HOURS: 72, // active group with no approved weekly actionable → gentle accountability ping
   "TEMPLATE.duty_ping_review":
     "{{EXPERIMENT}} wrapped {{DAYS}} days ago and there's no review yet. Your move — ask him how it actually went.",
   "TEMPLATE.duty_ping_backlog":
     "There's material sitting in his queue ({{WHAT}}) going stale. Worth asking what he's been chewing on.",
+  "TEMPLATE.duty_ping_actionable":
+    "There is an active change group with no current approved weekly actionable. No pressure—ask what would make choosing a small week easier.",
   "PROMPT.preamble": PREAMBLE,
   "PROMPT.rant_detector": PROMPT_RANT_DETECTOR,
   "PROMPT.distiller": PROMPT_DISTILLER,

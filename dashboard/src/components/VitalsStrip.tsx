@@ -37,6 +37,23 @@ export function VitalsStrip({ tick }: { tick: number }) {
     });
   }
 
+  // Change-group coverage is descriptive, not a command to produce more
+  // work. It makes the distinction visible between an active group with a
+  // reviewed next week and one that has no approved weekly actionable yet.
+  const coverage = v.experiment.actionableCoverage;
+  if (coverage.activeGroupCount > 0 && coverage.groupsWithoutApprovedActionable.length > 0) {
+    chips.push({
+      icon: <FlaskConical className="size-3.5" />,
+      text: `${coverage.groupsWithoutApprovedActionable.length} active group${coverage.groupsWithoutApprovedActionable.length === 1 ? "" : "s"} without a weekly actionable`,
+      tone: "warn",
+    });
+  } else if (coverage.activeGroupCount > 0 && coverage.groupsWithoutRunning.length > 0) {
+    chips.push({
+      icon: <FlaskConical className="size-3.5" />,
+      text: `${coverage.groupsWithoutRunning.length} group${coverage.groupsWithoutRunning.length === 1 ? "" : "s"} with a next week ready`,
+    });
+  }
+
   if (s.paused) {
     chips.push({ icon: <PauseCircle className="size-3.5" />, text: `paused until ${s.pausedUntil}` });
   } else if (s.total > 0) {
@@ -67,7 +84,7 @@ export function VitalsStrip({ tick }: { tick: number }) {
       ))}
       {s.queueNudge && (
         <span className="text-amber-700 dark:text-amber-300">
-          the queue's empty and this experiment is winding down — worth shaping the next one
+          this week is winding down — open a weekly MCP workspace when you want a next experiment
         </span>
       )}
     </div>

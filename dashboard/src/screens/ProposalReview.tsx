@@ -17,6 +17,7 @@ const GROUPS: { title: string; kinds: string[] }[] = [
   { title: "habits", kinds: ["habit_add", "habit_update"] },
   { title: "environment", kinds: ["environment_add", "environment_update"] },
   { title: "experiences", kinds: ["experience_add"] },
+  { title: "projects", kinds: ["project_add"] },
 ];
 
 export function summarize(p: ProposalRow): { title: string; detail: string | null } {
@@ -44,6 +45,8 @@ export function summarize(p: ProposalRow): { title: string; detail: string | nul
         title: pl.title,
         detail: pl.state === "planned" ? "something you want to have" : "something that happened",
       };
+    case "project_add":
+      return { title: pl.title, detail: pl.note ?? "something you want to make" };
     case "experiment_propose":
       return { title: pl.title, detail: pl.hypothesis_md ?? null };
     default:

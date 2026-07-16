@@ -7,15 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
+import { cn } from "@/lib/utils";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ExtractionReview } from "./screens/ExtractionReview";
 import { MainFeed } from "./screens/MainFeed";
+import { OrganizedFeed } from "./screens/OrganizedFeed";
 import { ProposalReview } from "./screens/ProposalReview";
 import { ReviewInterview } from "./screens/ReviewInterview";
 import { ReviewWriteup } from "./screens/ReviewWriteup";
 import { RantExplorer } from "./screens/RantExplorer";
 import { ScheduleChat } from "./screens/ScheduleChat";
-import { ShapingChat } from "./screens/ShapingChat";
 import { SteerChat } from "./screens/SteerChat";
 import "./index.css";
 
@@ -25,10 +26,10 @@ export type View =
   | { name: "feed" }
   | { name: "review-extractions"; conversationId: string }
   | { name: "review-proposals" }
+  | { name: "organized-feed" }
   | { name: "schedule-chat"; sessionId: string }
   | { name: "review-writeup"; experimentId: string }
   | { name: "review-interview"; sessionId: string; experimentId: string }
-  | { name: "shaping-chat"; sessionId: string }
   | { name: "rant-explorer" }
   | { name: "steer-chat"; sessionId: string; targetType: "distill" | "proposal" | "goal" };
 
@@ -86,6 +87,17 @@ export function App() {
     </Button>
   );
 
+  // The curated layer is a peer of proposal review, not a replacement for the
+  // raw/proposal-derived feed. Both remain one click away in user mode.
+  const organizedButton = (
+    <Button
+      variant={view.name === "organized-feed" ? "secondary" : "ghost"}
+      onClick={() => setView(view.name === "organized-feed" ? { name: "feed" } : { name: "organized-feed" })}
+    >
+      organized feed
+    </Button>
+  );
+
   const explorerButton = (
     <Button
       variant={view.name === "rant-explorer" ? "secondary" : "ghost"}
@@ -118,7 +130,12 @@ export function App() {
       <header className="mb-6 flex items-center justify-between gap-4 border-b py-3">
         {logo}
         <div className="hidden items-center gap-4 md:flex">
-          {!admin && reviewButton}
+          {!admin && (
+            <>
+              {reviewButton}
+              {organizedButton}
+            </>
+          )}
           {admin && explorerButton}
           {modeToggle}
         </div>
@@ -160,6 +177,8 @@ export function App() {
             onBack={() => setView({ name: "feed" })}
             onOpenSteer={openSteer("proposal")}
           />
+        ) : view.name === "organized-feed" ? (
+          <OrganizedFeed tick={tick} onChanged={bump} />
         ) : view.name === "schedule-chat" ? (
           <ScheduleChat
             sessionId={view.sessionId}
@@ -179,15 +198,6 @@ export function App() {
               setView({ name: "feed" });
             }}
           />
-        ) : view.name === "shaping-chat" ? (
-          <ShapingChat
-            sessionId={view.sessionId}
-            onDone={() => {
-              bump();
-              setView({ name: "feed" });
-            }}
-            onCancel={() => setView({ name: "feed" })}
-          />
         ) : view.name === "review-interview" ? (
           <ReviewInterview
             sessionId={view.sessionId}
@@ -206,15 +216,26 @@ export function App() {
             onReviewExtractions={id => setView({ name: "review-extractions", conversationId: id })}
             onOpenScheduleChat={sessionId => setView({ name: "schedule-chat", sessionId })}
             onOpenReview={experimentId => setView({ name: "review-writeup", experimentId })}
-            onOpenShaping={sessionId => setView({ name: "shaping-chat", sessionId })}
             onOpenGoalSteer={openSteer("goal")}
           />
         )}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-2 items-center border-t bg-background md:hidden">
+      <nav
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-10 grid items-center border-t bg-background md:hidden",
+          admin ? "grid-cols-2" : "grid-cols-3",
+        )}
+      >
         <div className="flex justify-center border-r py-3">{modeToggle}</div>
-        <div className="flex justify-center py-3">{admin ? explorerButton : reviewButton}</div>
+        {admin ? (
+          <div className="flex justify-center py-3">{explorerButton}</div>
+        ) : (
+          <>
+            <div className="flex justify-center border-r py-3">{reviewButton}</div>
+            <div className="flex justify-center py-3">{organizedButton}</div>
+          </>
+        )}
       </nav>
     </div>
   );

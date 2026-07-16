@@ -8,9 +8,10 @@ import { createExperience } from "./experiences";
 import { enqueueExperiment } from "./experiments";
 import { createGoal } from "./goals";
 import { createHabit, patchHabit } from "./habits";
+import { createProject, linkProjectSources } from "./projects";
 
 type ProposalKind = typeof proposal.$inferSelect.kind;
-type EntityType = "goal" | "habit" | "environment_item" | "experience" | "experiment" | "experiment_task";
+type EntityType = "goal" | "habit" | "environment_item" | "experience" | "project" | "experiment" | "experiment_task";
 
 export function createProposal(
   kind: ProposalKind,
@@ -243,6 +244,18 @@ function applyProposal(kind: ProposalKind, payload: any, proposalId: string, not
         origin: "derived",
       });
       writeProvenance(p.extraction_ids, "experience", created.id, proposalId);
+      break;
+    }
+
+    case "project_add": {
+      const p = payload as Extract<DeriverProposalT, { kind: "project_add" }>;
+      const created = createProject({
+        title: p.title,
+        note: p.note ?? null,
+        origin: "derived",
+      });
+      linkProjectSources(created.id, p.source_entity_refs);
+      writeProvenance(p.extraction_ids, "project", created.id, proposalId);
       break;
     }
 

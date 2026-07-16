@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
-import { conversation, experiment, extraction, proposal } from "../db/schema";
+import { conversation, experiment, experimentGroup, extraction, proposal } from "../db/schema";
 import { getConfig } from "./config";
 
 // The activity status, DERIVED entirely from existing tables — no logging,
@@ -21,6 +21,11 @@ export interface Vitals {
     queueDepth: number; // queued + scheduling
     lastEndedAt: string | null;
     daysSinceEnded: number | null;
+    actionableCoverage: {
+      activeGroupCount: number;
+      groupsWithoutRunning: { id: string; title: string }[];
+      groupsWithoutApprovedActionable: { id: string; title: string }[];
+    };
   };
 }
 
@@ -83,19 +88,56 @@ export function computeVitals(asOf: string): Vitals {
     .where(eq(proposal.status, "pending"))
     .all().length;
 
-  const running = db.select().from(experiment).where(eq(experiment.status, "running")).get() ?? null;
+  const running =
+    db
+      .select()
+      .from(experiment)
+      .where(and(eq(experiment.kind, "actionable"), eq(experiment.status, "running")))
+      .get() ?? null;
   const queueDepth = db
     .select({ id: experiment.id })
     .from(experiment)
-    .where(inArray(experiment.status, ["queued", "scheduling"]))
+    .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["queued", "scheduling"])))
     .all().length;
   const lastEnded = db
     .select({ ts: experiment.endedAt })
     .from(experiment)
-    .where(and(inArray(experiment.status, ["succeeded", "failed"]), isNotNull(experiment.endedAt)))
+    .where(
+      and(
+        eq(experiment.kind, "actionable"),
+        inArray(experiment.status, ["succeeded", "failed"]),
+        isNotNull(experiment.endedAt),
+      ),
+    )
     .orderBy(desc(experiment.endedAt))
     .limit(1)
     .get()?.ts ?? null;
+
+  // Groups make the absence signal meaningful. A global empty queue is not a
+  // mandate to invent work: the dashboard/heartbeat can distinguish no active
+  // groups, a group with a queued next week, and a group with no approved
+  // weekly actionable at all.
+  const activeGroups = db
+    .select({ id: experimentGroup.id, title: experimentGroup.title })
+    .from(experimentGroup)
+    .where(eq(experimentGroup.status, "active"))
+    .all();
+  const activeGroupIds = activeGroups.map(group => group.id);
+  const actionableRows = activeGroupIds.length
+    ? db
+        .select({ experimentGroupId: experiment.experimentGroupId, status: experiment.status })
+        .from(experiment)
+        .where(and(eq(experiment.kind, "actionable"), inArray(experiment.experimentGroupId, activeGroupIds)))
+        .all()
+    : [];
+  const groupHasRunning = new Set(
+    actionableRows.filter(row => row.status === "running" && row.experimentGroupId).map(row => row.experimentGroupId!),
+  );
+  const groupHasApprovedActionable = new Set(
+    actionableRows
+      .filter(row => ["queued", "scheduling", "running"].includes(row.status) && row.experimentGroupId)
+      .map(row => row.experimentGroupId!),
+  );
 
   return {
     lastAcceptedRantAt,
@@ -118,6 +160,11 @@ export function computeVitals(asOf: string): Vitals {
       queueDepth,
       lastEndedAt: lastEnded,
       daysSinceEnded: daysSince(lastEnded, asOf),
+      actionableCoverage: {
+        activeGroupCount: activeGroups.length,
+        groupsWithoutRunning: activeGroups.filter(group => !groupHasRunning.has(group.id)),
+        groupsWithoutApprovedActionable: activeGroups.filter(group => !groupHasApprovedActionable.has(group.id)),
+      },
     },
   };
 }

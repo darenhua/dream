@@ -45,7 +45,11 @@ reviewRoutes.post("/:experimentId/approve", async c => {
 });
 
 reviewRoutes.post("/:experimentId/interview", c => {
-  return c.json(startInterview(c.req.param("experimentId")));
+  try {
+    return c.json(startInterview(c.req.param("experimentId")));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
 });
 
 reviewRoutes.post("/interview/:sessionId/finish", async c => {

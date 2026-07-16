@@ -1,4 +1,4 @@
-import { asc, count, eq, inArray, max, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, max, sql } from "drizzle-orm";
 import { db } from "../db";
 import { experiment, experimentGoal, goal } from "../db/schema";
 import { getConfig } from "./config";
@@ -119,7 +119,7 @@ export function attemptCounts(): Map<string, number> {
     .select({ goalId: experimentGoal.goalId, n: count() })
     .from(experimentGoal)
     .innerJoin(experiment, eq(experimentGoal.experimentId, experiment.id))
-    .where(inArray(experiment.status, ["succeeded", "failed"]))
+    .where(and(eq(experiment.kind, "actionable"), inArray(experiment.status, ["succeeded", "failed"])))
     .groupBy(experimentGoal.goalId)
     .all();
   return new Map(rows.map(r => [r.goalId, r.n]));

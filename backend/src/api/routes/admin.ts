@@ -1,7 +1,7 @@
 import { count, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db, wipeAllTables } from "../../db";
-import { conversation, environmentItem, event, experience, experiment, goal, habit } from "../../db/schema";
+import { conversation, environmentItem, event, experience, experiment, goal, habit, project } from "../../db/schema";
 import { isConnected } from "../../services/calendarSync";
 import { getConfig, seedConfig } from "../../services/config";
 import { pendingDerives } from "../../services/derive";
@@ -34,6 +34,7 @@ adminRoutes.get("/health", c => {
     environment:
       db.select({ n: count() }).from(environmentItem).where(eq(environmentItem.status, "active")).get()?.n ?? 0,
     experiences: db.select({ n: count() }).from(experience).get()?.n ?? 0,
+    projects: db.select({ n: count() }).from(project).get()?.n ?? 0,
   };
   const live = liveExperiment();
   const lastDaily = db

@@ -78,6 +78,34 @@
       "when": 1784185278844,
       "tag": "0010_magenta_maelstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1784187987757,
+      "tag": "0011_nostalgic_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1784188711625,
+      "tag": "0012_little_devos",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1784188763817,
+      "tag": "0013_slow_winter_soldier",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1784190591807,
+      "tag": "0014_parallel_sheva_callister",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Loader2, Plus, Quote, Send } from "lucide-react";
+import { Loader2, MessageSquareText, Plus, Quote, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,11 @@ export interface Relations {
   habits?: EntityRef[];
   environment?: EntityRef[];
   experiences?: EntityRef[];
+  // The organized feed uses this optional bridge to show the raw records it
+  // deliberately links to. Existing raw cards never supply it. A source can
+  // be opened in its native raw detail modal, preserving the explicit
+  // organized -> raw record -> extraction -> conversation path.
+  sources?: (EntityRef & { onOpen?: () => void })[];
 }
 
 export interface DetailModalProps {
@@ -60,6 +65,10 @@ export interface DetailModalProps {
   extractions: CitedExtraction[];
   schedule?: ScheduleInfo;
   revision?: { proposalId: string; onRevised: () => void };
+  // Raw and organized detail views can opt into the final provenance hop:
+  // cited extraction -> read-only source conversation. Keeping this optional
+  // preserves existing callers that only need the citation explorer.
+  onOpenConversation?: (conversationId: string) => void;
 }
 
 interface RantSource {
@@ -83,6 +92,7 @@ export function DetailModal({
   extractions,
   schedule,
   revision,
+  onOpenConversation,
 }: DetailModalProps) {
   // Group cited extractions by their source rant — the vertical link list.
   const sources = useMemo<RantSource[]>(() => {
@@ -177,17 +187,30 @@ export function DetailModal({
                   }}
                 />
               ) : active ? (
-                active.extractions.map(x => (
-                  <div key={x.id} className="rounded-lg border p-2">
-                    <Badge variant="outline" className="mb-1">
-                      {EXTRACTION_KIND_LABELS[x.kind] ?? x.kind}
-                    </Badge>
-                    <p className="flex gap-2 text-sm">
-                      <Quote className="mt-1 size-3 shrink-0 text-muted-foreground" />
-                      {x.text}
-                    </p>
-                  </div>
-                ))
+                <>
+                  {active.extractions.map(x => (
+                    <div key={x.id} className="rounded-lg border p-2">
+                      <Badge variant="outline" className="mb-1">
+                        {EXTRACTION_KIND_LABELS[x.kind] ?? x.kind}
+                      </Badge>
+                      <p className="flex gap-2 text-sm">
+                        <Quote className="mt-1 size-3 shrink-0 text-muted-foreground" />
+                        {x.text}
+                      </p>
+                    </div>
+                  ))}
+                  {onOpenConversation && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-1 w-fit"
+                      onClick={() => onOpenConversation(active.conversationId)}
+                    >
+                      <MessageSquareText className="size-3.5" /> open full source conversation
+                    </Button>
+                  )}
+                </>
               ) : (
                 <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
                   this item has no extraction citations
@@ -302,6 +325,30 @@ function RelationsSection({ relations }: { relations: Relations }) {
       label: "experiences",
       content: (
         <div className="flex flex-wrap gap-1.5">{relations.experiences.map(e => chip(e.title, e.status, e.id))}</div>
+      ),
+    });
+  }
+  if (relations.sources?.length) {
+    rows.push({
+      label: "linked raw context",
+      content: (
+        <div className="flex flex-wrap gap-1.5">
+          {relations.sources.map(source =>
+            source.onOpen ? (
+              <button
+                key={source.id}
+                type="button"
+                onClick={source.onOpen}
+                className="rounded-full text-left outline-offset-2 hover:opacity-75 focus-visible:outline"
+                title={`open ${source.title}`}
+              >
+                {chip(source.title, source.status, source.id)}
+              </button>
+            ) : (
+              chip(source.title, source.status, source.id)
+            ),
+          )}
+        </div>
       ),
     });
   }
