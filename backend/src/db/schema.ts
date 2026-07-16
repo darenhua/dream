@@ -781,6 +781,41 @@ export const draftChangeSet = sqliteTable(
   t => [index("draft_change_set_workspace").on(t.workspaceId), index("draft_change_set_status").on(t.status)],
 );
 
+// The persistent no-code companion's quarantined inbox. A companion
+// conversation can only ever write here: one explicitly requested branch
+// draft per submission, owned by an authenticated companion identity. No
+// domain row exists until the dashboard reviews and applies the whole draft.
+export const companionBranchDraft = sqliteTable(
+  "companion_branch_draft",
+  {
+    id: id(),
+    // Ownership key, not merely audit text: every read/apply/reject filters
+    // on it so one companion identity can never see another's drafts.
+    companionIdentityId: text("companion_identity_id").notNull(),
+    parentExperimentGroupId: text("parent_experiment_group_id")
+      .notNull()
+      .references(() => experimentGroup.id),
+    userSeedMd: text("user_seed_md").notNull(),
+    summaryMd: text("summary_md").notNull(),
+    operationsJson: text("operations_json").notNull(),
+    sourceRefsJson: text("source_refs_json"),
+    auditJson: text("audit_json"),
+    status: text("status", { enum: ["drafting", "ready_for_review", "applied", "rejected", "expired"] })
+      .notNull()
+      .default("drafting"),
+    rejectionNote: text("rejection_note"),
+    appliedAt: text("applied_at"),
+    rejectedAt: text("rejected_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [
+    index("companion_branch_draft_identity").on(t.companionIdentityId),
+    index("companion_branch_draft_status").on(t.status),
+    index("companion_branch_draft_parent").on(t.parentExperimentGroupId),
+  ],
+);
+
 // Local ↔ Google Calendar mapping for everything on the dream calendar.
 // blockStyle drives the GCal colorId (experiment blocks visually distinct).
 export const calendarEvent = sqliteTable(

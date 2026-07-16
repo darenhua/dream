@@ -19,6 +19,7 @@ import {
   type ActionableExperimentRow,
   type CollaborationInviteStatus,
   type CollaborationMode,
+  type CompanionBranchDraftRow,
   type CurrentFocusRow,
   type ExperimentGroupLineageRef,
   type ExperimentGroupRow,
@@ -233,6 +234,8 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
           </CardContent>
         </Card>
       )}
+
+      <CompanionInboxCard onChanged={changed} onOpenGroup={id => setDetailTarget({ type: "experiment_group", id })} />
 
       <CurrentFocusCard
         focus={currentFocus}
@@ -451,6 +454,176 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Quarantined branch drafts from the persistent no-code companion. Apply is
+ * the only path that turns one into a real candidate branch; reject/feedback
+ * returns it to the conversation. The card hides itself entirely when the
+ * companion boundary is not configured (the API fails closed) or the inbox
+ * is empty.
+ */
+function CompanionInboxCard({ onChanged, onOpenGroup }: { onChanged: () => void; onOpenGroup: (id: string) => void }) {
+  const [drafts, setDrafts] = useState<CompanionBranchDraftRow[]>([]);
+  const [active, setActive] = useState<CompanionBranchDraftRow | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    api
+      .companionDrafts()
+      .then(rows => setDrafts(rows.filter(row => row.status === "ready_for_review")))
+      .catch(() => setDrafts([]));
+  };
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 20_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!drafts.length) return null;
+
+  const openDetail = async (draft: CompanionBranchDraftRow) => {
+    setFeedback("");
+    setError(null);
+    try {
+      setActive(await api.companionDraft(draft.id));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const act = async (action: "apply" | "reject" | "return") => {
+    if (!active) return;
+    setBusy(action);
+    setError(null);
+    try {
+      if (action === "apply") {
+        const applied = await api.applyCompanionDraft(active.id);
+        setActive(null);
+        onChanged();
+        load();
+        onOpenGroup(applied.createdGroupId);
+      } else {
+        await api.rejectCompanionDraft(active.id, {
+          feedback: feedback.trim() || undefined,
+          returnToDrafting: action === "return",
+        });
+        setActive(null);
+        load();
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const branchOp = active?.operations.find(
+    (op): op is { type: string; title?: string; motivationMd?: string | null; targets?: { title: string }[] } =>
+      typeof op === "object" && op !== null && (op as { type?: string }).type === "create_experiment_group_branch",
+  );
+
+  return (
+    <Card className="border-primary/30 py-4">
+      <CardHeader className="px-4">
+        <div className="flex items-center gap-2">
+          <GitBranch className="size-4" />
+          <CardTitle className="text-base font-medium">companion branch drafts</CardTitle>
+          <Badge variant="secondary">{drafts.length} awaiting review</Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Spontaneous-idea branches proposed in your companion conversation. Nothing exists until you apply the whole draft here.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 px-4">
+        {drafts.map(draft => (
+          <button
+            key={draft.id}
+            className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-left hover:bg-muted/50"
+            onClick={() => void openDetail(draft)}
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{draft.summaryMd.split("\n")[0]?.replace(/^#+\s*/, "") || "branch draft"}</span>
+              <span className="block truncate text-xs text-muted-foreground">seed: {draft.userSeedMd}</span>
+            </span>
+            <Badge variant="secondary">review</Badge>
+          </button>
+        ))}
+        {error && !active && <p className="text-xs text-destructive">{error}</p>}
+      </CardContent>
+      {active && (
+        <Dialog open onOpenChange={open => !open && setActive(null)}>
+          <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{branchOp?.title ?? "companion branch draft"}</DialogTitle>
+              <DialogDescription>
+                Applying creates one new candidate group branched from{" "}
+                {active.parent ? (
+                  <button className="underline" onClick={() => onOpenGroup(active.parent!.id)}>
+                    {active.parent.title}
+                  </button>
+                ) : (
+                  "its parent"
+                )}
+                {active.parent?.status === "archived" ? " (archived)" : ""}. The parent is never modified and the branch stays a
+                candidate until a reviewed Pick.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-3 text-sm">
+              <section>
+                <p className="text-xs font-medium uppercase text-muted-foreground">your seed</p>
+                <p className="whitespace-pre-wrap text-sm">{active.userSeedMd}</p>
+              </section>
+              <section>
+                <p className="text-xs font-medium uppercase text-muted-foreground">draft summary</p>
+                <p className="whitespace-pre-wrap text-sm">{active.summaryMd}</p>
+              </section>
+              {branchOp?.targets?.length ? (
+                <section>
+                  <p className="text-xs font-medium uppercase text-muted-foreground">intended targets</p>
+                  <ul className="list-inside list-disc text-sm">
+                    {branchOp.targets.map((target, index) => (
+                      <li key={index}>{target.title}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+              <section>
+                <p className="text-xs font-medium uppercase text-muted-foreground">full intended change</p>
+                <pre className="max-h-56 overflow-auto rounded-md border bg-muted/40 p-2 text-xs">
+                  {JSON.stringify(active.operations, null, 2)}
+                </pre>
+              </section>
+              {active.sourceRefs.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  cites {active.sourceRefs.length} raw source{active.sourceRefs.length === 1 ? "" : "s"}
+                </p>
+              )}
+              <Textarea
+                placeholder="optional feedback for reject / return-to-drafting"
+                value={feedback}
+                onChange={event => setFeedback(event.target.value)}
+              />
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act("return")}>
+                  return to drafting
+                </Button>
+                <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("reject")}>
+                  reject
+                </Button>
+                <Button size="sm" disabled={busy !== null} onClick={() => void act("apply")}>
+                  {busy === "apply" ? "applying…" : "apply whole draft"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </Card>
   );
 }
 

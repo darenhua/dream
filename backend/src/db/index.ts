@@ -26,6 +26,7 @@ export function wipeAllTables() {
   sqlite.exec("PRAGMA foreign_keys = OFF;");
   const tables = [
     // children first
+    "companion_branch_draft",
     "draft_change_set",
     "collaboration_workspace_index",
     "collaboration_workspace",

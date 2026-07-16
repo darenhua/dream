@@ -81,7 +81,7 @@ const EnvironmentOperationSchema = z.object({
   sources: z.array(SourceRefSchema).max(200).optional(),
 });
 
-const GroupTargetSchema = z.object({
+export const GroupTargetSchema = z.object({
   id: z.string().uuid().optional(),
   kind: z.enum(["habit", "environment", "experience", "project"]),
   title: z.string().min(1).max(300),

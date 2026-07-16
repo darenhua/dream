@@ -127,6 +127,13 @@
       "when": 1784197273695,
       "tag": "0017_happy_franklin_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1784198511313,
+      "tag": "0018_yielding_arachne",
+      "breakpoints": true
     }
   ]
 }

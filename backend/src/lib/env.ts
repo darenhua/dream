@@ -82,6 +82,20 @@ export const env = {
   MCP_REDEEM_WINDOW_MINUTES: positiveInteger("MCP_REDEEM_WINDOW_MINUTES", 15),
   MCP_REDEEM_MAX_TRACKED_CLIENTS: positiveInteger("MCP_REDEEM_MAX_TRACKED_CLIENTS", 10_000),
 
+  // --- persistent no-code companion ---
+  // The companion holds long-lived personal context, so it fails closed by
+  // default. Exactly two adapters can open it:
+  //  - COMPANION_AUTH_TOKEN_SHA256: hex sha256 of a high-entropy credential
+  //    held only by the MCP client (single-user remote bridge). The plain
+  //    token must never appear in dashboard code, URLs, or transcripts.
+  //  - COMPANION_ALLOW_LOOPBACK_OWNER: private-local/test adapter that grants
+  //    the fixed owner identity to loopback socket peers only.
+  // A multi-user/public deployment needs a real per-user identity boundary
+  // before either of these is acceptable; leave both unset to keep the
+  // endpoint disabled.
+  COMPANION_AUTH_TOKEN_SHA256: (process.env.COMPANION_AUTH_TOKEN_SHA256 ?? "").trim().toLowerCase(),
+  COMPANION_ALLOW_LOOPBACK_OWNER: flag("COMPANION_ALLOW_LOOPBACK_OWNER"),
+
   // --- outbound proxy ---
   // Bun's fetch honors HTTP(S)_PROXY from process.env at request time, so the
   // flag works by setting/clearing those vars below, before any client exists.

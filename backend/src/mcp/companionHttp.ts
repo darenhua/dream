@@ -1,61 +1,70 @@
-import { Hono } from "hono";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { env } from "../lib/env";
-import { createCollaborationMcpServer, type McpSessionBinding } from "./server";
-import { MCP_METHODS, clientKey, isNewSessionRequest, jsonRpcError, requestPolicy, secureResponse } from "./transport";
+import {
+  bearerTokenFromRequest,
+  resolveCompanionIdentity,
+  type CompanionIdentity,
+} from "../services/companion";
+import type { SourceRef } from "../services/organized";
+import { createCompanionMcpServer, type CompanionSessionBinding } from "./companionServer";
+import { MCP_METHODS, isNewSessionRequest, jsonRpcError, requestPolicy, secureResponse } from "./transport";
 
-class SessionBinding implements McpSessionBinding {
+function refKey(ref: SourceRef): string {
+  return `${ref.entityType}:${ref.entityId}`;
+}
+
+class CompanionBinding implements CompanionSessionBinding {
   #sessionId: string | null = null;
-  #workspaceId: string | null = null;
+  #discovered = new Set<string>();
 
-  constructor(readonly clientKey: string) {}
+  constructor(readonly identity: CompanionIdentity) {}
 
   get sessionId(): string | null {
     return this.#sessionId;
-  }
-
-  get workspaceId(): string | null {
-    return this.#workspaceId;
   }
 
   setSessionId(sessionId: string) {
     this.#sessionId = sessionId;
   }
 
-  bindWorkspace(workspaceId: string) {
-    this.#workspaceId = workspaceId;
+  hasDiscovered(ref: SourceRef): boolean {
+    return this.#discovered.has(refKey(ref));
   }
 
-  clearWorkspace() {
-    this.#workspaceId = null;
+  discover(refs: SourceRef[]) {
+    // Bound the allowlist so a pathological session cannot grow it without
+    // limit; the cap is far above any real conversation's traversal.
+    for (const ref of refs) {
+      if (this.#discovered.size >= 5_000) return;
+      this.#discovered.add(refKey(ref));
+    }
   }
 }
 
 type Connection = {
-  binding: SessionBinding;
+  binding: CompanionBinding;
   transport: WebStandardStreamableHTTPServerTransport;
   lastTouchedAt: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
 };
 
 /**
- * A stateful Streamable HTTP host. The SDK's MCP session id is an ephemeral
- * transport capability, while the one-time dashboard code later binds it to
- * exactly one collaboration workspace. A process restart intentionally clears
- * this map; the user can open a fresh dashboard code rather than inheriting a
- * broad durable MCP credential.
+ * The persistent companion's dedicated Streamable HTTP host. It shares the
+ * origin/host hygiene of the creator endpoint but nothing else: an
+ * independent session map, no redeem_collaboration_code tool, and fail-closed
+ * authentication evaluated on EVERY request — initialization and
+ * continuations — so an mcp-session-id never becomes a bearer credential.
  */
-export class CollaborationMcpHttpServer {
+export class CompanionMcpHttpServer {
   #connections = new Map<string, Connection>();
   #pendingInitializations = 0;
 
-  async #newConnection(client: string): Promise<Connection> {
-    const binding = new SessionBinding(client);
+  async #newConnection(identity: CompanionIdentity): Promise<Connection> {
+    const binding = new CompanionBinding(identity);
     let connection: Connection;
     const forget = (sessionId: string) => {
       const current = this.#connections.get(sessionId);
       if (current === connection) {
-        current.binding.clearWorkspace();
         if (current.idleTimer) clearTimeout(current.idleTimer);
         this.#connections.delete(sessionId);
       }
@@ -71,10 +80,7 @@ export class CollaborationMcpHttpServer {
       onsessionclosed: forget,
     });
     connection = { binding, transport, lastTouchedAt: Date.now(), idleTimer: null };
-    const server = createCollaborationMcpServer(binding);
-
-    // Connect before handling initialize so the transport can return the
-    // initialize response through this same stateful instance.
+    const server = createCompanionMcpServer(binding);
     await server.connect(transport);
     return connection;
   }
@@ -93,13 +99,30 @@ export class CollaborationMcpHttpServer {
     if (request.method === "OPTIONS") {
       return secureResponse(new Response(null, { status: 204 }), policy.corsOrigin);
     }
+
+    // Authenticate before touching the session map at all. Unconfigured or
+    // wrong-credential requests fail before any session state can exist.
+    const identity = resolveCompanionIdentity({ bearerToken: bearerTokenFromRequest(request), peerAddress });
+    if (!identity) {
+      return secureResponse(
+        jsonRpcError(401, -32004, "Companion access is not configured or the credential is invalid."),
+        policy.corsOrigin,
+      );
+    }
+
     this.#pruneIdleConnections();
     const sessionId = request.headers.get("mcp-session-id");
     if (sessionId) {
       const connection = this.#connections.get(sessionId);
       if (!connection) {
         return secureResponse(
-          jsonRpcError(404, -32001, "MCP session not found; start a new collaboration connection."),
+          jsonRpcError(404, -32001, "Companion MCP session not found; initialize a new connection."),
+          policy.corsOrigin,
+        );
+      }
+      if (connection.binding.identity.subject !== identity.subject) {
+        return secureResponse(
+          jsonRpcError(403, -32005, "This companion session belongs to a different identity."),
           policy.corsOrigin,
         );
       }
@@ -109,13 +132,12 @@ export class CollaborationMcpHttpServer {
 
     if (!(await isNewSessionRequest(request))) {
       return secureResponse(
-        jsonRpcError(400, -32000, "MCP initialization is required before calling collaboration tools."),
+        jsonRpcError(400, -32000, "MCP initialization is required before calling companion tools."),
         policy.corsOrigin,
       );
     }
 
-    const maximum = env.MCP_MAX_SESSIONS;
-    if (this.#connections.size + this.#pendingInitializations >= maximum) {
+    if (this.#connections.size + this.#pendingInitializations >= env.MCP_MAX_SESSIONS) {
       return secureResponse(
         jsonRpcError(429, -32029, "Too many active MCP sessions; wait for an existing session to close."),
         policy.corsOrigin,
@@ -125,11 +147,9 @@ export class CollaborationMcpHttpServer {
     this.#pendingInitializations++;
     let connection: Connection | null = null;
     try {
-      connection = await this.#newConnection(clientKey(request, peerAddress));
+      connection = await this.#newConnection(identity);
       return secureResponse(await connection.transport.handleRequest(request), policy.corsOrigin);
     } catch (error) {
-      // The transport has not necessarily emitted a session id yet. Remove a
-      // half-initialized connection if it did so before reporting its error.
       if (connection?.binding.sessionId) this.#dropConnection(connection.binding.sessionId, connection);
       return secureResponse(
         jsonRpcError(500, -32603, error instanceof Error ? error.message : "MCP internal server error"),
@@ -156,11 +176,8 @@ export class CollaborationMcpHttpServer {
 
   #dropConnection(sessionId: string, connection: Connection) {
     if (this.#connections.get(sessionId) !== connection) return;
-    connection.binding.clearWorkspace();
     if (connection.idleTimer) clearTimeout(connection.idleTimer);
     this.#connections.delete(sessionId);
-    // Deleting the map entry revokes routing; closing additionally terminates
-    // a lingering SSE stream and frees SDK resources after idle expiry.
     void connection.transport.close().catch(() => {});
   }
 
@@ -176,20 +193,11 @@ export class CollaborationMcpHttpServer {
         this.#touchConnection(sessionId, connection);
       }
     }, idleMs);
-    // A server already keeps the process alive. The expiry helper should not
-    // keep a CLI/test process alive after its only work is complete.
     (timer as unknown as { unref?: () => void }).unref?.();
     connection.idleTimer = timer;
   }
 }
 
-export function createMcpRoutes(host = new CollaborationMcpHttpServer()) {
-  const routes = new Hono();
-  routes.all("/mcp", c => host.handle(c.req.raw));
-  return routes;
-}
-
-// This shared host lets Bun pass a trusted socket peer address in production;
-// Hono's test/request adapter still uses the same handler without that hint.
-export const mcpHttpServer = new CollaborationMcpHttpServer();
-export const mcpRoutes = createMcpRoutes(mcpHttpServer);
+// Production Bun serving passes the socket peer address through the backend
+// request handler; the loopback-owner adapter never trusts anything else.
+export const companionMcpHttpServer = new CompanionMcpHttpServer();

@@ -591,6 +591,25 @@ export interface OrganizedFeedRow {
 export type CollaborationWorkspaceStatus = "open" | "draft_ready" | "applied" | "rejected" | "expired";
 export type DraftChangeSetStatus = "drafting" | "ready_for_review" | "applied" | "rejected" | "expired";
 
+/** A quarantined branch draft from the persistent no-code companion. */
+export interface CompanionBranchDraftRow {
+  id: string;
+  companionIdentityId: string;
+  parentExperimentGroupId: string;
+  userSeedMd: string;
+  summaryMd: string;
+  operations: unknown[];
+  sourceRefs: { entityType: string; entityId: string; note?: string }[];
+  audit: Record<string, unknown> | null;
+  status: DraftChangeSetStatus;
+  rejectionNote: string | null;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  parent?: ExperimentGroupLineageRef | null;
+}
+
 export interface CollaborationInviteRow {
   id: string;
   mode: CollaborationMode;
@@ -847,6 +866,22 @@ export const api = {
     request<ExperimentGroupRow>(`/organized/groups/${groupId}/restore`, {
       method: "POST",
       body: JSON.stringify(restoreAs ? { restoreAs } : {}),
+    }),
+
+  // --- persistent companion inbox ---
+  // These routes are behind the companion's fail-closed reviewer identity;
+  // in a private-local deployment they authenticate via the loopback peer.
+  companionDrafts: () => request<CompanionBranchDraftRow[]>("/companion/drafts"),
+  companionDraft: (id: string) => request<CompanionBranchDraftRow>(`/companion/drafts/${id}`),
+  applyCompanionDraft: (id: string) =>
+    request<{ ok: boolean; draft: CompanionBranchDraftRow; createdGroupId: string }>(`/companion/drafts/${id}/apply`, {
+      method: "POST",
+      body: "{}",
+    }),
+  rejectCompanionDraft: (id: string, input: { feedback?: string; returnToDrafting?: boolean } = {}) =>
+    request<{ ok: boolean; draft: CompanionBranchDraftRow }>(`/companion/drafts/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify(input),
     }),
 
   createCollaborationInvite: (input: CreateCollaborationInviteInput) =>
