@@ -66,7 +66,14 @@ export function patchWitness(
   patch: Partial<
     Pick<
       WitnessRow,
-      "name" | "handle" | "timezone" | "status" | "promptCadenceDays" | "chatId" | "linkRequestedAt"
+      | "name"
+      | "handle"
+      | "timezone"
+      | "status"
+      | "promptCadenceDays"
+      | "chatId"
+      | "linkRequestedAt"
+      | "linkError"
     >
   >,
 ) {

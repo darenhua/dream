@@ -101,6 +101,11 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
                   <Eye className="size-4" />
                 </Button>
               </div>
+              {w.linkError && (
+                <p className="rounded border border-destructive/40 px-2 py-1 text-xs text-destructive">
+                  couldn't create the group: {w.linkError}
+                </p>
+              )}
               <div className="flex flex-wrap gap-1">
                 {w.goalIds.length === 0 && (
                   <span className="text-xs text-muted-foreground">no goals shared — sees nothing</span>

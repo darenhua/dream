@@ -312,6 +312,7 @@ export const witness = sqliteTable("witness", {
   inviteCode: text("invite_code").unique(), // one-time chat-link code
   chatId: text("chat_id"), // transport chat GUID; null until linked
   linkRequestedAt: text("link_requested_at"), // dashboard asked the messenger to create the group
+  linkError: text("link_error"), // why the last link attempt failed — surfaced in the UI, cleared on retry/success
   linkedAt: text("linked_at"),
   promptCadenceDays: integer("prompt_cadence_days").notNull().default(4), // friend-tunable (less/more)
   lastPromptAt: text("last_prompt_at"),

@@ -69,7 +69,27 @@ async function processLinkRequests() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`[link] ${req.name} failed:`, msg);
-      await backend.linkFailed(req.witnessId, msg).catch(() => {});
+      // Report with retries: if the backend is down, a swallowed report leaves
+      // linkRequestedAt set forever — the dashboard spins on "creating group…"
+      // and every poll retries the same doomed create.
+      await reportWithRetry(() => backend.linkFailed(req.witnessId, msg), `link-failed ${req.name}`);
+    }
+  }
+}
+
+// The backend can be down (restart, deploy) exactly when we need to record a
+// terminal result. Retry briefly rather than lose it.
+async function reportWithRetry(fn: () => Promise<unknown>, label: string, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await fn();
+      return;
+    } catch (e) {
+      if (i === attempts - 1) {
+        console.error(`[report] ${label} could not be recorded:`, e instanceof Error ? e.message : e);
+        return;
+      }
+      await new Promise(r => setTimeout(r, 2000 * (i + 1)));
     }
   }
 }

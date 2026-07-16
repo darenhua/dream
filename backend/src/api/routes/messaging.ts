@@ -68,7 +68,13 @@ messagingRoutes.post("/link-requests/:witnessId/linked", async c => {
   const row = db.select().from(witness).where(eq(witness.id, id)).get();
   if (!row) return c.json({ error: "witness not found" }, 404);
   db.update(witness)
-    .set({ chatId: body.chatId, linkedAt: new Date().toISOString(), status: "active", linkRequestedAt: null })
+    .set({
+      chatId: body.chatId,
+      linkedAt: new Date().toISOString(),
+      status: "active",
+      linkRequestedAt: null,
+      linkError: null,
+    })
     .where(eq(witness.id, id))
     .run();
   emit("witness", id, "witness_chat_linked", { via: "group_created", chatId: body.chatId });
@@ -78,9 +84,11 @@ messagingRoutes.post("/link-requests/:witnessId/linked", async c => {
 messagingRoutes.post("/link-requests/:witnessId/failed", async c => {
   const body = await c.req.json().catch(() => ({}));
   const id = c.req.param("witnessId");
-  // Clear the request so the dashboard shows the failure instead of "linking…" forever.
-  db.update(witness).set({ linkRequestedAt: null }).where(eq(witness.id, id)).run();
-  emit("witness", id, "witness_link_failed", { error: body.error ?? "unknown" });
+  const error = typeof body.error === "string" ? body.error : "unknown";
+  // Clear the request AND persist why, so the dashboard shows the reason
+  // instead of spinning on "linking…" forever.
+  db.update(witness).set({ linkRequestedAt: null, linkError: error }).where(eq(witness.id, id)).run();
+  emit("witness", id, "witness_link_failed", { error });
   return c.json({ ok: true });
 });
 

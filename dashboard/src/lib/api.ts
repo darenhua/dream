@@ -102,6 +102,7 @@ export interface WitnessRow {
   inviteCode: string | null;
   chatId: string | null;
   linkRequestedAt: string | null;
+  linkError: string | null;
   linkedAt: string | null;
   promptCadenceDays: number;
   goalIds: string[];

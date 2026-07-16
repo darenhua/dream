@@ -51,7 +51,7 @@ witnessRoutes.post("/:id/request-link", c => {
   if (!w) return c.json({ error: "witness not found" }, 404);
   if (w.chatId) return c.json({ error: "already linked" }, 400);
   if (!w.handle) return c.json({ error: "witness has no handle — add their phone/email first" }, 400);
-  const updated = patchWitness(w.id, { linkRequestedAt: new Date().toISOString() });
+  const updated = patchWitness(w.id, { linkRequestedAt: new Date().toISOString(), linkError: null });
   return c.json({ ok: true, witness: updated });
 });
 
