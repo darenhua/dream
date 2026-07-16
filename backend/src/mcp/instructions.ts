@@ -183,13 +183,16 @@ Primary: \`{type:"upsert_organized_environment", id?, title, note?, synthesisMd?
 Never include schedule/calendar fields or create an experiment group here.
 `,
     experiment_group: `
-Primary: \`{type:"upsert_experiment_group", id?, title, motivationMd?, status?:"candidate"|"done"|"sunset"|"archived", closingReviewMd?, organizedGoalIds:string[], targets?:[{id?,kind:"habit"|"environment"|"experience"|"project",title,detailMd?,status?:"pending"|"done"}], appendContext?:string[], projectIds?:string[], sources?:source_refs}\`.
+Primary: \`{type:"upsert_experiment_group", id?, title, motivationMd?, organizedGoalIds:string[], targets?:[{id?,kind:"habit"|"environment"|"experience"|"project",title,detailMd?,status?:"pending"|"done"}], appendContext?:string[], projectIds?:string[], sources?:source_refs}\`.
 
 \`organizedGoalIds\` must exactly equal the goal UUIDs selected in this
 workspace. \`projectIds\` may reference existing raw projects only. Use
 \`set_group_target_done\` only for a target that already belongs to this
-existing group: \`{type:"set_group_target_done",targetId,done}\`. Never create
-an actionable, calendar event, or witness work in this mode.
+existing group: \`{type:"set_group_target_done",targetId,done}\`. A group draft
+has no lifecycle or lineage authority: it cannot set a status, close, archive,
+activate, or re-parent a group. Ending happens through a reviewed Sunset,
+archive through the dashboard, branching through the separate companion. Never
+create an actionable, calendar event, or witness work in this mode.
 `,
     actionable_experiment: `
 Primary: \`{type:"create_actionable_experiment", experimentGroupId, title, hypothesisMd?, weekOf:"YYYY-MM-DD", organizedGoalIds:string[], tasks?:[], habitBlocks?:[]}\`.

@@ -49,6 +49,10 @@ export interface Relations {
   // be opened in its native raw detail modal, preserving the explicit
   // organized -> raw record -> extraction -> conversation path.
   sources?: (EntityRef & { onOpen?: () => void })[];
+  // Change-group lineage: the parent this group branched from and its direct
+  // branches. Archived relatives remain clickable so history stays navigable.
+  lineageParent?: (EntityRef & { onOpen?: () => void }) | null;
+  lineageChildren?: (EntityRef & { onOpen?: () => void })[];
 }
 
 export interface DetailModalProps {
@@ -325,6 +329,52 @@ function RelationsSection({ relations }: { relations: Relations }) {
       label: "experiences",
       content: (
         <div className="flex flex-wrap gap-1.5">{relations.experiences.map(e => chip(e.title, e.status, e.id))}</div>
+      ),
+    });
+  }
+  if (relations.lineageParent) {
+    const parent = relations.lineageParent;
+    rows.push({
+      label: "branched from",
+      content: (
+        <div className="flex flex-wrap gap-1.5">
+          {parent.onOpen ? (
+            <button
+              type="button"
+              onClick={parent.onOpen}
+              className="rounded-full text-left outline-offset-2 hover:opacity-75 focus-visible:outline"
+              title={`open ${parent.title}`}
+            >
+              {chip(parent.title, parent.status, parent.id)}
+            </button>
+          ) : (
+            chip(parent.title, parent.status, parent.id)
+          )}
+        </div>
+      ),
+    });
+  }
+  if (relations.lineageChildren?.length) {
+    rows.push({
+      label: "branches",
+      content: (
+        <div className="flex flex-wrap gap-1.5">
+          {relations.lineageChildren.map(child =>
+            child.onOpen ? (
+              <button
+                key={child.id}
+                type="button"
+                onClick={child.onOpen}
+                className="rounded-full text-left outline-offset-2 hover:opacity-75 focus-visible:outline"
+                title={`open ${child.title}`}
+              >
+                {chip(child.title, child.status, child.id)}
+              </button>
+            ) : (
+              chip(child.title, child.status, child.id)
+            ),
+          )}
+        </div>
       ),
     });
   }

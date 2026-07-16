@@ -89,22 +89,25 @@ const GroupTargetSchema = z.object({
   status: z.enum(["pending", "done"]).optional(),
 });
 
-const GroupOperationSchema = z.object({
-  type: z.literal("upsert_experiment_group"),
-  id: z.string().uuid().optional(),
-  title: z.string().min(1).max(300),
-  motivationMd: z.string().max(50_000).nullable().optional(),
-  // An active group can only be established by set_current_focus. Group
-  // workspaces create or revise candidates; they cannot silently make one the
-  // current direction.
-  status: z.enum(["candidate", "done", "sunset", "archived"]).optional(),
-  closingReviewMd: z.string().max(30_000).nullable().optional(),
-  organizedGoalIds: z.array(z.string().uuid()).min(1).max(30),
-  targets: z.array(GroupTargetSchema).max(100).optional(),
-  appendContext: z.array(z.string().min(1).max(30_000)).max(50).optional(),
-  projectIds: z.array(z.string().uuid()).max(100).optional(),
-  sources: z.array(SourceRefSchema).max(200).optional(),
-});
+// A generic group draft has no lifecycle or lineage authority: it creates or
+// revises candidate shape/context only. Activation happens through a reviewed
+// set_current_focus, ending through a reviewed sunset, archive through the
+// explicit dashboard action, and parent lineage exclusively through the
+// companion-only branch operation. `.strict()` makes a smuggled field an
+// error rather than a silent no-op.
+const GroupOperationSchema = z
+  .object({
+    type: z.literal("upsert_experiment_group"),
+    id: z.string().uuid().optional(),
+    title: z.string().min(1).max(300),
+    motivationMd: z.string().max(50_000).nullable().optional(),
+    organizedGoalIds: z.array(z.string().uuid()).min(1).max(30),
+    targets: z.array(GroupTargetSchema).max(100).optional(),
+    appendContext: z.array(z.string().min(1).max(30_000)).max(50).optional(),
+    projectIds: z.array(z.string().uuid()).max(100).optional(),
+    sources: z.array(SourceRefSchema).max(200).optional(),
+  })
+  .strict();
 
 const ActionableTaskSchema = z.object({
   kind: z.enum(["experience", "purchase", "setup", "project", "momentum"]),
@@ -155,16 +158,20 @@ const FocusExistingSelectionSchema = z.object({
   experimentGroupId: z.string().uuid(),
 });
 
-const FocusNewSelectionSchema = z.object({
-  kind: z.literal("new"),
-  title: z.string().min(1).max(300),
-  motivationMd: z.string().max(50_000).nullable().optional(),
-  organizedGoalIds: z.array(z.string().uuid()).min(1).max(30),
-  targets: z.array(GroupTargetSchema).max(100).optional(),
-  appendContext: z.array(z.string().min(1).max(30_000)).max(50).optional(),
-  projectIds: z.array(z.string().uuid()).max(100).optional(),
-  sources: z.array(SourceRefSchema).max(200).optional(),
-});
+// A prioritize-created group is a plain new candidate: lineage is reserved
+// for the companion-only branch path, so a parent field here is rejected.
+const FocusNewSelectionSchema = z
+  .object({
+    kind: z.literal("new"),
+    title: z.string().min(1).max(300),
+    motivationMd: z.string().max(50_000).nullable().optional(),
+    organizedGoalIds: z.array(z.string().uuid()).min(1).max(30),
+    targets: z.array(GroupTargetSchema).max(100).optional(),
+    appendContext: z.array(z.string().min(1).max(30_000)).max(50).optional(),
+    projectIds: z.array(z.string().uuid()).max(100).optional(),
+    sources: z.array(SourceRefSchema).max(200).optional(),
+  })
+  .strict();
 
 const FocusNoneSelectionSchema = z.object({ kind: z.literal("none") });
 
@@ -381,11 +388,11 @@ function upsertGroup(op: z.infer<typeof GroupOperationSchema>, changeSetId: stri
   const existing = op.id ? db.select().from(experimentGroup).where(eq(experimentGroup.id, op.id)).get() : null;
   if (op.id && !existing) throw new Error("experiment group not found");
   if (existing) {
+    if (existing.status === "archived") {
+      throw new Error("an archived change group must be restored before it can be revised");
+    }
     const focus = db.select().from(currentFocus).where(and(eq(currentFocus.experimentGroupId, existing.id), eq(currentFocus.status, "current"))).get();
     if (focus) {
-      if (op.status) {
-        throw new Error("the current focused group can be ended only through a reviewed sunset prioritize decision");
-      }
       const focusGoalIds = db
         .select({ organizedGoalId: currentFocusGoal.organizedGoalId })
         .from(currentFocusGoal)
@@ -403,8 +410,6 @@ function upsertGroup(op: z.infer<typeof GroupOperationSchema>, changeSetId: stri
         .set({
           title: op.title,
           motivationMd: op.motivationMd ?? existing.motivationMd,
-          status: op.status ?? existing.status,
-          closingReviewMd: op.closingReviewMd ?? existing.closingReviewMd,
         })
         .where(eq(experimentGroup.id, existing.id))
         .returning()
@@ -414,8 +419,7 @@ function upsertGroup(op: z.infer<typeof GroupOperationSchema>, changeSetId: stri
         .values({
           title: op.title,
           motivationMd: op.motivationMd ?? null,
-          status: op.status ?? "candidate",
-          closingReviewMd: op.closingReviewMd ?? null,
+          status: "candidate",
         })
         .returning()
         .get();
@@ -790,6 +794,28 @@ function sourceExtractions(sources: SourceRef[]) {
   return [...byId.values()].map(row => ({ ...row.x, conversationTitle: row.conversationTitle, conversationDate: row.conversationDate }));
 }
 
+// Shallow, non-recursive lineage: enough for a breadcrumb and clickable
+// relations without dragging a whole ancestor chain into every feed payload.
+const lineageColumns = {
+  id: experimentGroup.id,
+  title: experimentGroup.title,
+  status: experimentGroup.status,
+  archivedAt: experimentGroup.archivedAt,
+};
+
+function groupLineage(row: typeof experimentGroup.$inferSelect) {
+  const parent = row.parentExperimentGroupId
+    ? (db.select(lineageColumns).from(experimentGroup).where(eq(experimentGroup.id, row.parentExperimentGroupId)).get() ?? null)
+    : null;
+  const children = db
+    .select(lineageColumns)
+    .from(experimentGroup)
+    .where(eq(experimentGroup.parentExperimentGroupId, row.id))
+    .orderBy(asc(experimentGroup.createdAt))
+    .all();
+  return { parent, children };
+}
+
 function groupView(row: typeof experimentGroup.$inferSelect) {
   const goals = db
     .select({ id: organizedGoal.id, title: organizedGoal.title, priorityRank: organizedGoal.priorityRank, status: organizedGoal.status })
@@ -815,7 +841,7 @@ function groupView(row: typeof experimentGroup.$inferSelect) {
     .where(and(eq(experiment.kind, "actionable"), eq(experiment.experimentGroupId, row.id)))
     .orderBy(desc(experiment.weekOf), desc(experiment.createdAt))
     .all();
-  return { ...row, goals, targets, projects, projectCount: projects.length, actionables };
+  return { ...row, goals, targets, projects, projectCount: projects.length, actionables, ...groupLineage(row) };
 }
 
 function currentFocusView(row: typeof currentFocus.$inferSelect) {
@@ -867,6 +893,16 @@ export function organizedFeed() {
     .orderBy(desc(experimentGroup.updatedAt))
     .all()
     .map(groupView);
+  // Archived groups stay out of the default working list but remain first-class
+  // data: the card shows a real count and an explicit archived view, and
+  // lineage/detail/history can always resolve an archived parent.
+  const archivedGroups = db
+    .select()
+    .from(experimentGroup)
+    .where(eq(experimentGroup.status, "archived"))
+    .orderBy(desc(experimentGroup.updatedAt))
+    .all()
+    .map(groupView);
   const focusRows = db.select().from(currentFocus).orderBy(desc(currentFocus.startedAt)).all();
   const currentFocusRow = focusRows.find(row => row.status === "current") ?? null;
   const actionables = db
@@ -896,6 +932,8 @@ export function organizedFeed() {
     habits: organizedHabits.map(row => ({ ...row, sources: sourcesFor("habit", row.id) })),
     environment: environment.map(row => ({ ...row, sources: sourcesFor("environment", row.id) })),
     groups,
+    archivedGroups,
+    archivedGroupCount: archivedGroups.length,
     actionables,
     currentFocus: currentFocusRow ? currentFocusView(currentFocusRow) : null,
     focusHistory: focusRows.filter(row => row.status !== "current").map(currentFocusView),
@@ -1027,6 +1065,50 @@ export function closeExperimentGroup(id: string, status: "done" | "sunset", clos
   return db
     .update(experimentGroup)
     .set({ status, closingReviewMd: closingReviewMd ?? row.closingReviewMd })
+    .where(eq(experimentGroup.id, id))
+    .returning()
+    .get();
+}
+
+/** Explicit user-owned dashboard action. Archive hides a noncurrent group from
+ * the default working view; it never deletes, cascades to branches, reparents,
+ * or touches sources/context/focus history. */
+export function archiveExperimentGroup(id: string) {
+  const row = db.select().from(experimentGroup).where(eq(experimentGroup.id, id)).get();
+  if (!row) throw new Error("experiment group not found");
+  if (row.status === "archived") throw new Error("this change group is already archived");
+  if (row.status === "active") {
+    throw new Error("the active change group must be ended through a reviewed sunset decision before it can be archived");
+  }
+  const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+  if (focus?.experimentGroupId === row.id) throw new Error("the current focused group cannot be archived");
+  assertNoLiveActionable(row.id);
+  return db
+    .update(experimentGroup)
+    .set({
+      status: "archived",
+      archivedAt: new Date().toISOString(),
+      // Restore returns exactly to this state, never to `active`.
+      archivedFromStatus: row.status as "candidate" | "done" | "sunset",
+    })
+    .where(eq(experimentGroup.id, id))
+    .returning()
+    .get();
+}
+
+/** Restores an archived group to its pre-archive state. Never restores to
+ * `active`: only a later reviewed Pick can make a candidate current again. */
+export function restoreExperimentGroup(id: string, restoreAs?: "candidate" | "done" | "sunset") {
+  const row = db.select().from(experimentGroup).where(eq(experimentGroup.id, id)).get();
+  if (!row) throw new Error("experiment group not found");
+  if (row.status !== "archived") throw new Error("only an archived change group can be restored");
+  // Rows archived before archive history existed have no recorded prior state,
+  // so the user must make the restored state explicit.
+  const target = restoreAs ?? row.archivedFromStatus;
+  if (!target) throw new Error("this group has no recorded pre-archive state; pass restoreAs candidate|done|sunset");
+  return db
+    .update(experimentGroup)
+    .set({ status: target, archivedAt: null, archivedFromStatus: null })
     .where(eq(experimentGroup.id, id))
     .returning()
     .get();

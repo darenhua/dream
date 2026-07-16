@@ -509,12 +509,25 @@ export interface ExperimentGroupTargetRow {
   doneAt: string | null;
 }
 
+/** Shallow lineage reference: enough for a breadcrumb + click-through. */
+export interface ExperimentGroupLineageRef {
+  id: string;
+  title: string;
+  status: "candidate" | "active" | "done" | "sunset" | "archived";
+  archivedAt: string | null;
+}
+
 export interface ExperimentGroupRow {
   id: string;
   title: string;
   motivationMd: string | null;
   status: "candidate" | "active" | "done" | "sunset" | "archived";
   closingReviewMd: string | null;
+  parentExperimentGroupId?: string | null;
+  archivedAt?: string | null;
+  archivedFromStatus?: "candidate" | "done" | "sunset" | null;
+  parent?: ExperimentGroupLineageRef | null;
+  children?: ExperimentGroupLineageRef[];
   goals: Pick<OrganizedGoalRow, "id" | "title" | "priorityRank" | "status">[];
   targets: ExperimentGroupTargetRow[];
   projectCount?: number;
@@ -566,6 +579,9 @@ export interface OrganizedFeedRow {
   habits: OrganizedRegistryRow[];
   environment: OrganizedRegistryRow[];
   groups: ExperimentGroupRow[];
+  /** Hidden from the default working list; shown in the explicit archive view. */
+  archivedGroups?: ExperimentGroupRow[];
+  archivedGroupCount?: number;
   actionables: ActionableExperimentRow[];
   currentFocus: CurrentFocusRow | null;
   /** Optional during rollout; history is read-only and newest-first. */
@@ -822,6 +838,15 @@ export const api = {
     request<ExperimentGroupTargetRow>(`/organized/groups/${groupId}/targets/${targetId}`, {
       method: "POST",
       body: JSON.stringify({ done }),
+    }),
+  // Archive hides a noncurrent group without deleting it or touching its
+  // branches; restore returns it to its pre-archive state (never active).
+  archiveExperimentGroup: (groupId: string) =>
+    request<ExperimentGroupRow>(`/organized/groups/${groupId}/archive`, { method: "POST", body: "{}" }),
+  restoreExperimentGroup: (groupId: string, restoreAs?: "candidate" | "done" | "sunset") =>
+    request<ExperimentGroupRow>(`/organized/groups/${groupId}/restore`, {
+      method: "POST",
+      body: JSON.stringify(restoreAs ? { restoreAs } : {}),
     }),
 
   createCollaborationInvite: (input: CreateCollaborationInviteInput) =>

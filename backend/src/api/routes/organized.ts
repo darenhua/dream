@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import {
+  archiveExperimentGroup,
   markExperimentGroupTarget,
   organizedDetailPayload,
   organizedFeed,
+  restoreExperimentGroup,
 } from "../../services/organized";
 
 export const organizedRoutes = new Hono();
@@ -21,6 +23,32 @@ organizedRoutes.post("/groups/:id/close", c => {
   // A close/sunset may also select the next focus, so it must stay within the
   // one atomic dashboard-reviewed prioritize change set.
   return c.json({ error: "open a sunset prioritize workspace to close the current focus" }, 409);
+});
+
+// Archive/restore are direct explicit user actions (not MCP draft operations):
+// they only hide or unhide a noncurrent group and never change lineage, focus,
+// ranks, sources, or history.
+organizedRoutes.post("/groups/:id/archive", c => {
+  try {
+    return c.json(archiveExperimentGroup(c.req.param("id")));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "archive failed";
+    return c.json({ error: message }, message.includes("not found") ? 404 : 409);
+  }
+});
+
+organizedRoutes.post("/groups/:id/restore", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  const restoreAs = body.restoreAs;
+  if (restoreAs !== undefined && !["candidate", "done", "sunset"].includes(restoreAs)) {
+    return c.json({ error: "restoreAs must be candidate, done, or sunset" }, 400);
+  }
+  try {
+    return c.json(restoreExperimentGroup(c.req.param("id"), restoreAs));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "restore failed";
+    return c.json({ error: message }, message.includes("not found") ? 404 : 409);
+  }
 });
 
 organizedRoutes.post("/groups/:groupId/targets/:targetId", async c => {

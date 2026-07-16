@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarCheck, CalendarDays, Check, ListChecks, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarCheck, CalendarDays, Check, GitBranch, ListChecks, Pencil, Plus, Sparkles, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   type CollaborationInviteStatus,
   type CollaborationMode,
   type CurrentFocusRow,
+  type ExperimentGroupLineageRef,
   type ExperimentGroupRow,
   type OrganizedEntityDetail,
   type OrganizedDetailEntityType,
@@ -363,6 +364,7 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
 
         <GroupsCard
           groups={feed.groups}
+          archivedGroups={feed.archivedGroups ?? []}
           currentFocus={currentFocus}
           onChanged={changed}
           onCreate={() => openLaunch({ mode: "experiment_group", title: "start a change group" })}
@@ -432,6 +434,7 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
             setDetailTarget(null);
             setRawDetailTarget(source);
           }}
+          onOpenGroup={id => setDetailTarget({ type: "experiment_group", id })}
         />
       )}
       {rawDetailTarget && (
@@ -496,6 +499,7 @@ function CurrentFocusCard({
             <button className="mt-1 max-w-full text-left text-sm font-medium hover:underline" onClick={() => onOpenGroup(focus.group.id)}>
               {focus.group.title}
             </button>
+            <BranchBreadcrumb parent={focus.group.parent} onOpen={onOpenGroup} />
             {focus.reasoningMd && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{focus.reasoningMd}</p>}
           </div>
           <Button variant="outline" size="sm" onClick={() => onSunset(focus)}>
@@ -639,6 +643,7 @@ function RegistryCard({
 
 function GroupsCard({
   groups,
+  archivedGroups,
   currentFocus,
   onChanged,
   onCreate,
@@ -648,6 +653,7 @@ function GroupsCard({
   onSunsetFocus,
 }: {
   groups: ExperimentGroupRow[];
+  archivedGroups: ExperimentGroupRow[];
   currentFocus: CurrentFocusRow | null;
   onChanged: () => void;
   onCreate: () => void;
@@ -661,7 +667,35 @@ function GroupsCard({
     : null;
   const candidates = groups.filter(group => group.status === "candidate");
   const closed = groups.filter(group => group.status === "done" || group.status === "sunset");
-  const archivedCount = groups.filter(group => group.status === "archived").length;
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+
+  const archiveGroup = async (group: ExperimentGroupRow) => {
+    const branchNote = group.children?.length
+      ? ` Its ${group.children.length} branch${group.children.length === 1 ? "" : "es"} stay visible and keep their lineage.`
+      : "";
+    if (!window.confirm(`Archive "${group.title}"? This only hides it from the working list — nothing is deleted and it can be restored.${branchNote}`)) return;
+    setArchiveError(null);
+    try {
+      await api.archiveExperimentGroup(group.id);
+      onChanged();
+    } catch (cause) {
+      setArchiveError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const restoreGroup = async (group: ExperimentGroupRow) => {
+    setArchiveError(null);
+    try {
+      // Rows archived before archive history existed need an explicit state;
+      // candidate is the safe reviewable default (a Pick can activate it later).
+      await api.restoreExperimentGroup(group.id, group.archivedFromStatus ?? "candidate");
+      onChanged();
+    } catch (cause) {
+      setArchiveError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
   return (
     <Card className="py-4 lg:col-span-2">
       <CardHeader className="px-4">
@@ -697,33 +731,114 @@ function GroupsCard({
           <section className="grid gap-2 border-t pt-3 md:col-span-2 md:grid-cols-2">
             <p className="text-xs font-medium uppercase text-muted-foreground md:col-span-2">candidate groups</p>
             {candidates.map(group => (
-              <CandidateGroupRow key={group.id} group={group} onOpen={onOpen} onEdit={onEdit} />
+              <CandidateGroupRow key={group.id} group={group} onOpen={onOpen} onEdit={onEdit} onArchive={archiveGroup} />
             ))}
           </section>
         )}
         {closed.length > 0 && <p className="mt-1 text-xs text-muted-foreground md:col-span-2">{closed.length} done or sunset group{closed.length === 1 ? "" : "s"}</p>}
         {closed.map(group => (
-          <ClosedGroupRow key={group.id} group={group} onOpen={onOpen} />
+          <ClosedGroupRow key={group.id} group={group} onOpen={onOpen} onArchive={archiveGroup} />
         ))}
-        {archivedCount > 0 && <p className="text-xs text-muted-foreground md:col-span-2">{archivedCount} archived group{archivedCount === 1 ? "" : "s"} hidden from this working list.</p>}
+        {archivedGroups.length > 0 && (
+          <section className="mt-1 flex flex-col gap-1 border-t pt-2 md:col-span-2">
+            <button
+              type="button"
+              className="flex items-center gap-1 text-left text-xs font-medium uppercase text-muted-foreground hover:underline"
+              onClick={() => setShowArchived(value => !value)}
+            >
+              <Archive className="size-3" />
+              {archivedGroups.length} archived group{archivedGroups.length === 1 ? "" : "s"} · {showArchived ? "hide" : "show"}
+            </button>
+            {showArchived &&
+              archivedGroups.map(group => (
+                <ArchivedGroupRow key={group.id} group={group} onOpen={onOpen} onRestore={restoreGroup} />
+              ))}
+          </section>
+        )}
+        {archiveError && <p className="text-xs text-destructive md:col-span-2">{archiveError}</p>}
       </CardContent>
     </Card>
   );
 }
 
-function ClosedGroupRow({ group, onOpen }: { group: ExperimentGroupRow; onOpen: (id: string) => void }) {
+/** Compact “branched from …” lineage line; archived parents stay reachable. */
+function BranchBreadcrumb({
+  parent,
+  onOpen,
+}: {
+  parent: ExperimentGroupLineageRef | null | undefined;
+  onOpen: (id: string) => void;
+}) {
+  if (!parent) return null;
   return (
     <button
-      className="flex min-w-0 flex-col gap-1 rounded-lg border border-dashed p-3 text-left text-muted-foreground hover:bg-muted/40"
-      onClick={() => onOpen(group.id)}
+      type="button"
+      className="flex min-w-0 items-center gap-1 text-left text-xs text-muted-foreground hover:underline"
+      onClick={() => onOpen(parent.id)}
+      title={`open ${parent.title}`}
     >
-      <span className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-medium">{group.title}</span>
-        <Badge variant="outline">{group.status}</Badge>
-      </span>
-      {group.closingReviewMd && <span className="line-clamp-2 text-xs">{group.closingReviewMd}</span>}
-      <span className="text-xs">{group.targets.filter(target => target.status === "done").length}/{group.targets.length} targets complete · inspect history</span>
+      <GitBranch className="size-3 shrink-0" />
+      <span className="truncate">branched from {parent.title}</span>
+      {parent.status === "archived" && <Badge variant="outline">archived</Badge>}
     </button>
+  );
+}
+
+function ClosedGroupRow({
+  group,
+  onOpen,
+  onArchive,
+}: {
+  group: ExperimentGroupRow;
+  onOpen: (id: string) => void;
+  onArchive: (group: ExperimentGroupRow) => void;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 rounded-lg border border-dashed p-3 text-muted-foreground">
+      <button className="min-w-0 text-left" onClick={() => onOpen(group.id)}>
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-medium">{group.title}</span>
+          <Badge variant="outline">{group.status}</Badge>
+        </span>
+        {group.closingReviewMd && <span className="line-clamp-2 text-xs">{group.closingReviewMd}</span>}
+      </button>
+      <BranchBreadcrumb parent={group.parent} onOpen={onOpen} />
+      <span className="flex items-center justify-between gap-2 text-xs">
+        <span>{group.targets.filter(target => target.status === "done").length}/{group.targets.length} targets complete · inspect history</span>
+        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => onArchive(group)} title="archive this group (reversible)">
+          <Archive className="size-3" /> archive
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+function ArchivedGroupRow({
+  group,
+  onOpen,
+  onRestore,
+}: {
+  group: ExperimentGroupRow;
+  onOpen: (id: string) => void;
+  onRestore: (group: ExperimentGroupRow) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-xs text-muted-foreground">
+      <button className="flex min-w-0 items-center gap-2 text-left hover:underline" onClick={() => onOpen(group.id)}>
+        <span className="truncate">{group.title}</span>
+        {group.archivedFromStatus && <Badge variant="outline">was {group.archivedFromStatus}</Badge>}
+        {group.parent && <span className="hidden truncate sm:inline">· from {group.parent.title}</span>}
+      </button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 shrink-0 px-1.5 text-xs"
+        onClick={() => onRestore(group)}
+        title={`restore as ${group.archivedFromStatus ?? "candidate"}`}
+      >
+        <ArchiveRestore className="size-3" /> restore
+      </Button>
+    </div>
   );
 }
 
@@ -731,10 +846,12 @@ function CandidateGroupRow({
   group,
   onOpen,
   onEdit,
+  onArchive,
 }: {
   group: ExperimentGroupRow;
   onOpen: (id: string) => void;
   onEdit: (group: ExperimentGroupRow) => void;
+  onArchive: (group: ExperimentGroupRow) => void;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed p-3">
@@ -745,6 +862,7 @@ function CandidateGroupRow({
         </div>
         {group.motivationMd && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{group.motivationMd}</p>}
       </button>
+      <BranchBreadcrumb parent={group.parent} onOpen={onOpen} />
       {group.goals.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {group.goals.map(goal => <Badge key={goal.id} variant="secondary">{goal.title}</Badge>)}
@@ -752,9 +870,14 @@ function CandidateGroupRow({
       )}
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>Available in the next reviewed pick.</span>
-        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEdit(group)}>
-          <Pencil className="size-3" /> continue
-        </Button>
+        <span className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onArchive(group)} title="archive this group (reversible)">
+            <Archive className="size-3" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEdit(group)}>
+            <Pencil className="size-3" /> continue
+          </Button>
+        </span>
       </div>
     </div>
   );
@@ -803,6 +926,7 @@ function CurrentGroupRow({
         </div>
         {group.motivationMd && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{group.motivationMd}</p>}
       </button>
+      <BranchBreadcrumb parent={group.parent} onOpen={onOpen} />
       {group.goals.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {group.goals.map(goal => (
@@ -1045,11 +1169,13 @@ function OrganizedDetailHost({
   onClose,
   onOpenConversation,
   onOpenRawSource,
+  onOpenGroup,
 }: {
   target: DetailTarget;
   onClose: () => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenRawSource: (source: RawSourceTarget) => void;
+  onOpenGroup: (id: string) => void;
 }) {
   const { data: detail } = useApiData(() => api.organizedDetail(target.type, target.id), [target.type, target.id]);
   const { data: actionableDetail } = useApiData(
@@ -1064,6 +1190,7 @@ function OrganizedDetailHost({
       onClose={onClose}
       onOpenConversation={onOpenConversation}
       onOpenRawSource={onOpenRawSource}
+      onOpenGroup={onOpenGroup}
     />
   );
 }
@@ -1074,12 +1201,14 @@ function OrganizedDetail({
   onClose,
   onOpenConversation,
   onOpenRawSource,
+  onOpenGroup,
 }: {
   detail: OrganizedEntityDetail;
   actionableDetail: Awaited<ReturnType<typeof api.experiment>> | null | undefined;
   onClose: () => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenRawSource: (source: RawSourceTarget) => void;
+  onOpenGroup: (id: string) => void;
 }) {
   const entity = detail.entity;
   const actionableEntity = detail.entityType === "actionable_experiment" ? (entity as ActionableExperimentRow) : null;
@@ -1120,6 +1249,20 @@ function OrganizedDetail({
             entityType: source.entityType as RawSourceTarget["entityType"],
             entityId: source.entityId,
           }),
+        })),
+        lineageParent: groupEntity?.parent
+          ? {
+              id: groupEntity.parent.id,
+              title: groupEntity.parent.title,
+              status: groupEntity.parent.status === "archived" ? "archived" : groupEntity.parent.status,
+              onOpen: () => onOpenGroup(groupEntity.parent!.id),
+            }
+          : null,
+        lineageChildren: groupEntity?.children?.map(child => ({
+          id: child.id,
+          title: child.title,
+          status: child.status,
+          onOpen: () => onOpenGroup(child.id),
         })),
       }}
       extractions={detail.extractions}

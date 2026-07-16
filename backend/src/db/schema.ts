@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { type AnySQLiteColumn, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Shared column helpers — every table gets uuid id + ISO timestamps.
 const id = () =>
@@ -302,13 +302,21 @@ export const experimentGroup = sqliteTable("experiment_group", {
   id: id(),
   title: text("title").notNull(),
   motivationMd: text("motivation_md"),
+  // A branch is a new, independently selectable change story. The parent is
+  // retained as context even when it is later archived from the working view.
+  parentExperimentGroupId: text("parent_experiment_group_id").references((): AnySQLiteColumn => experimentGroup.id),
   status: text("status", { enum: ["candidate", "active", "done", "sunset", "archived"] })
     .notNull()
     .default("candidate"),
   closingReviewMd: text("closing_review_md"),
+  // Archiving is reversible, but never restores an active state. Keeping the
+  // prior terminal/candidate state makes the history explicit without hiding
+  // or deleting a parent that has branches.
+  archivedAt: text("archived_at"),
+  archivedFromStatus: text("archived_from_status", { enum: ["candidate", "done", "sunset"] }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-});
+}, t => [index("experiment_group_parent").on(t.parentExperimentGroupId)]);
 
 // Current focus is a durable decision/history record, not a dashboard filter.
 // A partial unique index permits at most one current row across the whole
