@@ -30,7 +30,7 @@ describe("backend HTTP server factory", () => {
     expect(companionPeer).toBe("127.0.0.1");
   });
 
-  test("stamps the companion inbox peer header from the socket and strips spoofed values", async () => {
+  test("stamps the trusted peer header from the socket and strips spoofed values on every path", async () => {
     let seenPeerHeader: string | null | undefined;
     const handle = createBackendRequestHandler({
       application: {
@@ -54,10 +54,31 @@ describe("backend HTTP server factory", () => {
     await handle(new Request("http://dream.test/api/companion/drafts", { headers: { "x-dream-peer-address": "127.0.0.1" } }));
     expect(seenPeerHeader).toBeNull();
 
-    // Non-companion API paths keep their headers untouched.
-    seenPeerHeader = undefined;
-    await handle(new Request("http://dream.test/api/health"), "203.0.113.7");
-    expect(seenPeerHeader).toBeNull();
+    // Sanitization must not depend on a path prefix: the router percent-
+    // decodes paths, so an encoded companion path must get the same
+    // treatment instead of slipping through with the spoofed header.
+    await handle(
+      new Request("http://dream.test/api/%63ompanion/drafts", { headers: { "x-dream-peer-address": "127.0.0.1" } }),
+      "203.0.113.7",
+    );
+    expect(seenPeerHeader).toBe("203.0.113.7");
+  });
+
+  test("an encoded companion path with a spoofed loopback header is still refused end to end", async () => {
+    const { app } = await import("../src/api/app");
+    const { env } = await import("../src/lib/env");
+    const original = env.COMPANION_ALLOW_LOOPBACK_OWNER;
+    env.COMPANION_ALLOW_LOOPBACK_OWNER = true;
+    try {
+      const handle = createBackendRequestHandler({ application: app });
+      const response = await handle(
+        new Request("http://dream.test/api/%63ompanion/drafts", { headers: { "x-dream-peer-address": "127.0.0.1" } }),
+        "203.0.113.7",
+      );
+      expect(response.status).toBe(401);
+    } finally {
+      env.COMPANION_ALLOW_LOOPBACK_OWNER = original;
+    }
   });
 
   test("starts on an ephemeral localhost port and stops cleanly", async () => {

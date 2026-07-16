@@ -77,12 +77,30 @@ class Trajectory {
     for (const secret of this.#secrets) {
       text = text.replaceAll(secret, "[REDACTED]");
     }
-    return JSON.parse(text);
+    // Structural scrub, independent of registration order: a step recorded
+    // BEFORE its secret was registered (e.g. the invite-issuing response)
+    // must still never persist a credential-bearing field in cleartext.
+    return scrubSecretKeys(JSON.parse(text));
   }
 
   serialize() {
     return { trajectory: this.name, recordedAt: new Date().toISOString(), steps: this.steps };
   }
+}
+
+const SECRET_KEYS = new Set(["code", "dashboardcapability", "authorization", "token", "secret"]);
+
+function scrubSecretKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubSecretKeys);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        SECRET_KEYS.has(key.toLowerCase()) && typeof entry === "string" ? "[REDACTED]" : scrubSecretKeys(entry),
+      ]),
+    );
+  }
+  return value;
 }
 
 const transcripts: Trajectory[] = [];

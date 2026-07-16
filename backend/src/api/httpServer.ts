@@ -45,12 +45,15 @@ export function createBackendRequestHandler({
       return companionMcpHttpHandler.handle(request, peerAddress);
     }
     // The companion inbox authorizes its loopback-owner adapter from the
-    // socket peer. Always strip the inbound header so a remote client (or a
-    // co-located proxy forwarding untrusted headers) cannot spoof it. The
-    // request is rebuilt from its URL because `new Request(request, init)`
-    // merges init.headers over the original, which would keep a deleted
-    // spoofed header alive.
-    if (pathname.startsWith("/api/companion")) {
+    // socket peer, carried on a trusted header. Sanitize it on EVERY
+    // app-bound request — never on a path prefix, because the router
+    // percent-decodes paths while URL.pathname does not, so a prefix check
+    // could be dodged with an encoded path (e.g. /api/%63ompanion/...).
+    // Only routes/companion.ts reads the header, so a global strip is safe.
+    // The request is rebuilt from its URL because `new Request(request,
+    // init)` merges init.headers over the original, which would keep a
+    // deleted spoofed header alive.
+    if (request.headers.has(PEER_ADDRESS_HEADER) || peerAddress) {
       const headers = new Headers(request.headers);
       headers.delete(PEER_ADDRESS_HEADER);
       if (peerAddress) headers.set(PEER_ADDRESS_HEADER, peerAddress);
