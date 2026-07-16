@@ -3,6 +3,7 @@ import { db } from "../db";
 import {
   calendarEvent,
   chatSession,
+  currentFocus,
   experiment,
   experimentGroup,
   experimentGoal,
@@ -397,6 +398,10 @@ export async function confirmActionableSchedule(id: string): Promise<ScheduleCon
       const group = db.select().from(experimentGroup).where(eq(experimentGroup.id, row.experimentGroupId)).get();
       if (!group || group.status !== "active") {
         throw new Error("the actionable's change group is no longer active");
+      }
+      const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+      if (!focus || focus.experimentGroupId !== group.id) {
+        throw new Error("the actionable's change group is no longer the current focus");
       }
       if (row.status !== "queued") throw new Error(`experiment is ${row.status}, not queued`);
 

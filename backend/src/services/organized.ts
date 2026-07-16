@@ -4,6 +4,8 @@ import { db } from "../db";
 import {
   collaborationWorkspace,
   conversation,
+  currentFocus,
+  currentFocusGoal,
   environmentItem,
   experience,
   experiment,
@@ -36,6 +38,7 @@ export const CollaborationModeSchema = z.enum([
   "organized_environment",
   "experiment_group",
   "actionable_experiment",
+  "prioritize",
 ]);
 export type CollaborationMode = z.infer<typeof CollaborationModeSchema>;
 
@@ -54,8 +57,7 @@ const GoalOperationSchema = z.object({
   title: z.string().min(1).max(300),
   identityClause: z.string().max(2_000).nullable().optional(),
   synthesisMd: z.string().max(30_000).nullable().optional(),
-  priorityRank: z.number().int().nonnegative().nullable().optional(),
-  status: z.enum(["active", "sunset"]).optional(),
+  status: z.enum(["active", "sunset", "archived"]).optional(),
   sources: z.array(SourceRefSchema).max(200).optional(),
 });
 
@@ -65,7 +67,7 @@ const HabitOperationSchema = z.object({
   title: z.string().min(1).max(300),
   note: z.string().max(10_000).nullable().optional(),
   synthesisMd: z.string().max(30_000).nullable().optional(),
-  status: z.enum(["active", "sunset"]).optional(),
+  status: z.enum(["active", "sunset", "archived"]).optional(),
   sources: z.array(SourceRefSchema).max(200).optional(),
 });
 
@@ -75,7 +77,7 @@ const EnvironmentOperationSchema = z.object({
   title: z.string().min(1).max(300),
   note: z.string().max(10_000).nullable().optional(),
   synthesisMd: z.string().max(30_000).nullable().optional(),
-  status: z.enum(["active", "sunset"]).optional(),
+  status: z.enum(["active", "sunset", "archived"]).optional(),
   sources: z.array(SourceRefSchema).max(200).optional(),
 });
 
@@ -92,7 +94,10 @@ const GroupOperationSchema = z.object({
   id: z.string().uuid().optional(),
   title: z.string().min(1).max(300),
   motivationMd: z.string().max(50_000).nullable().optional(),
-  status: z.enum(["active", "done", "sunset"]).optional(),
+  // An active group can only be established by set_current_focus. Group
+  // workspaces create or revise candidates; they cannot silently make one the
+  // current direction.
+  status: z.enum(["candidate", "done", "sunset", "archived"]).optional(),
   closingReviewMd: z.string().max(30_000).nullable().optional(),
   organizedGoalIds: z.array(z.string().uuid()).min(1).max(30),
   targets: z.array(GroupTargetSchema).max(100).optional(),
@@ -145,6 +150,46 @@ const GroupTargetDoneOperationSchema = z.object({
   done: z.boolean(),
 });
 
+const FocusExistingSelectionSchema = z.object({
+  kind: z.literal("existing"),
+  experimentGroupId: z.string().uuid(),
+});
+
+const FocusNewSelectionSchema = z.object({
+  kind: z.literal("new"),
+  title: z.string().min(1).max(300),
+  motivationMd: z.string().max(50_000).nullable().optional(),
+  organizedGoalIds: z.array(z.string().uuid()).min(1).max(30),
+  targets: z.array(GroupTargetSchema).max(100).optional(),
+  appendContext: z.array(z.string().min(1).max(30_000)).max(50).optional(),
+  projectIds: z.array(z.string().uuid()).max(100).optional(),
+  sources: z.array(SourceRefSchema).max(200).optional(),
+});
+
+const FocusNoneSelectionSchema = z.object({ kind: z.literal("none") });
+
+const CurrentFocusOperationSchema = z.object({
+  type: z.literal("set_current_focus"),
+  entryReason: z.enum(["pick", "sunset"]),
+  selection: z.discriminatedUnion("kind", [
+    FocusExistingSelectionSchema,
+    FocusNewSelectionSchema,
+    FocusNoneSelectionSchema,
+  ]),
+  // The focus set and the selected group's goal scope intentionally match.
+  // A group can harmonize several goals, but focus cannot quietly include a
+  // goal the group does not say it serves.
+  organizedGoalIds: z.array(z.string().uuid()).max(30).default([]),
+  reasoningMd: z.string().min(1).max(50_000),
+  sunsetCurrentGroup: z
+    .object({
+      experimentGroupId: z.string().uuid(),
+      status: z.enum(["done", "sunset"]),
+      closingReviewMd: z.string().max(30_000).nullable().optional(),
+    })
+    .optional(),
+});
+
 export const DraftOperationSchema = z.discriminatedUnion("type", [
   GoalOperationSchema,
   HabitOperationSchema,
@@ -152,6 +197,7 @@ export const DraftOperationSchema = z.discriminatedUnion("type", [
   GroupOperationSchema,
   ActionableOperationSchema,
   GroupTargetDoneOperationSchema,
+  CurrentFocusOperationSchema,
 ]);
 export const DraftOperationsSchema = z.array(DraftOperationSchema).min(1).max(100);
 export type DraftOperation = z.infer<typeof DraftOperationSchema>;
@@ -239,6 +285,17 @@ function resolveRawGoalIds(requested: string[] | undefined, fallback: string[]):
 function upsertGoal(op: z.infer<typeof GoalOperationSchema>): string {
   const existing = op.id ? db.select().from(organizedGoal).where(eq(organizedGoal.id, op.id)).get() : null;
   if (op.id && !existing) throw new Error("organized goal not found");
+  if (existing && op.status && op.status !== "active") {
+    const currentMembership = db
+      .select({ id: currentFocusGoal.id })
+      .from(currentFocusGoal)
+      .innerJoin(currentFocus, eq(currentFocusGoal.currentFocusId, currentFocus.id))
+      .where(and(eq(currentFocusGoal.organizedGoalId, existing.id), eq(currentFocus.status, "current")))
+      .get();
+    if (currentMembership) {
+      throw new Error("a selected current-focus goal must be removed through a reviewed sunset/prioritize decision first");
+    }
+  }
   const row = existing
     ? db
         .update(organizedGoal)
@@ -246,7 +303,6 @@ function upsertGoal(op: z.infer<typeof GoalOperationSchema>): string {
           title: op.title,
           identityClause: op.identityClause ?? existing.identityClause,
           synthesisMd: op.synthesisMd ?? existing.synthesisMd,
-          priorityRank: op.priorityRank === undefined ? existing.priorityRank : op.priorityRank,
           status: op.status ?? existing.status,
         })
         .where(eq(organizedGoal.id, existing.id))
@@ -258,7 +314,9 @@ function upsertGoal(op: z.infer<typeof GoalOperationSchema>): string {
           title: op.title,
           identityClause: op.identityClause ?? null,
           synthesisMd: op.synthesisMd ?? null,
-          priorityRank: op.priorityRank ?? null,
+          // Priority is a property of the one reviewed current-focus decision,
+          // never of a standalone goal-writing workspace.
+          priorityRank: null,
           status: op.status ?? "active",
         })
         .returning()
@@ -322,6 +380,23 @@ function upsertGroup(op: z.infer<typeof GroupOperationSchema>, changeSetId: stri
   }
   const existing = op.id ? db.select().from(experimentGroup).where(eq(experimentGroup.id, op.id)).get() : null;
   if (op.id && !existing) throw new Error("experiment group not found");
+  if (existing) {
+    const focus = db.select().from(currentFocus).where(and(eq(currentFocus.experimentGroupId, existing.id), eq(currentFocus.status, "current"))).get();
+    if (focus) {
+      if (op.status) {
+        throw new Error("the current focused group can be ended only through a reviewed sunset prioritize decision");
+      }
+      const focusGoalIds = db
+        .select({ organizedGoalId: currentFocusGoal.organizedGoalId })
+        .from(currentFocusGoal)
+        .where(eq(currentFocusGoal.currentFocusId, focus.id))
+        .all()
+        .map(row => row.organizedGoalId);
+      if (!sameIds(focusGoalIds, op.organizedGoalIds)) {
+        throw new Error("the current focused group's goals can be changed only through a reviewed prioritize decision");
+      }
+    }
+  }
   const row = existing
     ? db
         .update(experimentGroup)
@@ -339,7 +414,7 @@ function upsertGroup(op: z.infer<typeof GroupOperationSchema>, changeSetId: stri
         .values({
           title: op.title,
           motivationMd: op.motivationMd ?? null,
-          status: op.status ?? "active",
+          status: op.status ?? "candidate",
           closingReviewMd: op.closingReviewMd ?? null,
         })
         .returning()
@@ -388,6 +463,10 @@ function createActionable(op: z.infer<typeof ActionableOperationSchema>): string
   const group = db.select().from(experimentGroup).where(eq(experimentGroup.id, op.experimentGroupId)).get();
   if (!group) throw new Error("experiment group not found");
   if (group.status !== "active") throw new Error(`experiment group is ${group.status}, not active`);
+  const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+  if (!focus || focus.experimentGroupId !== group.id) {
+    throw new Error("an actionable can be created only for the current focused change group");
+  }
   const groupGoalIds = db
     .select({ organizedGoalId: experimentGroupGoal.organizedGoalId })
     .from(experimentGroupGoal)
@@ -482,6 +561,140 @@ function createActionable(op: z.infer<typeof ActionableOperationSchema>): string
   return row.id;
 }
 
+function sameIds(left: string[], right: string[]) {
+  return left.length === right.length && left.every(id => right.includes(id));
+}
+
+function assertNoLiveActionable(groupId: string) {
+  const liveActionable = db
+    .select({ id: experiment.id, title: experiment.title, status: experiment.status })
+    .from(experiment)
+    .where(
+      and(
+        eq(experiment.kind, "actionable"),
+        eq(experiment.experimentGroupId, groupId),
+        inArray(experiment.status, ["queued", "scheduling", "running"]),
+      ),
+    )
+    .get();
+  if (liveActionable) {
+    throw new Error(`resolve weekly actionable "${liveActionable.title}" (${liveActionable.status}) before closing this group`);
+  }
+}
+
+function applyCurrentFocus(op: z.infer<typeof CurrentFocusOperationSchema>, changeSetId: string): string[] {
+  const current = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+  // Keep a navigable decision chain even when the user intentionally spent a
+  // period with no active focus between two Pick decisions.
+  let previousFocusId: string | null = current?.id ??
+    db.select({ id: currentFocus.id }).from(currentFocus).orderBy(desc(currentFocus.startedAt)).get()?.id ?? null;
+
+  if (op.entryReason === "pick") {
+    if (current) throw new Error("a current focus already exists; sunset it through a prioritize workspace first");
+    if (op.selection.kind === "none") throw new Error("a pick decision must select a change group");
+    if (op.sunsetCurrentGroup) throw new Error("a pick decision cannot sunset a group");
+  } else {
+    if (!current) throw new Error("there is no current focus to sunset");
+    if (!op.sunsetCurrentGroup || op.sunsetCurrentGroup.experimentGroupId !== current.experimentGroupId) {
+      throw new Error("a sunset decision must close the current focused change group");
+    }
+    assertNoLiveActionable(current.experimentGroupId);
+    const priorGroup = db.select().from(experimentGroup).where(eq(experimentGroup.id, current.experimentGroupId)).get();
+    if (!priorGroup) throw new Error("current focused change group not found");
+    const closingReview = [priorGroup.closingReviewMd, op.sunsetCurrentGroup.closingReviewMd, op.reasoningMd]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .join("\n\n");
+    db.update(experimentGroup)
+      .set({ status: op.sunsetCurrentGroup.status, closingReviewMd: closingReview || null })
+      .where(eq(experimentGroup.id, priorGroup.id))
+      .run();
+    db.update(currentFocus)
+      .set({ status: "ended", endedAt: new Date().toISOString() })
+      .where(eq(currentFocus.id, current.id))
+      .run();
+    previousFocusId = current.id;
+  }
+
+  if (op.selection.kind === "none") {
+    if (op.entryReason !== "sunset") throw new Error("only a sunset decision may leave no current focus");
+    if (op.organizedGoalIds.length) throw new Error("a no-focus sunset decision cannot retain selected priority goals");
+    db.update(organizedGoal).set({ priorityRank: null }).where(eq(organizedGoal.status, "active")).run();
+    return previousFocusId ? [previousFocusId] : [];
+  }
+
+  const activeGroups = db.select({ id: experimentGroup.id }).from(experimentGroup).where(eq(experimentGroup.status, "active")).all();
+  if (activeGroups.length) throw new Error("another active change group exists; resolve its current focus first");
+
+  let selectedGroupId: string;
+  let createdGroupId: string | null = null;
+  if (op.selection.kind === "new") {
+    if (!sameIds(op.selection.organizedGoalIds, op.organizedGoalIds)) {
+      throw new Error("a new focused group must serve exactly the selected priority goals");
+    }
+    selectedGroupId = upsertGroup(
+      {
+        type: "upsert_experiment_group",
+        title: op.selection.title,
+        motivationMd: op.selection.motivationMd,
+        organizedGoalIds: op.selection.organizedGoalIds,
+        targets: op.selection.targets,
+        appendContext: op.selection.appendContext,
+        projectIds: op.selection.projectIds,
+        sources: op.selection.sources,
+      },
+      changeSetId,
+    );
+    createdGroupId = selectedGroupId;
+  } else {
+    selectedGroupId = op.selection.experimentGroupId;
+  }
+
+  const selectedGroup = db.select().from(experimentGroup).where(eq(experimentGroup.id, selectedGroupId)).get();
+  if (!selectedGroup) throw new Error("selected change group not found");
+  if (selectedGroup.status !== "candidate") throw new Error("only a candidate change group can become the current focus");
+  const groupGoalIds = db
+    .select({ organizedGoalId: experimentGroupGoal.organizedGoalId })
+    .from(experimentGroupGoal)
+    .where(eq(experimentGroupGoal.experimentGroupId, selectedGroup.id))
+    .all()
+    .map(row => row.organizedGoalId);
+  if (!op.organizedGoalIds.length || !sameIds(groupGoalIds, op.organizedGoalIds)) {
+    throw new Error("current focus goals must exactly match the selected change group's goals");
+  }
+  const selectedGoals = db
+    .select({ id: organizedGoal.id, status: organizedGoal.status })
+    .from(organizedGoal)
+    .where(inArray(organizedGoal.id, op.organizedGoalIds))
+    .all();
+  assertExistingIds(selectedGoals, op.organizedGoalIds, "organized goal");
+  if (selectedGoals.some(goalRow => goalRow.status !== "active")) {
+    throw new Error("current focus can include only active organized goals");
+  }
+
+  db.update(organizedGoal).set({ priorityRank: null }).where(eq(organizedGoal.status, "active")).run();
+  for (const [priorityRank, organizedGoalId] of op.organizedGoalIds.entries()) {
+    db.update(organizedGoal).set({ priorityRank }).where(eq(organizedGoal.id, organizedGoalId)).run();
+  }
+  db.update(experimentGroup).set({ status: "active" }).where(eq(experimentGroup.id, selectedGroup.id)).run();
+  const focus = db
+    .insert(currentFocus)
+    .values({
+      experimentGroupId: selectedGroup.id,
+      previousCurrentFocusId: previousFocusId,
+      status: "current",
+      entryReason: op.entryReason,
+      reasoningMd: op.reasoningMd,
+      sourceChangeSetId: changeSetId,
+      startedAt: new Date().toISOString(),
+    })
+    .returning()
+    .get();
+  for (const [priorityRank, organizedGoalId] of op.organizedGoalIds.entries()) {
+    db.insert(currentFocusGoal).values({ currentFocusId: focus.id, organizedGoalId, priorityRank }).run();
+  }
+  return [focus.id, ...(createdGroupId ? [createdGroupId] : [])];
+}
+
 /** Applies only a previously reviewed draft. Call inside the change-set transaction. */
 export function applyDraftOperations(operationsJson: unknown, changeSetId: string): { primaryIds: string[] } {
   const operations = DraftOperationsSchema.parse(operationsJson);
@@ -514,6 +727,9 @@ export function applyDraftOperations(operationsJson: unknown, changeSetId: strin
         primaryIds.push(target.experimentGroupId);
         break;
       }
+      case "set_current_focus":
+        primaryIds.push(...applyCurrentFocus(op, changeSetId));
+        break;
     }
   }
   return { primaryIds };
@@ -602,10 +818,27 @@ function groupView(row: typeof experimentGroup.$inferSelect) {
   return { ...row, goals, targets, projects, projectCount: projects.length, actionables };
 }
 
+function currentFocusView(row: typeof currentFocus.$inferSelect) {
+  const group = db.select().from(experimentGroup).where(eq(experimentGroup.id, row.experimentGroupId)).get();
+  if (!group) throw new Error("current focus references a missing experiment group");
+  const goals = db
+    .select({
+      id: organizedGoal.id,
+      title: organizedGoal.title,
+      status: organizedGoal.status,
+      priorityRank: currentFocusGoal.priorityRank,
+    })
+    .from(currentFocusGoal)
+    .innerJoin(organizedGoal, eq(currentFocusGoal.organizedGoalId, organizedGoal.id))
+    .where(eq(currentFocusGoal.currentFocusId, row.id))
+    .orderBy(asc(currentFocusGoal.priorityRank))
+    .all();
+  return { ...row, group: groupView(group), goals };
+}
+
 export function organizedFeed() {
-  // The curated feed keeps sunsets inspectable. They are out of the editable
-  // priority partition, but hiding them would sever the user's own history
-  // and make a later deliberate revival impossible from the dashboard.
+  // Sunsets remain inspectable in the feed. Archives retain their durable links
+  // and detail pages, but stay out of the default everyday view.
   const goals = db.select().from(organizedGoal).all();
   const activeGoals = goals.filter(row => row.status === "active");
   const orderedGoals = [...activeGoals].sort((a, b) => {
@@ -615,9 +848,27 @@ export function organizedFeed() {
     return a.priorityRank - b.priorityRank;
   });
   const sunsetGoals = goals.filter(row => row.status === "sunset").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const organizedHabits = db.select().from(organizedHabit).orderBy(asc(organizedHabit.createdAt)).all();
-  const environment = db.select().from(organizedEnvironmentItem).orderBy(asc(organizedEnvironmentItem.createdAt)).all();
-  const groups = db.select().from(experimentGroup).orderBy(desc(experimentGroup.updatedAt)).all().map(groupView);
+  const organizedHabits = db
+    .select()
+    .from(organizedHabit)
+    .where(inArray(organizedHabit.status, ["active", "sunset"]))
+    .orderBy(asc(organizedHabit.createdAt))
+    .all();
+  const environment = db
+    .select()
+    .from(organizedEnvironmentItem)
+    .where(inArray(organizedEnvironmentItem.status, ["active", "sunset"]))
+    .orderBy(asc(organizedEnvironmentItem.createdAt))
+    .all();
+  const groups = db
+    .select()
+    .from(experimentGroup)
+    .where(inArray(experimentGroup.status, ["candidate", "active", "done", "sunset"]))
+    .orderBy(desc(experimentGroup.updatedAt))
+    .all()
+    .map(groupView);
+  const focusRows = db.select().from(currentFocus).orderBy(desc(currentFocus.startedAt)).all();
+  const currentFocusRow = focusRows.find(row => row.status === "current") ?? null;
   const actionables = db
     .select()
     .from(experiment)
@@ -646,6 +897,8 @@ export function organizedFeed() {
     environment: environment.map(row => ({ ...row, sources: sourcesFor("environment", row.id) })),
     groups,
     actionables,
+    currentFocus: currentFocusRow ? currentFocusView(currentFocusRow) : null,
+    focusHistory: focusRows.filter(row => row.status !== "current").map(currentFocusView),
   };
 }
 
@@ -737,24 +990,21 @@ export function organizedDetailPayload(
 }
 
 export function reorderOrganizedGoalPriority(prioritizedIds: string[], outOfPriorityIds: string[]): boolean {
-  const rows = db.select({ id: organizedGoal.id }).from(organizedGoal).where(eq(organizedGoal.status, "active")).all();
-  const expected = new Set(rows.map(row => row.id));
-  const supplied = [...prioritizedIds, ...outOfPriorityIds];
-  if (supplied.length !== expected.size || new Set(supplied).size !== supplied.length || supplied.some(id => !expected.has(id))) {
-    return false;
-  }
-  db.transaction(() => {
-    for (const [index, id] of prioritizedIds.entries()) {
-      db.update(organizedGoal).set({ priorityRank: index }).where(eq(organizedGoal.id, id)).run();
-    }
-    for (const id of outOfPriorityIds) db.update(organizedGoal).set({ priorityRank: null }).where(eq(organizedGoal.id, id)).run();
-  });
-  return true;
+  // Retained only as a compatibility symbol for old callers. Priorities and
+  // current-focus membership are one invariant, so a list-only mutation is no
+  // longer a valid write path.
+  void prioritizedIds;
+  void outOfPriorityIds;
+  return false;
 }
 
 export function closeExperimentGroup(id: string, status: "done" | "sunset", closingReviewMd?: string | null) {
   const row = db.select().from(experimentGroup).where(eq(experimentGroup.id, id)).get();
   if (!row) return null;
+  const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+  if (focus?.experimentGroupId === row.id) {
+    throw new Error("the current focused group can be closed only through a reviewed sunset prioritize decision");
+  }
   // A group is the parent of its weekly actionables. Closing it while a child
   // is still queued/running would make that child impossible to start (and
   // leave the user with no coherent ending record). The user can explicitly

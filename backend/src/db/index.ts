@@ -30,6 +30,8 @@ export function wipeAllTables() {
     "collaboration_workspace_index",
     "collaboration_workspace",
     "collaboration_invite",
+    "current_focus_goal",
+    "current_focus",
     "experiment_group_project",
     "experiment_group_context",
     "experiment_group_target",

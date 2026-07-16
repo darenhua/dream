@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Shared column helpers — every table gets uuid id + ISO timestamps.
@@ -212,7 +213,7 @@ export const organizedGoal = sqliteTable("organized_goal", {
   // A null rank means "out of priority". Non-null ranks form the user's
   // drag-and-drop priority list; this is intentionally not a top-three cap.
   priorityRank: integer("priority_rank"),
-  status: text("status", { enum: ["active", "sunset"] }).notNull().default("active"),
+  status: text("status", { enum: ["active", "sunset", "archived"] }).notNull().default("active"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -241,7 +242,7 @@ export const organizedHabit = sqliteTable("organized_habit", {
   title: text("title").notNull(),
   note: text("note"),
   synthesisMd: text("synthesis_md"),
-  status: text("status", { enum: ["active", "sunset"] }).notNull().default("active"),
+  status: text("status", { enum: ["active", "sunset", "archived"] }).notNull().default("active"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -251,7 +252,7 @@ export const organizedEnvironmentItem = sqliteTable("organized_environment_item"
   title: text("title").notNull(),
   note: text("note"),
   synthesisMd: text("synthesis_md"),
-  status: text("status", { enum: ["active", "sunset"] }).notNull().default("active"),
+  status: text("status", { enum: ["active", "sunset", "archived"] }).notNull().default("active"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -301,11 +302,59 @@ export const experimentGroup = sqliteTable("experiment_group", {
   id: id(),
   title: text("title").notNull(),
   motivationMd: text("motivation_md"),
-  status: text("status", { enum: ["active", "done", "sunset"] }).notNull().default("active"),
+  status: text("status", { enum: ["candidate", "active", "done", "sunset", "archived"] })
+    .notNull()
+    .default("candidate"),
   closingReviewMd: text("closing_review_md"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+// Current focus is a durable decision/history record, not a dashboard filter.
+// A partial unique index permits at most one current row across the whole
+// personal workspace. Its selected goals live in the ordered child table.
+export const currentFocus = sqliteTable(
+  "current_focus",
+  {
+    id: id(),
+    experimentGroupId: text("experiment_group_id")
+      .notNull()
+      .references(() => experimentGroup.id),
+    previousCurrentFocusId: text("previous_current_focus_id"),
+    status: text("status", { enum: ["current", "ended", "superseded"] }).notNull().default("current"),
+    entryReason: text("entry_reason", { enum: ["pick", "sunset"] }).notNull(),
+    reasoningMd: text("reasoning_md").notNull(),
+    // Kept as a logical ID rather than an FK because draft_change_set is
+    // declared later in this schema module.
+    sourceChangeSetId: text("source_change_set_id").notNull(),
+    startedAt: text("started_at").notNull(),
+    endedAt: text("ended_at"),
+    createdAt: createdAt(),
+  },
+  t => [
+    index("current_focus_group").on(t.experimentGroupId),
+    uniqueIndex("current_focus_one_current").on(t.status).where(sql`${t.status} = 'current'`),
+  ],
+);
+
+export const currentFocusGoal = sqliteTable(
+  "current_focus_goal",
+  {
+    id: id(),
+    currentFocusId: text("current_focus_id")
+      .notNull()
+      .references(() => currentFocus.id),
+    organizedGoalId: text("organized_goal_id")
+      .notNull()
+      .references(() => organizedGoal.id),
+    priorityRank: integer("priority_rank").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [
+    uniqueIndex("current_focus_goal_unique").on(t.currentFocusId, t.organizedGoalId),
+    uniqueIndex("current_focus_goal_rank_unique").on(t.currentFocusId, t.priorityRank),
+  ],
+);
 
 export const experimentGroupGoal = sqliteTable(
   "experiment_group_goal",
@@ -606,11 +655,13 @@ export const collaborationInvite = sqliteTable(
         "organized_environment",
         "experiment_group",
         "actionable_experiment",
+        "prioritize",
       ],
     }).notNull(),
     primaryEntityType: text("primary_entity_type"),
     primaryEntityId: text("primary_entity_id"),
     experimentGroupId: text("experiment_group_id").references(() => experimentGroup.id),
+    prioritizeAction: text("prioritize_action", { enum: ["pick", "sunset"] }),
     // Seed/goal selections are chosen in the dashboard before the user hands
     // the one-time code to MCP; redemption copies them into the workspace.
     userSeedMd: text("user_seed_md"),
@@ -644,6 +695,7 @@ export const collaborationWorkspace = sqliteTable(
         "organized_environment",
         "experiment_group",
         "actionable_experiment",
+        "prioritize",
       ],
     }).notNull(),
     status: text("status", { enum: ["open", "draft_ready", "applied", "rejected", "expired"] })
@@ -652,6 +704,7 @@ export const collaborationWorkspace = sqliteTable(
     primaryEntityType: text("primary_entity_type").notNull(),
     primaryEntityId: text("primary_entity_id"),
     experimentGroupId: text("experiment_group_id").references(() => experimentGroup.id),
+    prioritizeAction: text("prioritize_action", { enum: ["pick", "sunset"] }),
     userSeedMd: text("user_seed_md"),
     selectedOrganizedGoalIdsJson: text("selected_organized_goal_ids_json"),
     createdAt: createdAt(),
@@ -699,6 +752,7 @@ export const draftChangeSet = sqliteTable(
         "organized_environment",
         "experiment_group",
         "actionable_experiment",
+        "prioritize",
       ],
     }).notNull(),
     primaryEntityType: text("primary_entity_type").notNull(),

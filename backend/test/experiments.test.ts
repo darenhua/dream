@@ -4,8 +4,11 @@ import { db, wipeAllTables } from "../src/db";
 import {
   chatSession,
   calendarEvent,
+  currentFocus,
+  currentFocusGoal,
   experiment,
   experimentGroup,
+  experimentGroupGoal,
   experimentGoal,
   experimentTask,
   experimentTaskGoal,
@@ -13,6 +16,7 @@ import {
   goalEvidence,
   goalHabit,
   habit,
+  organizedGoal,
 } from "../src/db/schema";
 import { seedConfig } from "../src/services/config";
 import {
@@ -263,7 +267,26 @@ describe("experiment FSM", () => {
   });
 
   test("reviewed weekly actionable confirms its existing plan without duplicating work", async () => {
-    const group = db.insert(experimentGroup).values({ title: "make music easier" }).returning().get();
+    const organized = db
+      .insert(organizedGoal)
+      .values({ title: "make music easier", status: "active", priorityRank: 0 })
+      .returning()
+      .get();
+    const group = db.insert(experimentGroup).values({ title: "make music easier", status: "active" }).returning().get();
+    db.insert(experimentGroupGoal).values({ experimentGroupId: group.id, organizedGoalId: organized.id }).run();
+    const focus = db
+      .insert(currentFocus)
+      .values({
+        experimentGroupId: group.id,
+        status: "current",
+        entryReason: "pick",
+        reasoningMd: "Reviewed fixture focus.",
+        sourceChangeSetId: "test-reviewed-focus",
+        startedAt: new Date().toISOString(),
+      })
+      .returning()
+      .get();
+    db.insert(currentFocusGoal).values({ currentFocusId: focus.id, organizedGoalId: organized.id, priorityRank: 0 }).run();
     const action = db
       .insert(experiment)
       .values({

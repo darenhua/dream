@@ -16,6 +16,7 @@ import {
   collaborationWorkspace,
   collaborationWorkspaceIndex,
   conversation,
+  currentFocus,
   draftChangeSet,
   environmentItem,
   experience,
@@ -59,6 +60,7 @@ const PRIMARY_TYPE_BY_MODE: Record<CollaborationMode, string> = {
   organized_environment: "organized_environment",
   experiment_group: "experiment_group",
   actionable_experiment: "actionable_experiment",
+  prioritize: "current_focus",
 };
 
 const INVITE_TTL_MS = 30 * 60_000;
@@ -74,6 +76,7 @@ const CreateInviteSchema = z.object({
   mode: CollaborationModeSchema,
   primaryEntityId: z.string().uuid().nullable().optional(),
   experimentGroupId: z.string().uuid().nullable().optional(),
+  prioritizeAction: z.enum(["pick", "sunset"]).optional(),
   // Every workspace begins with an actual user-supplied direction/intent.
   // This must be enforced below the dashboard UI: the MCP is not allowed to
   // manufacture the missing starting idea through a direct API caller.
@@ -168,7 +171,7 @@ function isExpired(expiresAt: string) {
 }
 
 function modeHasPrimaryEntity(mode: CollaborationMode) {
-  return mode !== "actionable_experiment";
+  return mode !== "actionable_experiment" && mode !== "prioritize";
 }
 
 function ensurePrimaryExists(mode: CollaborationMode, id: string) {
@@ -196,13 +199,33 @@ function ensureSelectedGoalsExist(ids: string[]) {
 
 export function createCollaborationInvite(input: CreateInviteInput) {
   const parsed = CreateInviteSchema.parse(input);
+  const current = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
   if (parsed.mode === "actionable_experiment" && !parsed.experimentGroupId) {
     throw new Error("an actionable-experiment workspace requires an experiment group");
   }
-  if (parsed.mode !== "actionable_experiment" && parsed.experimentGroupId) {
-    throw new Error("only an actionable-experiment workspace accepts experimentGroupId");
+  if (parsed.mode === "prioritize") {
+    if (parsed.primaryEntityId) throw new Error("a prioritize workspace cannot target a primary organized entity");
+    if (!parsed.prioritizeAction) throw new Error("a prioritize workspace requires pick or sunset");
+    if (parsed.selectedOrganizedGoalIds?.length) {
+      throw new Error("priority goals are chosen in the reviewed prioritize draft, not before opening it");
+    }
+    if (parsed.prioritizeAction === "pick") {
+      if (current) throw new Error("a current focus already exists; sunset it before picking another group");
+      if (parsed.experimentGroupId) throw new Error("a pick workspace selects its candidate group in the reviewed draft");
+    } else {
+      if (!current) throw new Error("there is no current focus to sunset");
+      if (!parsed.experimentGroupId || parsed.experimentGroupId !== current.experimentGroupId) {
+        throw new Error("a sunset workspace must be opened for the current focused change group");
+      }
+    }
+  } else if (parsed.prioritizeAction) {
+    throw new Error("prioritizeAction is only valid for a prioritize workspace");
+  } else if (parsed.mode !== "actionable_experiment" && parsed.experimentGroupId) {
+    throw new Error("only an actionable-experiment or sunset-prioritize workspace accepts experimentGroupId");
   }
-  if (parsed.primaryEntityId && !modeHasPrimaryEntity(parsed.mode)) throw new Error("actionable work cannot target a prior actionable");
+  if (parsed.primaryEntityId && !modeHasPrimaryEntity(parsed.mode)) {
+    throw new Error("actionable and prioritize work cannot target a prior primary entity");
+  }
   if (parsed.primaryEntityId) ensurePrimaryExists(parsed.mode, parsed.primaryEntityId);
   let selectedGoalIds = parsed.selectedOrganizedGoalIds ?? [];
   // A new change group begins with a deliberate dashboard selection.  The
@@ -229,9 +252,12 @@ export function createCollaborationInvite(input: CreateInviteInput) {
     }
     selectedGoalIds = existingGroupGoalIds;
   }
-  if (parsed.experimentGroupId) {
+  if (parsed.mode === "actionable_experiment" && parsed.experimentGroupId) {
     const group = db.select().from(experimentGroup).where(eq(experimentGroup.id, parsed.experimentGroupId)).get();
     if (!group || group.status !== "active") throw new Error("active experiment group not found");
+    if (!current || current.experimentGroupId !== group.id) {
+      throw new Error("an actionable workspace requires the current focused change group");
+    }
     const groupGoalIds = db
       .select({ organizedGoalId: experimentGroupGoal.organizedGoalId })
       .from(experimentGroupGoal)
@@ -254,6 +280,7 @@ export function createCollaborationInvite(input: CreateInviteInput) {
       primaryEntityType: PRIMARY_TYPE_BY_MODE[parsed.mode],
       primaryEntityId: parsed.primaryEntityId ?? null,
       experimentGroupId: parsed.experimentGroupId ?? null,
+      prioritizeAction: parsed.prioritizeAction ?? null,
       userSeedMd: parsed.userSeedMd,
       selectedOrganizedGoalIdsJson: JSON.stringify(selectedGoalIds),
       secretHash: hashCode(code),
@@ -275,6 +302,7 @@ function serializeInvite(row: typeof collaborationInvite.$inferSelect) {
     primaryEntityType: row.primaryEntityType,
     primaryEntityId: row.primaryEntityId,
     experimentGroupId: row.experimentGroupId,
+    prioritizeAction: row.prioritizeAction,
     userSeedMd: row.userSeedMd,
     selectedOrganizedGoalIds: json<string[]>(row.selectedOrganizedGoalIdsJson, []),
     createdAt: row.createdAt,
@@ -301,6 +329,7 @@ function serializeWorkspace(row: typeof collaborationWorkspace.$inferSelect) {
     primaryEntityType: row.primaryEntityType,
     primaryEntityId: row.primaryEntityId,
     experimentGroupId: row.experimentGroupId,
+    prioritizeAction: row.prioritizeAction,
     userSeedMd: row.userSeedMd,
     selectedOrganizedGoalIds: json<string[]>(row.selectedOrganizedGoalIdsJson, []),
     createdAt: row.createdAt,
@@ -384,6 +413,7 @@ export function redeemCollaborationCode(code: string) {
           primaryEntityType: invite.primaryEntityType ?? PRIMARY_TYPE_BY_MODE[invite.mode as CollaborationMode],
           primaryEntityId: invite.primaryEntityId,
           experimentGroupId: invite.experimentGroupId,
+          prioritizeAction: invite.prioritizeAction,
           status: "open",
           userSeedMd: invite.userSeedMd,
           selectedOrganizedGoalIdsJson: invite.selectedOrganizedGoalIdsJson ?? "[]",
@@ -446,6 +476,8 @@ function draftMatchesMode(mode: CollaborationMode, operations: unknown[]) {
       return types.has("upsert_experiment_group");
     case "actionable_experiment":
       return types.has("create_actionable_experiment");
+    case "prioritize":
+      return types.has("set_current_focus");
   }
 }
 
@@ -464,7 +496,9 @@ function assertDraftFitsWorkspace(
           ? "upsert_organized_environment"
           : mode === "experiment_group"
             ? "upsert_experiment_group"
-            : "create_actionable_experiment";
+            : mode === "actionable_experiment"
+              ? "create_actionable_experiment"
+              : "set_current_focus";
   const primaries = operations.filter(operation => operation.type === primaryType);
   if (primaries.length !== 1) throw new Error(`a ${mode} workspace requires exactly one primary operation`);
   const primary = primaries[0];
@@ -528,8 +562,41 @@ function assertDraftFitsWorkspace(
       throw new Error("actionable draft includes goals outside this workspace's selected group goals");
     }
   }
+  if (mode === "prioritize") {
+    if (primary.type !== "set_current_focus") throw new Error("prioritize workspace requires a current-focus decision");
+    if (!workspace.prioritizeAction || primary.entryReason !== workspace.prioritizeAction) {
+      throw new Error("current-focus decision does not match the dashboard action that opened this workspace");
+    }
+    if (primary.entryReason === "pick") {
+      if (workspace.experimentGroupId || primary.selection.kind === "none" || primary.sunsetCurrentGroup) {
+        throw new Error("a pick workspace must select one next change group without sunsetting another");
+      }
+    } else {
+      if (!workspace.experimentGroupId || !primary.sunsetCurrentGroup) {
+        throw new Error("a sunset workspace must close its current focused change group");
+      }
+      if (primary.sunsetCurrentGroup.experimentGroupId !== workspace.experimentGroupId) {
+        throw new Error("sunset draft must close the group selected by the dashboard");
+      }
+    }
+    const focusGoalIds = primary.organizedGoalIds;
+    if (primary.selection.kind === "new") {
+      const groupGoalIds = primary.selection.organizedGoalIds;
+      if (groupGoalIds.length !== focusGoalIds.length || groupGoalIds.some(id => !focusGoalIds.includes(id))) {
+        throw new Error("new focused group goals must exactly match the selected priority goals");
+      }
+    }
+    for (const operation of operations) {
+      if (operation.type === "upsert_organized_goal" && focusGoalIds.includes(operation.id ?? "") && operation.status && operation.status !== "active") {
+        throw new Error("a current-focus draft cannot sunset or archive a selected priority goal");
+      }
+    }
+  }
   if (mode !== "actionable_experiment" && operations.some(operation => operation.type === "create_actionable_experiment")) {
     throw new Error("only an actionable-experiment workspace may create an actionable");
+  }
+  if (mode !== "prioritize" && operations.some(operation => operation.type === "set_current_focus")) {
+    throw new Error("only a prioritize workspace may change the current focus");
   }
   // A full group upsert replaces its selected goal membership, targets, and
   // linked projects. Letting a goal/habit/environment workspace carry one as a
@@ -771,6 +838,7 @@ function toMcpWorkspace(workspace: NonNullable<ReturnType<typeof getCollaboratio
     primaryEntityType: workspace.primaryEntityType,
     primaryEntityId: workspace.primaryEntityId,
     experimentGroupId: workspace.experimentGroupId,
+    prioritizeAction: workspace.prioritizeAction,
     userSeedMd: workspace.userSeedMd,
     selectedOrganizedGoalIds: workspace.selectedOrganizedGoalIds,
     draft: toMcpDraft(latestDraft(workspace)),
@@ -814,8 +882,10 @@ function markdownForContext(
           ? context.candidates
           : section === "groups"
             ? context.feed.groups
-            : section === "actionable_history"
+      : section === "actionable_history"
               ? (group && "actionables" in group ? group.actionables : context.feed.actionables)
+              : section === "current_focus"
+                ? { currentFocus: context.feed.currentFocus, focusHistory: context.feed.focusHistory }
               : section === "projects"
                 ? context.raw.projects
                 : section === "experiences"

@@ -31,6 +31,7 @@ collaborationRoutes.post("/invites", async c => {
       mode: body.mode,
       primaryEntityId: body.primaryEntityId,
       experimentGroupId: body.experimentGroupId,
+      prioritizeAction: body.prioritizeAction,
       userSeedMd: body.userSeedMd,
       selectedOrganizedGoalIds: body.selectedOrganizedGoalIds,
     });

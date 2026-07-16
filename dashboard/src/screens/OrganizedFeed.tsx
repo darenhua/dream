@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarCheck, CalendarDays, Check, GripVertical, ListChecks, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { CalendarCheck, CalendarDays, Check, ListChecks, Pencil, Plus, Sparkles, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { CollaborationDialog, type CollaborationLaunch } from "@/components/CollaborationDialog";
 import { DetailModal } from "@/components/DetailModal";
 import {
@@ -19,8 +19,10 @@ import {
   type ActionableExperimentRow,
   type CollaborationInviteStatus,
   type CollaborationMode,
+  type CurrentFocusRow,
   type ExperimentGroupRow,
   type OrganizedEntityDetail,
+  type OrganizedDetailEntityType,
   type OrganizedFeedRow,
   type OrganizedGoalRow,
   type OrganizedPrimaryEntityType,
@@ -35,14 +37,14 @@ const EMPTY_FEED: OrganizedFeedRow = {
   environment: [],
   groups: [],
   actionables: [],
+  currentFocus: null,
 };
 
-type DetailTarget = { type: OrganizedPrimaryEntityType; id: string };
+type DetailTarget = { type: OrganizedDetailEntityType; id: string };
 type RawSourceTarget = {
   entityType: "goal" | "habit" | "environment_item" | "experience" | "experiment" | "project";
   entityId: string;
 };
-type GoalList = "priority" | "out";
 type TrackedCollaborationInvite = { id: string; dashboardCapability: string };
 
 const COLLABORATION_INVITES_STORAGE_KEY = "dream-coach:collaboration-invites:v1";
@@ -137,9 +139,6 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
   const [detailTarget, setDetailTarget] = useState<DetailTarget | null>(null);
   const [rawDetailTarget, setRawDetailTarget] = useState<RawSourceTarget | null>(null);
   const [sourceConversationId, setSourceConversationId] = useState<string | null>(null);
-  const [draggedGoalId, setDraggedGoalId] = useState<string | null>(null);
-  const [priorityBusy, setPriorityBusy] = useState(false);
-  const [priorityError, setPriorityError] = useState<string | null>(null);
 
   const openCollaborations = useMemo(
     () =>
@@ -149,8 +148,17 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
 
   const feed = data ?? EMPTY_FEED;
   const activeGoals = useMemo(() => sortedGoals(feed.goals.filter(goal => goal.status === "active")), [feed.goals]);
-  const priorityGoals = useMemo(() => activeGoals.filter(goal => goal.priorityRank !== null), [activeGoals]);
-  const outOfPriorityGoals = useMemo(() => activeGoals.filter(goal => goal.priorityRank === null), [activeGoals]);
+  const currentFocus = feed.currentFocus;
+  const focusedGoals = useMemo(() => {
+    if (!currentFocus) return [];
+    const byId = new Map(feed.goals.map(goal => [goal.id, goal]));
+    // currentFocus.goals is deliberately ordered by the reviewed decision.
+    return currentFocus.goals
+      .map(goal => byId.get(goal.id))
+      .filter((goal): goal is OrganizedGoalRow => Boolean(goal));
+  }, [currentFocus, feed.goals]);
+  const focusedGoalIds = useMemo(() => new Set(focusedGoals.map(goal => goal.id)), [focusedGoals]);
+  const outOfFocusGoals = useMemo(() => activeGoals.filter(goal => !focusedGoalIds.has(goal.id)), [activeGoals, focusedGoalIds]);
   const sunsetGoals = useMemo(() => feed.goals.filter(goal => goal.status === "sunset"), [feed.goals]);
 
   const openLaunch = (next: Omit<CollaborationLaunch, "key">) => setLaunch({ ...next, key: launchKey() });
@@ -165,27 +173,6 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
       persistTrackedInvites(next);
       return next;
     });
-  };
-
-  const moveGoal = async (destination: GoalList, beforeId?: string) => {
-    if (!draggedGoalId || priorityBusy) return;
-    const priorityIds = priorityGoals.map(goal => goal.id).filter(id => id !== draggedGoalId);
-    const outIds = outOfPriorityGoals.map(goal => goal.id).filter(id => id !== draggedGoalId);
-    const target = destination === "priority" ? priorityIds : outIds;
-    const insertAt = beforeId ? target.indexOf(beforeId) : -1;
-    target.splice(insertAt >= 0 ? insertAt : target.length, 0, draggedGoalId);
-
-    setPriorityBusy(true);
-    setPriorityError(null);
-    try {
-      await api.reorderOrganizedGoalPriority(priorityIds, outIds);
-      await refresh();
-    } catch (cause) {
-      setPriorityError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPriorityBusy(false);
-      setDraggedGoalId(null);
-    }
   };
 
   return (
@@ -205,12 +192,6 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
           Could not load organized state: {error}
         </p>
       )}
-      {priorityError && (
-        <p className="rounded-lg border border-destructive/50 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          Could not update priority: {priorityError}
-        </p>
-      )}
-
       {openCollaborations.length > 0 && (
         <Card className="border-amber-300 bg-amber-50/60 py-4 dark:border-amber-900 dark:bg-amber-950/30">
           <CardHeader className="px-4">
@@ -233,6 +214,7 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
                     inviteId: status.invite.id,
                     changeSetId: status.changeSet?.id,
                     dashboardCapability: tracked.dashboardCapability,
+                    prioritizeAction: status.invite.prioritizeAction ?? undefined,
                   })
                 }
               >
@@ -251,13 +233,38 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
         </Card>
       )}
 
+      <CurrentFocusCard
+        focus={currentFocus}
+        onOpenGroup={id => setDetailTarget({ type: "experiment_group", id })}
+        onOpenGoal={id => setDetailTarget({ type: "organized_goal", id })}
+        onPick={() =>
+          openLaunch({
+            mode: "prioritize",
+            prioritizeAction: "pick",
+            title: "pick a current change group",
+            userSeedMd: "I want to choose my next current change group and the organized goals it should serve.",
+          })
+        }
+        onSunset={focus =>
+          openLaunch({
+            mode: "prioritize",
+            prioritizeAction: "sunset",
+            experimentGroupId: focus.group.id,
+            title: `sunset ${focus.group.title}`,
+            userSeedMd: `I want to review and sunset ${focus.group.title}, then decide whether another change group should become current.`,
+          })
+        }
+      />
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="py-4">
           <CardHeader className="px-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-base font-medium">organized goals</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">Drag between priority and out of priority. The MCP never chooses this for you.</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  A reviewed current-focus decision selects and orders these goals. Goals are never reprioritized by direct drag.
+                </p>
               </div>
               <Button
                 variant="outline"
@@ -270,13 +277,9 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
           </CardHeader>
           <CardContent className="grid gap-3 px-4 sm:grid-cols-2">
             <GoalColumn
-              title="in priority"
-              goals={priorityGoals}
-              list="priority"
-              draggedGoalId={draggedGoalId}
-              busy={priorityBusy}
-              onDragStart={setDraggedGoalId}
-              onDrop={beforeId => void moveGoal("priority", beforeId)}
+              title="current focus"
+              goals={focusedGoals}
+              emptyMessage={currentFocus ? "The current group has no visible active goals." : "Pick a change group to establish a current focus."}
               onOpen={id => setDetailTarget({ type: "organized_goal", id })}
               onEdit={goal =>
                 openLaunch({
@@ -289,13 +292,9 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
               }
             />
             <GoalColumn
-              title="out of priority"
-              goals={outOfPriorityGoals}
-              list="out"
-              draggedGoalId={draggedGoalId}
-              busy={priorityBusy}
-              onDragStart={setDraggedGoalId}
-              onDrop={beforeId => void moveGoal("out", beforeId)}
+              title="other active goals"
+              goals={outOfFocusGoals}
+              emptyMessage="All active goals are represented in the current focus."
               onOpen={id => setDetailTarget({ type: "organized_goal", id })}
               onEdit={goal =>
                 openLaunch({
@@ -364,6 +363,7 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
 
         <GroupsCard
           groups={feed.groups}
+          currentFocus={currentFocus}
           onChanged={changed}
           onCreate={() => openLaunch({ mode: "experiment_group", title: "start a change group" })}
           onOpen={id => setDetailTarget({ type: "experiment_group", id })}
@@ -384,10 +384,20 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
               experimentGroupId: group.id,
             })
           }
+          onSunsetFocus={focus =>
+            openLaunch({
+              mode: "prioritize",
+              prioritizeAction: "sunset",
+              experimentGroupId: focus.group.id,
+              title: `sunset ${focus.group.title}`,
+              userSeedMd: `I want to review and sunset ${focus.group.title}, then decide whether another change group should become current.`,
+            })
+          }
         />
 
         <ActionablesCard
           rows={feed.actionables}
+          currentGroupId={currentFocus?.group.id ?? null}
           onOpen={id => setDetailTarget({ type: "actionable_experiment", id })}
           onChanged={changed}
         />
@@ -441,54 +451,98 @@ export function OrganizedFeed({ tick, onChanged }: { tick: number; onChanged: ()
   );
 }
 
+function CurrentFocusCard({
+  focus,
+  onOpenGroup,
+  onOpenGoal,
+  onPick,
+  onSunset,
+}: {
+  focus: CurrentFocusRow | null;
+  onOpenGroup: (id: string) => void;
+  onOpenGoal: (id: string) => void;
+  onPick: () => void;
+  onSunset: (focus: CurrentFocusRow) => void;
+}) {
+  if (!focus) {
+    return (
+      <Card className="border-dashed py-4">
+        <CardHeader className="px-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-medium">current focus</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                No change group is current. Candidate groups are safe to keep collecting until you explicitly pick one.
+              </p>
+            </div>
+            <Button size="sm" onClick={onPick}>
+              <Sparkles className="size-3.5" /> pick change group
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-primary/40 py-4">
+      <CardHeader className="px-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base font-medium">current focus</CardTitle>
+              <Badge variant="secondary">one active group</Badge>
+            </div>
+            <button className="mt-1 max-w-full text-left text-sm font-medium hover:underline" onClick={() => onOpenGroup(focus.group.id)}>
+              {focus.group.title}
+            </button>
+            {focus.reasoningMd && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{focus.reasoningMd}</p>}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => onSunset(focus)}>
+            sunset change group
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="px-4">
+        <p className="mb-1.5 text-xs font-medium uppercase text-muted-foreground">selected organized goals</p>
+        {focus.goals.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {focus.goals.map((goal, index) => (
+              <button
+                key={goal.id}
+                className="rounded-full border bg-background px-2.5 py-1 text-left text-xs hover:bg-muted"
+                onClick={() => onOpenGoal(goal.id)}
+              >
+                <span className="mr-1 text-muted-foreground">{index + 1}.</span>{goal.title}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">No goals were returned with this focus record.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function GoalColumn({
   title,
   goals,
-  list,
-  draggedGoalId,
-  busy,
-  onDragStart,
-  onDrop,
+  emptyMessage,
   onOpen,
   onEdit,
 }: {
   title: string;
   goals: OrganizedGoalRow[];
-  list: GoalList;
-  draggedGoalId: string | null;
-  busy: boolean;
-  onDragStart: (id: string) => void;
-  onDrop: (beforeId?: string) => void;
+  emptyMessage: string;
   onOpen: (id: string) => void;
   onEdit: (goal: OrganizedGoalRow) => void;
 }) {
   return (
-    <section
-      className="flex min-h-28 flex-col gap-1.5 rounded-lg border border-dashed p-2"
-      onDragOver={event => event.preventDefault()}
-      onDrop={event => {
-        event.preventDefault();
-        onDrop();
-      }}
-    >
+    <section className="flex min-h-28 flex-col gap-1.5 rounded-lg border border-dashed p-2">
       <p className="px-1 text-xs font-medium uppercase text-muted-foreground">{title}</p>
       {goals.map(goal => (
-        <div
-          key={goal.id}
-          draggable={!busy}
-          onDragStart={() => onDragStart(goal.id)}
-          onDragOver={event => event.preventDefault()}
-          onDrop={event => {
-            event.preventDefault();
-            event.stopPropagation();
-            onDrop(goal.id);
-          }}
-          className={cn(
-            "flex items-center gap-1 rounded-md border bg-background p-1.5",
-            draggedGoalId === goal.id && "opacity-50",
-          )}
-        >
-          <GripVertical className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div key={goal.id} className="flex items-center gap-1 rounded-md border bg-background p-1.5">
           <button className="min-w-0 flex-1 text-left text-sm" onClick={() => onOpen(goal.id)}>
             <span className="block truncate">{goal.title}</span>
             {goal.identityClause && <span className="block truncate text-xs text-muted-foreground">{goal.identityClause}</span>}
@@ -504,8 +558,7 @@ function GoalColumn({
           </Button>
         </div>
       ))}
-      {goals.length === 0 && <p className="px-1 py-3 text-xs text-muted-foreground">drop a goal here</p>}
-      {list === "priority" && goals.length > 0 && <p className="px-1 text-[11px] text-muted-foreground">Ordered by your current focus.</p>}
+      {goals.length === 0 && <p className="px-1 py-3 text-xs text-muted-foreground">{emptyMessage}</p>}
     </section>
   );
 }
@@ -586,28 +639,38 @@ function RegistryCard({
 
 function GroupsCard({
   groups,
+  currentFocus,
   onChanged,
   onCreate,
   onOpen,
   onEdit,
   onCraftActionable,
+  onSunsetFocus,
 }: {
   groups: ExperimentGroupRow[];
+  currentFocus: CurrentFocusRow | null;
   onChanged: () => void;
   onCreate: () => void;
   onOpen: (id: string) => void;
   onEdit: (group: ExperimentGroupRow) => void;
   onCraftActionable: (group: ExperimentGroupRow) => void;
+  onSunsetFocus: (focus: CurrentFocusRow) => void;
 }) {
-  const active = groups.filter(group => group.status === "active");
-  const closed = groups.filter(group => group.status !== "active");
+  const currentGroup = currentFocus
+    ? groups.find(group => group.id === currentFocus.group.id) ?? currentFocus.group
+    : null;
+  const candidates = groups.filter(group => group.status === "candidate");
+  const closed = groups.filter(group => group.status === "done" || group.status === "sunset");
+  const archivedCount = groups.filter(group => group.status === "archived").length;
   return (
     <Card className="py-4 lg:col-span-2">
       <CardHeader className="px-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle className="text-base font-medium">change groups</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Long-lived change stories. They end only when you explicitly mark them done or sunset.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              New groups are candidates. Only a reviewed focus decision can make one current; ending one happens through the same review flow.
+            </p>
           </div>
           <Button variant="outline" size="sm" onClick={onCreate}>
             <Plus className="size-3.5" /> group
@@ -615,18 +678,34 @@ function GroupsCard({
         </div>
       </CardHeader>
       <CardContent className="grid gap-2 px-4 md:grid-cols-2">
-        {active.map(group => (
-          <GroupRow key={group.id} group={group} onChanged={onChanged} onOpen={onOpen} onEdit={onEdit} onCraftActionable={onCraftActionable} />
-        ))}
-        {active.length === 0 && (
+        {currentGroup ? (
+          <CurrentGroupRow
+            group={currentGroup}
+            focus={currentFocus!}
+            onChanged={onChanged}
+            onOpen={onOpen}
+            onEdit={onEdit}
+            onCraftActionable={onCraftActionable}
+            onSunsetFocus={onSunsetFocus}
+          />
+        ) : (
           <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground md:col-span-2">
-            No active change groups. Start from a theme you name and the organized goals you explicitly choose it to serve.
+            No current change group. Use Pick change group above when you are ready; creating a group only adds a candidate.
           </p>
         )}
-        {closed.length > 0 && <p className="text-xs text-muted-foreground md:col-span-2">{closed.length} done or sunset group{closed.length === 1 ? "" : "s"}</p>}
+        {candidates.length > 0 && (
+          <section className="grid gap-2 border-t pt-3 md:col-span-2 md:grid-cols-2">
+            <p className="text-xs font-medium uppercase text-muted-foreground md:col-span-2">candidate groups</p>
+            {candidates.map(group => (
+              <CandidateGroupRow key={group.id} group={group} onOpen={onOpen} onEdit={onEdit} />
+            ))}
+          </section>
+        )}
+        {closed.length > 0 && <p className="mt-1 text-xs text-muted-foreground md:col-span-2">{closed.length} done or sunset group{closed.length === 1 ? "" : "s"}</p>}
         {closed.map(group => (
           <ClosedGroupRow key={group.id} group={group} onOpen={onOpen} />
         ))}
+        {archivedCount > 0 && <p className="text-xs text-muted-foreground md:col-span-2">{archivedCount} archived group{archivedCount === 1 ? "" : "s"} hidden from this working list.</p>}
       </CardContent>
     </Card>
   );
@@ -648,22 +727,57 @@ function ClosedGroupRow({ group, onOpen }: { group: ExperimentGroupRow; onOpen: 
   );
 }
 
-function GroupRow({
+function CandidateGroupRow({
   group,
+  onOpen,
+  onEdit,
+}: {
+  group: ExperimentGroupRow;
+  onOpen: (id: string) => void;
+  onEdit: (group: ExperimentGroupRow) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-dashed p-3">
+      <button className="min-w-0 text-left" onClick={() => onOpen(group.id)}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-medium">{group.title}</span>
+          <Badge variant="outline">candidate</Badge>
+        </div>
+        {group.motivationMd && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{group.motivationMd}</p>}
+      </button>
+      {group.goals.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {group.goals.map(goal => <Badge key={goal.id} variant="secondary">{goal.title}</Badge>)}
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>Available in the next reviewed pick.</span>
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEdit(group)}>
+          <Pencil className="size-3" /> continue
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CurrentGroupRow({
+  group,
+  focus,
   onChanged,
   onOpen,
   onEdit,
   onCraftActionable,
+  onSunsetFocus,
 }: {
   group: ExperimentGroupRow;
+  focus: CurrentFocusRow;
   onChanged: () => void;
   onOpen: (id: string) => void;
   onEdit: (group: ExperimentGroupRow) => void;
   onCraftActionable: (group: ExperimentGroupRow) => void;
+  onSunsetFocus: (focus: CurrentFocusRow) => void;
 }) {
   const doneTargets = group.targets.filter(target => target.status === "done").length;
-  const [closing, setClosing] = useState<"done" | "sunset" | null>(null);
-  const [closingReview, setClosingReview] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -672,22 +786,6 @@ function GroupRow({
     setError(null);
     try {
       await api.markExperimentGroupTarget(group.id, target.id, target.status !== "done");
-      onChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const close = async () => {
-    if (!closing) return;
-    setBusy("close");
-    setError(null);
-    try {
-      await api.closeExperimentGroup(group.id, closing, closingReview.trim() || undefined);
-      setClosing(null);
-      setClosingReview("");
       onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -742,34 +840,10 @@ function GroupRow({
         <Button size="sm" className="h-7 px-2 text-xs" onClick={() => onCraftActionable(group)}>
           <CalendarDays className="size-3" /> craft week
         </Button>
-        {!closing && (
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setClosing("done")}>
-            close group
-          </Button>
-        )}
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onSunsetFocus(focus)}>
+          sunset group
+        </Button>
       </div>
-      {closing && (
-        <div className="space-y-2 rounded-md border bg-muted/30 p-2">
-          <p className="text-xs font-medium">close as {closing}</p>
-          <Textarea
-            value={closingReview}
-            onChange={event => setClosingReview(event.target.value)}
-            placeholder="What changed or why you are sunsetting this? (optional)"
-            className="min-h-16 text-xs"
-          />
-          <div className="flex gap-1.5">
-            <Button size="sm" className="h-7 px-2 text-xs" disabled={busy === "close"} onClick={() => void close()}>
-              {busy === "close" ? "closing…" : `mark ${closing}`}
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setClosing(closing === "done" ? "sunset" : "done")}>
-              use {closing === "done" ? "sunset" : "done"}
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setClosing(null)}>
-              cancel
-            </Button>
-          </div>
-        </div>
-      )}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
@@ -777,15 +851,22 @@ function GroupRow({
 
 function ActionablesCard({
   rows,
+  currentGroupId,
   onOpen,
   onChanged,
 }: {
   rows: ActionableExperimentRow[];
+  currentGroupId: string | null;
   onOpen: (id: string) => void;
   onChanged: () => void;
 }) {
-  const current = rows.filter(row => row.status === "queued" || row.status === "scheduling" || row.status === "running");
-  const recent = rows.filter(row => !current.includes(row)).slice(0, 5);
+  const live = rows.filter(row => row.status === "queued" || row.status === "scheduling" || row.status === "running");
+  const current = currentGroupId ? live.filter(row => row.experimentGroupId === currentGroupId) : [];
+  // The invariant prevents live actionables for any other group. Retaining an
+  // unexpected one in the recent list makes a migration/data issue visible
+  // without treating it as runnable from this screen.
+  const unexpectedLive = live.filter(row => !current.includes(row));
+  const recent = [...unexpectedLive, ...rows.filter(row => !live.includes(row))].slice(0, 5);
   return (
     <Card className="py-4 lg:col-span-2">
       <CardHeader className="px-4">
@@ -793,7 +874,7 @@ function ActionablesCard({
           <ListChecks className="size-4" />
           <div>
             <CardTitle className="text-base font-medium">current and recent actionables</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Only a reviewed weekly actionable can become runnable. Calendar work is still separately confirmed.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Only the current change group can receive a reviewed weekly actionable. Calendar work is still separately confirmed.</p>
           </div>
         </div>
       </CardHeader>
@@ -803,7 +884,7 @@ function ActionablesCard({
         ))}
         {rows.length === 0 && (
           <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground md:col-span-2">
-            Start a weekly actionable from an active change group when you are ready. Nothing will be drafted or queued automatically.
+            Pick a current change group, then start a weekly actionable when you are ready. Nothing will be drafted or queued automatically.
           </p>
         )}
       </CardContent>

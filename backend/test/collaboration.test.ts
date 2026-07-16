@@ -7,6 +7,8 @@ import {
   collaborationInvite,
   collaborationWorkspace,
   collaborationWorkspaceIndex,
+  currentFocus,
+  currentFocusGoal,
   draftChangeSet,
   event,
   experiment,
@@ -30,7 +32,6 @@ import {
 } from "../src/services/collaboration";
 import { seedConfig } from "../src/services/config";
 import { archiveExperiment, enqueueExperiment, listQueue, pickExperiment } from "../src/services/experiments";
-import { closeExperimentGroup } from "../src/services/organized";
 
 function rawGoal(title = "own my mornings") {
   return db.insert(goal).values({ title, status: "active", origin: "derived" }).returning().get();
@@ -45,7 +46,6 @@ function newGoalDraft(sourceGoalId: string, title = "higher agency") {
         title,
         identityClause: "I act on what matters instead of waiting to feel ready.",
         synthesisMd: "This is a reviewed synthesis, not a raw proposal replacement.",
-        priorityRank: 0,
         sources: [{ entityType: "goal" as const, entityId: sourceGoalId }],
       },
     ],
@@ -56,18 +56,19 @@ function newGoalDraft(sourceGoalId: string, title = "higher agency") {
 function organizedGoalFixture(rawGoalId: string, title = "higher agency") {
   const row = db
     .insert(organizedGoal)
-    .values({ title, identityClause: null, synthesisMd: null, priorityRank: 0, status: "active" })
+    .values({ title, identityClause: null, synthesisMd: null, priorityRank: null, status: "active" })
     .returning()
     .get();
   db.insert(organizedGoalSource).values({ organizedGoalId: row.id, entityType: "goal", entityId: rawGoalId }).run();
   return row;
 }
 
-function applyGroup(organizedGoalId: string, title = "make room for music") {
+function createCandidateGroup(organizedGoalIds: string | string[], title = "make room for music") {
+  const selectedOrganizedGoalIds = Array.isArray(organizedGoalIds) ? organizedGoalIds : [organizedGoalIds];
   const { code } = createCollaborationInvite({
     mode: "experiment_group",
     userSeedMd: title,
-    selectedOrganizedGoalIds: [organizedGoalId],
+    selectedOrganizedGoalIds,
   });
   const { workspace } = redeemCollaborationCode(code);
   const draft = saveCollaborationDraft(workspace.id, {
@@ -77,7 +78,7 @@ function applyGroup(organizedGoalId: string, title = "make room for music") {
         type: "upsert_experiment_group",
         title,
         motivationMd: "This is why the change matters.",
-        organizedGoalIds: [organizedGoalId],
+        organizedGoalIds: selectedOrganizedGoalIds,
         targets: [{ kind: "project", title: "finish one song", status: "pending" }],
       },
     ],
@@ -86,6 +87,73 @@ function applyGroup(organizedGoalId: string, title = "make room for music") {
   const applied = applyCollaborationChangeSet(draft.id);
   if (!applied.ok) throw new Error(applied.error);
   return db.select().from(experimentGroup).where(eq(experimentGroup.title, title)).get()!;
+}
+
+function applyPickFocus(groupId: string, organizedGoalIds: string[]) {
+  const { code } = createCollaborationInvite({
+    mode: "prioritize",
+    prioritizeAction: "pick",
+    userSeedMd: "Choose this change group and its goal focus.",
+  });
+  const { workspace } = redeemCollaborationCode(code);
+  const draft = saveCollaborationDraft(workspace.id, {
+    summaryMd: "# Pick current focus\n\nThis reviewed decision makes one candidate group current.",
+    operations: [
+      {
+        type: "set_current_focus",
+        entryReason: "pick",
+        selection: { kind: "existing", experimentGroupId: groupId },
+        organizedGoalIds,
+        reasoningMd: "This is the change group and set of goals I am choosing to serve now.",
+      },
+    ],
+  });
+  submitCollaborationDraft(workspace.id);
+  const applied = applyCollaborationChangeSet(draft.id);
+  if (!applied.ok) throw new Error(applied.error);
+  return applied;
+}
+
+function saveSunsetFocusDraft(
+  currentGroupId: string,
+  input: {
+    selection: { kind: "existing"; experimentGroupId: string } | { kind: "none" };
+    organizedGoalIds: string[];
+    status?: "done" | "sunset";
+  },
+) {
+  const { code } = createCollaborationInvite({
+    mode: "prioritize",
+    prioritizeAction: "sunset",
+    experimentGroupId: currentGroupId,
+    userSeedMd: "Close this current group and decide what comes next.",
+  });
+  const { workspace } = redeemCollaborationCode(code);
+  const draft = saveCollaborationDraft(workspace.id, {
+    summaryMd: "# Sunset current focus\n\nThis reviewed decision closes the current group before changing focus.",
+    operations: [
+      {
+        type: "set_current_focus",
+        entryReason: "sunset",
+        selection: input.selection,
+        organizedGoalIds: input.organizedGoalIds,
+        reasoningMd: "The current change has reached a deliberate stopping point.",
+        sunsetCurrentGroup: {
+          experimentGroupId: currentGroupId,
+          status: input.status ?? "sunset",
+          closingReviewMd: "A user-reviewed closing note.",
+        },
+      },
+    ],
+  });
+  submitCollaborationDraft(workspace.id);
+  return draft;
+}
+
+function applyFocusedGroup(organizedGoalId: string, title = "make room for music") {
+  const group = createCandidateGroup(organizedGoalId, title);
+  applyPickFocus(group.id, [organizedGoalId]);
+  return db.select().from(experimentGroup).where(eq(experimentGroup.id, group.id)).get()!;
 }
 
 beforeEach(() => {
@@ -279,7 +347,7 @@ describe("collaboration invites and change sets", () => {
     if (!applied.ok) throw new Error(applied.error);
 
     const created = db.select().from(organizedGoal).where(eq(organizedGoal.title, "higher agency")).get()!;
-    expect(created.priorityRank).toBe(0);
+    expect(created.priorityRank).toBeNull();
     expect(
       db
         .select()
@@ -327,8 +395,13 @@ describe("collaboration invites and change sets", () => {
     const raw = rawGoal();
     const organized = organizedGoalFixture(raw.id);
 
-    const group = applyGroup(organized.id);
+    const group = createCandidateGroup(organized.id);
 
+    // Creating a group is intentionally not the same decision as making it
+    // current. The dashboard can safely collect several candidates before a
+    // separate reviewed prioritize conversation picks one.
+    expect(group.status).toBe("candidate");
+    expect(db.select().from(currentFocus).all()).toHaveLength(0);
     expect(
       db
         .select()
@@ -340,10 +413,10 @@ describe("collaboration invites and change sets", () => {
     expect(db.select().from(outboundMessage).all()).toHaveLength(0);
   });
 
-  test("closing a group requires its live weekly actionable to be explicitly resolved first", () => {
+  test("sunsetting current focus requires its live weekly actionable to be explicitly resolved first", () => {
     const raw = rawGoal();
     const organized = organizedGoalFixture(raw.id);
-    const group = applyGroup(organized.id);
+    const group = applyFocusedGroup(organized.id);
     const actionable = db
       .insert(experiment)
       .values({
@@ -356,9 +429,119 @@ describe("collaboration invites and change sets", () => {
       .returning()
       .get();
 
-    expect(() => closeExperimentGroup(group.id, "sunset")).toThrow("resolve weekly actionable");
+    const sunsetDraft = saveSunsetFocusDraft(group.id, { selection: { kind: "none" }, organizedGoalIds: [] });
+    const blocked = applyCollaborationChangeSet(sunsetDraft.id);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.error).toContain("resolve weekly actionable");
+    expect(db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get()?.experimentGroupId).toBe(group.id);
     expect(archiveExperiment(actionable.id).ok).toBe(true);
-    expect(closeExperimentGroup(group.id, "sunset")?.status).toBe("sunset");
+    expect(applyCollaborationChangeSet(sunsetDraft.id).ok).toBe(true);
+    expect(db.select().from(experimentGroup).where(eq(experimentGroup.id, group.id)).get()?.status).toBe("sunset");
+    expect(db.select().from(currentFocus).where(eq(currentFocus.status, "current")).all()).toHaveLength(0);
+  });
+
+  test("a reviewed pick establishes exactly one current group and ordered focus set", () => {
+    const raw = rawGoal();
+    const first = organizedGoalFixture(raw.id, "higher agency");
+    const second = organizedGoalFixture(raw.id, "make more music");
+    const candidate = createCandidateGroup([first.id, second.id], "make agency practical");
+
+    // The group must serve the same goals that the focus decision selects.
+    applyPickFocus(candidate.id, [second.id, first.id]);
+
+    const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get()!;
+    expect(focus).toMatchObject({ experimentGroupId: candidate.id, entryReason: "pick", previousCurrentFocusId: null });
+    expect(db.select().from(experimentGroup).where(eq(experimentGroup.id, candidate.id)).get()?.status).toBe("active");
+    expect(
+      db
+        .select()
+        .from(currentFocusGoal)
+        .where(eq(currentFocusGoal.currentFocusId, focus.id))
+        .all()
+        .sort((left, right) => left.priorityRank - right.priorityRank)
+        .map(row => row.organizedGoalId),
+    ).toEqual([second.id, first.id]);
+    expect(db.select().from(organizedGoal).where(eq(organizedGoal.id, second.id)).get()?.priorityRank).toBe(0);
+    expect(db.select().from(organizedGoal).where(eq(organizedGoal.id, first.id)).get()?.priorityRank).toBe(1);
+
+    const otherCandidate = createCandidateGroup(second.id, "a later candidate");
+    expect(() => applyPickFocus(otherCandidate.id, [second.id])).toThrow("current focus");
+    expect(db.select().from(currentFocus).where(eq(currentFocus.status, "current")).all()).toHaveLength(1);
+    expect(db.select().from(experimentGroup).where(eq(experimentGroup.id, otherCandidate.id)).get()?.status).toBe("candidate");
+  });
+
+  test("legacy direct priority and close endpoints fail closed", async () => {
+    const raw = rawGoal();
+    const organized = organizedGoalFixture(raw.id);
+    const group = applyFocusedGroup(organized.id);
+
+    const priority = await app.request("/api/organized/goals/priority", {
+      method: "POST",
+      body: JSON.stringify({ prioritizedIds: [], outOfPriorityIds: [organized.id] }),
+    });
+    const close = await app.request(`/api/organized/groups/${group.id}/close`, {
+      method: "POST",
+      body: JSON.stringify({ status: "sunset" }),
+    });
+
+    expect(priority.status).toBe(409);
+    expect(close.status).toBe(409);
+    expect(db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get()?.experimentGroupId).toBe(group.id);
+  });
+
+  test("a reviewed sunset can replace current focus while retaining lineage and closing the old group", () => {
+    const raw = rawGoal();
+    const oldGoal = organizedGoalFixture(raw.id, "higher agency");
+    const nextGoal = organizedGoalFixture(raw.id, "make more music");
+    const oldGroup = createCandidateGroup(oldGoal.id, "make agency practical");
+    const nextGroup = createCandidateGroup(nextGoal.id, "make music practical");
+    applyPickFocus(oldGroup.id, [oldGoal.id]);
+    const oldFocus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get()!;
+
+    const sunsetDraft = saveSunsetFocusDraft(oldGroup.id, {
+      selection: { kind: "existing", experimentGroupId: nextGroup.id },
+      organizedGoalIds: [nextGoal.id],
+      status: "done",
+    });
+    const applied = applyCollaborationChangeSet(sunsetDraft.id);
+    expect(applied.ok).toBe(true);
+
+    expect(db.select().from(experimentGroup).where(eq(experimentGroup.id, oldGroup.id)).get()).toMatchObject({ status: "done" });
+    const nextFocus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get()!;
+    expect(nextFocus).toMatchObject({
+      experimentGroupId: nextGroup.id,
+      entryReason: "sunset",
+      previousCurrentFocusId: oldFocus.id,
+    });
+    expect(db.select().from(currentFocus).where(eq(currentFocus.id, oldFocus.id)).get()).toMatchObject({ status: "ended" });
+    expect(db.select().from(experimentGroup).where(eq(experimentGroup.id, nextGroup.id)).get()?.status).toBe("active");
+    expect(db.select().from(organizedGoal).where(eq(organizedGoal.id, oldGoal.id)).get()?.priorityRank).toBeNull();
+    expect(db.select().from(organizedGoal).where(eq(organizedGoal.id, nextGoal.id)).get()?.priorityRank).toBe(0);
+  });
+
+  test("an actionable workspace requires the selected current focus, not merely an active-looking group row", () => {
+    const raw = rawGoal();
+    const organized = organizedGoalFixture(raw.id);
+    const candidate = createCandidateGroup(organized.id);
+
+    expect(() =>
+      createCollaborationInvite({
+        mode: "actionable_experiment",
+        experimentGroupId: candidate.id,
+        userSeedMd: "A small week for this unpicked candidate.",
+      }),
+    ).toThrow("active experiment group");
+
+    // This invalid direct fixture proves the invite gate also checks the
+    // current-focus record rather than trusting a group's status by itself.
+    db.update(experimentGroup).set({ status: "active" }).where(eq(experimentGroup.id, candidate.id)).run();
+    expect(() =>
+      createCollaborationInvite({
+        mode: "actionable_experiment",
+        experimentGroupId: candidate.id,
+        userSeedMd: "A small week for an unselected active-looking row.",
+      }),
+    ).toThrow("current focused change group");
   });
 
   test("a new change-group workspace requires the dashboard's goal selection", () => {
@@ -400,7 +583,7 @@ describe("collaboration invites and change sets", () => {
     const raw = rawGoal();
     const groupGoal = organizedGoalFixture(raw.id, "higher agency");
     const goalBeingEdited = organizedGoalFixture(raw.id, "make more music");
-    const group = applyGroup(groupGoal.id);
+    const group = createCandidateGroup(groupGoal.id);
     const { code } = createCollaborationInvite({
       mode: "organized_goal",
       primaryEntityId: goalBeingEdited.id,
@@ -430,7 +613,7 @@ describe("collaboration invites and change sets", () => {
     const raw = rawGoal();
     const inGroup = organizedGoalFixture(raw.id, "higher agency");
     const outOfGroup = organizedGoalFixture(raw.id, "make more music");
-    const group = applyGroup(inGroup.id);
+    const group = applyFocusedGroup(inGroup.id);
     const { code } = createCollaborationInvite({
       mode: "actionable_experiment",
       experimentGroupId: group.id,
@@ -459,7 +642,7 @@ describe("collaboration invites and change sets", () => {
   test("applying an actionable creates pending scheduled and unscheduled tasks but no calendar or witness rows", () => {
     const raw = rawGoal();
     const organized = organizedGoalFixture(raw.id);
-    const group = applyGroup(organized.id);
+    const group = applyFocusedGroup(organized.id);
     const { code } = createCollaborationInvite({
       mode: "actionable_experiment",
       experimentGroupId: group.id,
@@ -511,7 +694,7 @@ describe("collaboration invites and change sets", () => {
   test("actionable weeks must begin on a Monday", () => {
     const raw = rawGoal();
     const organized = organizedGoalFixture(raw.id);
-    const group = applyGroup(organized.id);
+    const group = applyFocusedGroup(organized.id);
     const { code } = createCollaborationInvite({
       mode: "actionable_experiment",
       experimentGroupId: group.id,

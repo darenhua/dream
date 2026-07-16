@@ -103,6 +103,34 @@ separate dashboard scheduling confirmation happens only after this change set is
 reviewed and applied.
 `,
   },
+  prioritize: {
+    sections: [
+      "primary_context",
+      "current_focus",
+      "organized_items",
+      "raw_candidates",
+      "raw_evidence",
+      "groups",
+      "actionable_history",
+      "projects",
+      "experiences",
+    ],
+    rubric: `
+Primary decision: one dashboard-initiated current-focus decision. The workspace
+will state whether the user pressed Pick change group (when no focus exists) or
+Sunset change group (for the currently focused group).
+
+Help the user compare the finite set of organized goals and candidate change
+groups, using relations and evidence when needed. The result must be one
+reviewable decision: select one existing candidate group, propose one new
+candidate group, or, after a sunset, deliberately leave no current focus. The
+selected goals must exactly equal the selected group's goal scope. There can be
+only one current group and one selected priority-goal set. Do not activate a
+group, reorder priorities, close a group, queue an actionable, or create a
+calendar event directly; those effects occur only if the dashboard approves the
+one atomic draft.
+`,
+  },
 };
 
 export function collaborationInstructions(mode: CollaborationMode): string {
@@ -136,7 +164,7 @@ records.
 `.trim();
   const contracts: Record<CollaborationMode, string> = {
     organized_goal: `
-Primary: \`{type:"upsert_organized_goal", id?, title, identityClause?, synthesisMd?, priorityRank?:number|null, status?:"active"|"sunset", sources?:source_refs}\`.
+Primary: \`{type:"upsert_organized_goal", id?, title, identityClause?, synthesisMd?, status?:"active"|"sunset"|"archived", sources?:source_refs}\`.
 
 Related existing organized goal/habit/environment upserts are allowed only
 when the user clearly asked to revise that existing record as part of this same
@@ -144,18 +172,18 @@ review. A change-group revision requires its own group workspace. Do not create
 a group or a weekly actionable here.
 `,
     organized_habit: `
-Primary: \`{type:"upsert_organized_habit", id?, title, note?, synthesisMd?, status?:"active"|"sunset", sources?:source_refs}\`.
+Primary: \`{type:"upsert_organized_habit", id?, title, note?, synthesisMd?, status?:"active"|"sunset"|"archived", sources?:source_refs}\`.
 
 Never include schedule, recurrence, calendar, or \`create_actionable_experiment\`
 fields in this mode.
 `,
     organized_environment: `
-Primary: \`{type:"upsert_organized_environment", id?, title, note?, synthesisMd?, status?:"active"|"sunset", sources?:source_refs}\`.
+Primary: \`{type:"upsert_organized_environment", id?, title, note?, synthesisMd?, status?:"active"|"sunset"|"archived", sources?:source_refs}\`.
 
 Never include schedule/calendar fields or create an experiment group here.
 `,
     experiment_group: `
-Primary: \`{type:"upsert_experiment_group", id?, title, motivationMd?, status?:"active"|"done"|"sunset", closingReviewMd?, organizedGoalIds:string[], targets?:[{id?,kind:"habit"|"environment"|"experience"|"project",title,detailMd?,status?:"pending"|"done"}], appendContext?:string[], projectIds?:string[], sources?:source_refs}\`.
+Primary: \`{type:"upsert_experiment_group", id?, title, motivationMd?, status?:"candidate"|"done"|"sunset"|"archived", closingReviewMd?, organizedGoalIds:string[], targets?:[{id?,kind:"habit"|"environment"|"experience"|"project",title,detailMd?,status?:"pending"|"done"}], appendContext?:string[], projectIds?:string[], sources?:source_refs}\`.
 
 \`organizedGoalIds\` must exactly equal the goal UUIDs selected in this
 workspace. \`projectIds\` may reference existing raw projects only. Use
@@ -175,6 +203,23 @@ a calendar habit requires \`rrule\` and \`preferredTime\`. These describe an
 approved weekly plan only. They do not start work or create calendar events.
 You may use \`set_group_target_done\` only for an existing target in this same
 group.
+`,
+    prioritize: `
+Primary: \`{type:"set_current_focus", entryReason:"pick"|"sunset", selection, organizedGoalIds:string[], reasoningMd, sunsetCurrentGroup?}\`.
+
+For a Pick workspace, use \`entryReason:"pick"\`, choose either
+\`selection:{kind:"existing",experimentGroupId}\` or
+\`selection:{kind:"new",title,motivationMd?,organizedGoalIds,targets?,appendContext?,projectIds?,sources?}\`,
+and omit \`sunsetCurrentGroup\`. For a Sunset workspace, use
+\`entryReason:"sunset"\` and include
+\`sunsetCurrentGroup:{experimentGroupId,status:"done"|"sunset",closingReviewMd?}\` for the current group. It may then select an existing/new next group, or use \`selection:{kind:"none"}\` with an empty \`organizedGoalIds\` to leave no focus.
+
+For any selected group, \`organizedGoalIds\` must exactly equal that group's
+goal UUIDs and be ordered by priority. Do not include a top-level
+\`upsert_experiment_group\` or change a goal's priority rank: this one primary
+operation is the only focus/activation transition. Related updates to existing
+organized records may be included only when plainly relevant to this same
+reviewed decision.
 `,
   };
   return `${common}\n\n${contracts[mode].trim()}`;

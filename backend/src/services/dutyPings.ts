@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
 import { db } from "../db";
-import { conversation, experiment, experimentGroup, proposal, reviewWriteup } from "../db/schema";
+import { conversation, currentFocus, experiment, experimentGroup, proposal, reviewWriteup } from "../db/schema";
 import { getConfig } from "./config";
 import { enqueueOutbound } from "./outbox";
 import { listWitnesses, scopedGoalIds } from "./witnesses";
@@ -101,7 +101,17 @@ export function runDutyPings(): Record<string, unknown> {
   // starts an experiment. Groups with a queued/scheduling/running actionable
   // are covered; groups with no current running leaf are reported separately
   // so callers can distinguish "next is ready" from "nothing approved yet".
-  const activeGroups = db.select().from(experimentGroup).where(eq(experimentGroup.status, "active")).all();
+  // Coverage belongs only to the deliberately chosen current focus. This keeps
+  // reminder-only accountability from treating old or merely candidate groups
+  // as obligations.
+  const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+  const activeGroups = focus
+    ? db
+        .select()
+        .from(experimentGroup)
+        .where(and(eq(experimentGroup.id, focus.experimentGroupId), eq(experimentGroup.status, "active")))
+        .all()
+    : [];
   const coverageRows = activeGroups.length
     ? db
         .select({ experimentGroupId: experiment.experimentGroupId, status: experiment.status, endedAt: experiment.endedAt })

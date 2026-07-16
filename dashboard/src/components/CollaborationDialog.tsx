@@ -35,6 +35,8 @@ export interface CollaborationLaunch {
   primaryEntityType?: OrganizedPrimaryEntityType;
   primaryEntityId?: string;
   experimentGroupId?: string;
+  /** Pick starts a focus; sunset ends the current one and may choose its successor. */
+  prioritizeAction?: "pick" | "sunset";
   userSeedMd?: string;
   selectedOrganizedGoalIds?: string[];
   /** Browser-held dashboard capability for a previously created invite. */
@@ -75,6 +77,12 @@ const MODE_COPY: Record<CollaborationMode, { heading: string; seedLabel: string;
     seedLabel: "this week's intent",
     seedPlaceholder: "e.g. make one small, real attempt this week",
     helper: "The MCP conversation narrows this to a guilt-free one-week experiment. Scheduling remains a later, separate confirmation.",
+  },
+  prioritize: {
+    heading: "current focus",
+    seedLabel: "what you want to weigh in this focus decision",
+    seedPlaceholder: "e.g. I want to choose the change group that best fits what matters now",
+    helper: "You initiate this decision. The MCP can help you compare candidate groups and goals, but it can only submit one reviewable focus change set for you to approve.",
   },
 };
 
@@ -209,9 +217,12 @@ export function CollaborationDialog({
       const created = await api.createCollaborationInvite({
         mode: launch.mode,
         userSeedMd,
-        primaryEntityType: launch.primaryEntityType ?? launch.mode,
+        // A prioritize workspace has a synthetic current-focus primary on the
+        // server; never send the UI-only mode name as an entity type.
+        primaryEntityType: launch.mode === "prioritize" ? undefined : launch.primaryEntityType ?? launch.mode,
         primaryEntityId: launch.primaryEntityId,
         experimentGroupId: launch.experimentGroupId,
+        prioritizeAction: launch.prioritizeAction,
         selectedOrganizedGoalIds: launch.mode === "experiment_group" ? selectedGoalIds : undefined,
       });
       setInvite(created.invite);
@@ -326,6 +337,14 @@ export function CollaborationDialog({
                   autoFocus
                 />
               </div>
+
+              {launch.mode === "prioritize" && (
+                <p className="rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  {launch.prioritizeAction === "sunset"
+                    ? "This collaboration will first end the current change group with your review note, then may leave no focus or select one candidate/new successor."
+                    : "This collaboration may select one candidate or introduce one new change group, together with the exact organized goals it will serve."}
+                </p>
+              )}
 
               {needsGoalSelection && (
                 <fieldset className="space-y-2 rounded-lg border p-3">

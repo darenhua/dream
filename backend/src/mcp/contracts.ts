@@ -11,6 +11,7 @@ export const collaborationModes = [
   "organized_environment",
   "experiment_group",
   "actionable_experiment",
+  "prioritize",
 ] as const;
 
 export type CollaborationMode = (typeof collaborationModes)[number];
@@ -24,6 +25,7 @@ export const collaborationContextSections = [
   "actionable_history",
   "projects",
   "experiences",
+  "current_focus",
 ] as const;
 
 export type CollaborationContextSection = (typeof collaborationContextSections)[number];
@@ -35,6 +37,8 @@ export interface McpWorkspace {
   primaryEntityType: string;
   primaryEntityId: string | null;
   experimentGroupId: string | null;
+  /** Present only for the dashboard-initiated pick/sunset focus workflow. */
+  prioritizeAction: "pick" | "sunset" | null;
   userSeedMd: string | null;
   selectedOrganizedGoalIds: string[];
   draft: McpDraftChangeSet | null;

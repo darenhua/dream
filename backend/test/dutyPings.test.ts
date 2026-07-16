@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { db, wipeAllTables } from "../src/db";
-import { calendarEvent, experiment, experimentGroup, experimentTask, outboundMessage, witness } from "../src/db/schema";
+import { calendarEvent, currentFocus, experiment, experimentGroup, experimentTask, outboundMessage, witness } from "../src/db/schema";
 import { seedConfig, setConfig } from "../src/services/config";
 import { runDutyPings } from "../src/services/dutyPings";
 import { computeVitals } from "../src/services/vitals";
@@ -11,11 +11,24 @@ function hoursAgo(hours: number) {
 }
 
 function activeGroup(title: string, ageHours: number) {
-  return db
+  const group = db
     .insert(experimentGroup)
-    .values({ title, createdAt: hoursAgo(ageHours), updatedAt: hoursAgo(ageHours) })
+    .values({ title, status: "active", createdAt: hoursAgo(ageHours), updatedAt: hoursAgo(ageHours) })
     .returning()
     .get();
+  // Coverage reminders operate only on the one deliberately selected current
+  // change group, never on a merely drafted candidate.
+  db.insert(currentFocus)
+    .values({
+      experimentGroupId: group.id,
+      status: "current",
+      entryReason: "pick",
+      reasoningMd: "test fixture current focus",
+      sourceChangeSetId: crypto.randomUUID(),
+      startedAt: hoursAgo(ageHours),
+    })
+    .run();
+  return group;
 }
 
 function primaryWitness() {

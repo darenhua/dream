@@ -91,6 +91,7 @@ describe("collaboration MCP transport", () => {
       primaryEntityType: "organized_goal",
       primaryEntityId: null,
       experimentGroupId: null,
+      prioritizeAction: null,
       userSeedMd: "higher agency",
       selectedOrganizedGoalIds: [],
       draft: null,

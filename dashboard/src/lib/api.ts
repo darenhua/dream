@@ -450,14 +450,19 @@ export type CollaborationMode =
   | "organized_habit"
   | "organized_environment"
   | "experiment_group"
-  | "actionable_experiment";
+  | "actionable_experiment"
+  | "prioritize";
 
-export type OrganizedPrimaryEntityType =
+export type OrganizedDetailEntityType =
   | "organized_goal"
   | "organized_habit"
   | "organized_environment"
   | "experiment_group"
   | "actionable_experiment";
+
+// A focus workspace has no standalone detail route, but it is a valid primary
+// entity in collaboration records.
+export type OrganizedPrimaryEntityType = OrganizedDetailEntityType | "current_focus";
 
 export interface OrganizedSourceRef {
   entityType: string;
@@ -476,7 +481,7 @@ export interface OrganizedGoalRow {
   identityClause: string | null;
   synthesisMd: string | null;
   priorityRank: number | null;
-  status: "active" | "sunset";
+  status: "active" | "sunset" | "archived";
   sourceCount?: number;
   sources?: OrganizedSourceRef[];
   createdAt: string;
@@ -488,7 +493,7 @@ export interface OrganizedRegistryRow {
   title: string;
   note: string | null;
   synthesisMd: string | null;
-  status: "active" | "sunset";
+  status: "active" | "sunset" | "archived";
   sourceCount?: number;
   sources?: OrganizedSourceRef[];
   createdAt: string;
@@ -508,7 +513,7 @@ export interface ExperimentGroupRow {
   id: string;
   title: string;
   motivationMd: string | null;
-  status: "active" | "done" | "sunset";
+  status: "candidate" | "active" | "done" | "sunset" | "archived";
   closingReviewMd: string | null;
   goals: Pick<OrganizedGoalRow, "id" | "title" | "priorityRank" | "status">[];
   targets: ExperimentGroupTargetRow[];
@@ -517,6 +522,19 @@ export interface ExperimentGroupRow {
   contexts?: { id: string; textMd: string; createdAt: string }[];
   createdAt: string;
   updatedAt: string;
+}
+
+// There is at most one current focus.  Its goal list is already ordered by
+// the reviewed priority decision, so the dashboard must render it as-is
+// rather than attempting to sort or mutate it locally.
+export interface CurrentFocusRow {
+  id: string;
+  entryReason: "pick" | "sunset";
+  reasoningMd: string;
+  startedAt: string;
+  endedAt: string | null;
+  group: ExperimentGroupRow;
+  goals: Pick<OrganizedGoalRow, "id" | "title" | "priorityRank" | "status">[];
 }
 
 export interface ActionableExperimentRow {
@@ -537,7 +555,7 @@ export interface ActionableExperimentRow {
 }
 
 export interface OrganizedEntityDetail {
-  entityType: OrganizedPrimaryEntityType;
+  entityType: OrganizedDetailEntityType;
   entity: OrganizedGoalRow | OrganizedRegistryRow | ExperimentGroupRow | ActionableExperimentRow;
   sources: OrganizedSourceRef[];
   extractions: CitedExtraction[];
@@ -549,6 +567,9 @@ export interface OrganizedFeedRow {
   environment: OrganizedRegistryRow[];
   groups: ExperimentGroupRow[];
   actionables: ActionableExperimentRow[];
+  currentFocus: CurrentFocusRow | null;
+  /** Optional during rollout; history is read-only and newest-first. */
+  focusHistory?: CurrentFocusRow[];
 }
 
 export type CollaborationWorkspaceStatus = "open" | "draft_ready" | "applied" | "rejected" | "expired";
@@ -560,6 +581,7 @@ export interface CollaborationInviteRow {
   primaryEntityType: OrganizedPrimaryEntityType | null;
   primaryEntityId: string | null;
   experimentGroupId?: string | null;
+  prioritizeAction?: "pick" | "sunset" | null;
   userSeedMd: string | null;
   selectedOrganizedGoalIds: string[];
   expiresAt: string;
@@ -576,6 +598,7 @@ export interface CollaborationWorkspaceRow {
   primaryEntityType: OrganizedPrimaryEntityType;
   primaryEntityId: string | null;
   experimentGroupId?: string | null;
+  prioritizeAction?: "pick" | "sunset" | null;
   userSeedMd: string | null;
   selectedOrganizedGoalIds: string[];
   createdAt: string;
@@ -621,6 +644,7 @@ export interface CreateCollaborationInviteInput {
   primaryEntityType?: OrganizedPrimaryEntityType;
   primaryEntityId?: string;
   experimentGroupId?: string;
+  prioritizeAction?: "pick" | "sunset";
   selectedOrganizedGoalIds?: string[];
 }
 
@@ -792,18 +816,8 @@ export const api = {
   // a code and write a workspace draft through the dedicated server; the
   // dashboard is the one place a reviewed change set can be applied.
   organizedFeed: () => request<OrganizedFeedRow>("/organized/feed"),
-  organizedDetail: (type: OrganizedPrimaryEntityType, id: string) =>
+  organizedDetail: (type: OrganizedDetailEntityType, id: string) =>
     request<OrganizedEntityDetail>(`/organized/${type}/${id}`),
-  reorderOrganizedGoalPriority: (prioritizedIds: string[], outOfPriorityIds: string[]) =>
-    request<{ ok: boolean }>("/organized/goals/priority", {
-      method: "POST",
-      body: JSON.stringify({ prioritizedIds, outOfPriorityIds }),
-    }),
-  closeExperimentGroup: (id: string, status: "done" | "sunset", closingReviewMd?: string) =>
-    request<ExperimentGroupRow>(`/organized/groups/${id}/close`, {
-      method: "POST",
-      body: JSON.stringify({ status, closingReviewMd }),
-    }),
   markExperimentGroupTarget: (groupId: string, targetId: string, done: boolean) =>
     request<ExperimentGroupTargetRow>(`/organized/groups/${groupId}/targets/${targetId}`, {
       method: "POST",

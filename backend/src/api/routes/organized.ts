@@ -1,10 +1,8 @@
 import { Hono } from "hono";
 import {
-  closeExperimentGroup,
   markExperimentGroupTarget,
   organizedDetailPayload,
   organizedFeed,
-  reorderOrganizedGoalPriority,
 } from "../../services/organized";
 
 export const organizedRoutes = new Hono();
@@ -13,24 +11,16 @@ export const organizedRoutes = new Hono();
 // keeps using its existing endpoints and is intentionally untouched.
 organizedRoutes.get("/feed", c => c.json(organizedFeed()));
 
-organizedRoutes.post("/goals/priority", async c => {
-  const body = await c.req.json().catch(() => ({}));
-  if (!Array.isArray(body.prioritizedIds) || !Array.isArray(body.outOfPriorityIds)) {
-    return c.json({ error: "prioritizedIds[] and outOfPriorityIds[] required" }, 400);
-  }
-  const ok = reorderOrganizedGoalPriority(body.prioritizedIds, body.outOfPriorityIds);
-  return ok ? c.json({ ok: true }) : c.json({ error: "lists must partition all active organized goals exactly once" }, 400);
+organizedRoutes.post("/goals/priority", c => {
+  // Focus is a durable reviewed decision, not a rearrangeable dashboard list.
+  // Kept as a clear migration response for older dashboard clients.
+  return c.json({ error: "open a reviewed prioritize workspace to change the current focus" }, 409);
 });
 
-organizedRoutes.post("/groups/:id/close", async c => {
-  const body = await c.req.json().catch(() => ({}));
-  if (body.status !== "done" && body.status !== "sunset") return c.json({ error: "status must be done|sunset" }, 400);
-  try {
-    const row = closeExperimentGroup(c.req.param("id"), body.status, body.closingReviewMd);
-    return row ? c.json(row) : c.json({ error: "experiment group not found" }, 404);
-  } catch (error) {
-    return c.json({ error: error instanceof Error ? error.message : String(error) }, 409);
-  }
+organizedRoutes.post("/groups/:id/close", c => {
+  // A close/sunset may also select the next focus, so it must stay within the
+  // one atomic dashboard-reviewed prioritize change set.
+  return c.json({ error: "open a sunset prioritize workspace to close the current focus" }, 409);
 });
 
 organizedRoutes.post("/groups/:groupId/targets/:targetId", async c => {
