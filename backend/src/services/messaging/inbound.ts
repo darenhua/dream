@@ -71,7 +71,7 @@ export function handleInbound(payload: InboundPayload): {
         .get();
       if (invited) {
         db.update(witness)
-          .set({ chatId: payload.chatId, linkedAt: new Date().toISOString(), status: "active", linkRequestedAt: null })
+          .set({ chatId: payload.chatId, linkedAt: new Date().toISOString(), status: "active" })
           .where(eq(witness.id, invited.id))
           .run();
         markProcessed(row.id);

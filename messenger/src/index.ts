@@ -1,22 +1,22 @@
-import { Spectrum } from "spectrum-ts";
-import { imessage } from "@spectrum-ts/imessage";
-import { backend, type LinkRequest, type SendableRow } from "./backend";
+import { IMessageSDK, type Message } from "@photon-ai/imessage-kit";
+import { backend, type SendableRow } from "./backend";
 
-// The dream system's wire daemon: a dumb pipe between the backend's outbox
-// and Photon-managed iMessage lines. Runs side by side with the backend (its
-// own process + systemd unit). It never composes words, never decides who
-// hears what — the backend renders every message; this loop just delivers,
-// creates witness group chats on request, and relays inbound.
+// The dream system's wire daemon: a dumb pipe between the backend's outbox and
+// this Mac's Messages.app. It never composes words and never decides who hears
+// what — the backend renders every message; this loop only delivers, relays
+// inbound, and publishes the list of real group chats for the link picker.
+//
+// Runs on the ALWAYS-ON MAC, not the VM: the kit reads ~/Library/Messages/
+// chat.db and dispatches sends through Messages.app, so it needs macOS, Full
+// Disk Access, and a signed-in Messages account. The backend stays wherever it
+// lives; this talks to it purely over HTTP (BACKEND_URL).
+//
+// Identity note: sends go out as whatever Apple Account Messages.app is signed
+// into. For the witness design to hold, that must be the BOT's own account —
+// otherwise the agent texts as the user and the third-voice effect dies.
 
-const app = await Spectrum({
-  projectId: process.env.PROJECT_ID!,
-  projectSecret: process.env.PROJECT_SECRET!,
-  providers: [imessage.config()],
-});
-const im = imessage(app);
-
+const sdk = new IMessageSDK();
 const POLL_MS = Number(process.env.POLL_INTERVAL_SEC ?? 20) * 1000;
-console.log(`[messenger] connected — polling backend every ${POLL_MS / 1000}s`);
 
 // --- outbound: approved rows past their notBefore, linked chats only ---
 
@@ -30,55 +30,36 @@ async function deliverOutbound() {
   }
   for (const row of rows) {
     try {
-      const space = await im.space.get(row.chatId);
-      if (!space) throw new Error(`space ${row.chatId} not found`);
-      const sent = await space.send(row.bodyText);
-      await backend.markSent(row.id, (sent as { id?: string })?.id ?? "sent");
-      console.log(`[outbound] ${row.kind} → ${row.chatId.slice(0, 18)}…`);
+      // send() resolves on AppleScript dispatch and never waits for chat.db —
+      // there is no transport id, so we mint one for the audit trail.
+      await sdk.send({ to: row.chatId, text: row.bodyText });
+      await backend.markSent(row.id, `local-${crypto.randomUUID()}`);
+      console.log(`[outbound] ${row.kind} → ${row.chatId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`[outbound] ${row.id} failed:`, msg);
-      await backend.markFailed(row.id, msg).catch(() => {});
+      await reportWithRetry(() => backend.markFailed(row.id, msg), `mark-failed ${row.id}`);
     }
   }
 }
 
-// --- linking: create the group (user + friend), name it, send the welcome ---
+// --- groups: publish real chats so the dashboard can offer a link picker ---
+// The kit is explicit that group chatIds encode Messages.app internals and must
+// never be constructed — they come from here or from an inbound message.
 
-async function processLinkRequests() {
-  let requests: LinkRequest[];
+async function publishGroups() {
   try {
-    requests = await backend.linkRequests();
-  } catch {
-    return; // backend unreachable — outbound loop already logged it
-  }
-  for (const req of requests) {
-    if (!req.userHandle) {
-      await backend
-        .linkFailed(req.witnessId, "USER_IMESSAGE_HANDLE not set in backend config — add your own phone/email first")
-        .catch(() => {});
-      console.error(`[link] ${req.name}: no user handle configured`);
-      continue;
-    }
-    try {
-      const group = await im.space.create([req.userHandle, req.handle]);
-      await group.rename(req.groupName).catch(() => {}); // cosmetic — never fail the link over it
-      await group.send(req.welcomeText);
-      await backend.linked(req.witnessId, group.id);
-      console.log(`[link] created group for ${req.name} → ${group.id.slice(0, 18)}…`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[link] ${req.name} failed:`, msg);
-      // Report with retries: if the backend is down, a swallowed report leaves
-      // linkRequestedAt set forever — the dashboard spins on "creating group…"
-      // and every poll retries the same doomed create.
-      await reportWithRetry(() => backend.linkFailed(req.witnessId, msg), `link-failed ${req.name}`);
-    }
+    const chats = await sdk.listChats({ kind: "group", service: "iMessage", sortBy: "recent", limit: 30 });
+    await backend.publishGroups(
+      chats.map(c => ({ chatId: c.chatId, name: c.name ?? null, isArchived: c.isArchived })),
+    );
+  } catch (e) {
+    console.error("[groups] publish failed:", e instanceof Error ? e.message : e);
   }
 }
 
-// The backend can be down (restart, deploy) exactly when we need to record a
-// terminal result. Retry briefly rather than lose it.
+// The backend can be down exactly when we need to record a terminal result.
+// Retry briefly rather than lose it (a swallowed report strands the UI).
 async function reportWithRetry(fn: () => Promise<unknown>, label: string, attempts = 3) {
   for (let i = 0; i < attempts; i++) {
     try {
@@ -94,31 +75,46 @@ async function reportWithRetry(fn: () => Promise<unknown>, label: string, attemp
   }
 }
 
-// --- poll loop (outbound + links), independent of the inbound stream ---
+// --- inbound: relay everything to the backend; it decides what it means ---
+
+async function relay(m: Message) {
+  if (!m.chatId || !m.text) return;
+  try {
+    const result = await backend.inbound({
+      chatId: m.chatId,
+      senderHandle: m.participant ?? "unknown",
+      text: m.text,
+      sentAt: new Date().toISOString(),
+      messageId: m.id,
+    });
+    console.log(`[inbound] ${m.chatKind} ${m.chatId} → ${result.action}`);
+  } catch (e) {
+    console.error("[inbound] relay failed:", e instanceof Error ? e.message : e);
+  }
+}
 
 async function pollForever() {
   for (;;) {
-    await processLinkRequests();
+    await publishGroups();
     await deliverOutbound();
     await new Promise(r => setTimeout(r, POLL_MS));
   }
 }
+
+await sdk.startWatching({
+  // Peers only — onIncomingMessage excludes our own sends, so the bot can
+  // never react to itself.
+  onGroupMessage: relay,
+  onDirectMessage: relay,
+  onError: e => console.error("[kit]", e.message),
+});
+console.log(`[messenger] watching Messages.app — polling backend every ${POLL_MS / 1000}s`);
 pollForever();
 
-// --- inbound: relay everything to the backend; it decides what it means ---
-
-for await (const [space, message] of app.messages) {
-  if (message.content.type !== "text") continue;
-  try {
-    const result = await backend.inbound({
-      chatId: space.id,
-      senderHandle: message.sender?.id ?? "unknown", // iMessage user ids are the handle (phone/email)
-      text: message.content.text,
-      sentAt: new Date().toISOString(),
-      messageId: message.id,
-    });
-    console.log(`[inbound] ${space.id.slice(0, 18)}… → ${result.action}`);
-  } catch (e) {
-    console.error("[inbound] relay failed:", e instanceof Error ? e.message : e);
-  }
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, async () => {
+    console.log(`\n[messenger] ${sig} — closing`);
+    await sdk.close().catch(() => {});
+    process.exit(0);
+  });
 }

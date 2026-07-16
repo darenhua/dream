@@ -1,8 +1,9 @@
-import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { db } from "../db";
 import { goal, witness, witnessGoal } from "../db/schema";
+import { getConfig } from "./config";
 import { emit } from "./events";
-import { cancelPendingForWitness } from "./outbox";
+import { cancelPendingForWitness, enqueueOutbound } from "./outbox";
 
 // The witness registry. The seat is the feature; the occupant is replaceable.
 // Witnesses never enforce or track — the system holds all state and arms them
@@ -72,8 +73,7 @@ export function patchWitness(
       | "status"
       | "promptCadenceDays"
       | "chatId"
-      | "linkRequestedAt"
-      | "linkError"
+      | "linkedAt"
     >
   >,
 ) {
@@ -82,6 +82,24 @@ export function patchWitness(
   const updated = db.update(witness).set(patch).where(eq(witness.id, id)).returning().get();
   emit("witness", id, "witness_updated", { fields: Object.keys(patch) });
   return updated;
+}
+
+// The friend's first message: what this chat is, what they'll see, and the one
+// thing ever asked of them. Deterministic template — never LLM. Queued for
+// approval on link, so nothing reaches them unread by the user.
+export function enqueueWelcome(witnessId: string) {
+  const w = getWitness(witnessId);
+  if (!w) return null;
+  // Title lookup inlined rather than importing witnessScope — that module
+  // imports scopedGoalIds from here, and the cycle isn't worth the reuse.
+  const ids = scopedGoalIds(witnessId);
+  const goals = ids.length
+    ? db.select({ title: goal.title }).from(goal).where(inArray(goal.id, ids)).all().map(g => g.title)
+    : [];
+  const body = getConfig<string>("TEMPLATE.witness_welcome")
+    .replaceAll("{{FRIEND}}", w.name)
+    .replaceAll("{{GOALS}}", goals.join(", ") || "(no goals scoped yet)");
+  return enqueueOutbound({ witnessId, kind: "welcome", bodyText: body, dedupeKey: `welcome:${witnessId}` });
 }
 
 // Scope change = delete-and-reinsert. Only real goals survive the write, and

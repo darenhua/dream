@@ -20,13 +20,10 @@ export interface SendableRow {
   bodyText: string;
 }
 
-export interface LinkRequest {
-  witnessId: string;
-  name: string;
-  handle: string;
-  userHandle: string | null;
-  groupName: string;
-  welcomeText: string;
+export interface PublishedGroup {
+  chatId: string;
+  name: string | null;
+  isArchived: boolean;
 }
 
 export const backend = {
@@ -35,11 +32,9 @@ export const backend = {
     request(`/outbound/${id}/sent`, { method: "POST", body: JSON.stringify({ transportMessageId }) }),
   markFailed: (id: string, error: string) =>
     request(`/outbound/${id}/failed`, { method: "POST", body: JSON.stringify({ error }) }),
-  linkRequests: () => request<LinkRequest[]>("/link-requests"),
-  linked: (witnessId: string, chatId: string) =>
-    request(`/link-requests/${witnessId}/linked`, { method: "POST", body: JSON.stringify({ chatId }) }),
-  linkFailed: (witnessId: string, error: string) =>
-    request(`/link-requests/${witnessId}/failed`, { method: "POST", body: JSON.stringify({ error }) }),
+  // The link picker's source of truth: real groups from this Mac's Messages.app.
+  publishGroups: (groups: PublishedGroup[]) =>
+    request("/groups", { method: "POST", body: JSON.stringify({ groups }) }),
   inbound: (e: { chatId: string; senderHandle: string; text: string; sentAt?: string; messageId?: string }) =>
     request<{ action: string }>("/inbound", { method: "POST", body: JSON.stringify(e) }),
 };

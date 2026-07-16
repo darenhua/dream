@@ -309,10 +309,11 @@ export const witness = sqliteTable("witness", {
     .notNull()
     .default("invited"),
   isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false), // ≤1 enforced in service
-  inviteCode: text("invite_code").unique(), // one-time chat-link code
-  chatId: text("chat_id"), // transport chat GUID; null until linked
-  linkRequestedAt: text("link_requested_at"), // dashboard asked the messenger to create the group
-  linkError: text("link_error"), // why the last link attempt failed — surfaced in the UI, cleared on retry/success
+  inviteCode: text("invite_code").unique(), // one-time chat-link code (JOIN fallback)
+  // The Messages.app chat this witness lives in. Null until the user picks an
+  // existing group from the daemon's published list — the local kit cannot
+  // create groups, and these ids encode Messages internals so are never built.
+  chatId: text("chat_id"),
   linkedAt: text("linked_at"),
   promptCadenceDays: integer("prompt_cadence_days").notNull().default(4), // friend-tunable (less/more)
   lastPromptAt: text("last_prompt_at"),
@@ -540,7 +541,7 @@ export const outboundMessage = sqliteTable(
       .notNull()
       .references(() => witness.id),
     kind: text("kind", {
-      enum: ["review_share", "experiment_announcement", "random_prompt", "strike_alert", "duty_ping"],
+      enum: ["welcome", "review_share", "experiment_announcement", "random_prompt", "strike_alert", "duty_ping"],
     }).notNull(),
     bodyText: text("body_text").notNull(), // user-editable pre-send
     // What the composer originally wrote, frozen at enqueue. bodyText is

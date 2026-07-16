@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import {
   createInvite,
+  enqueueWelcome,
   getWitness,
   listWitnesses,
   patchWitness,
@@ -44,15 +45,31 @@ witnessRoutes.put("/:id/goals", async c => {
   return c.json({ ok: true, goalIds });
 });
 
-// Ask the messenger daemon to create the iMessage group (user + friend + bot).
-// It picks the request up on its next poll; witness_chat_linked lands when done.
-witnessRoutes.post("/:id/request-link", c => {
+// Link this witness to an EXISTING group chat the user already made in
+// Messages. The local kit can't create groups (and shouldn't — chatIds encode
+// Messages.app internals), so the dashboard offers the daemon's published
+// group list and the user picks one.
+witnessRoutes.post("/:id/link", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  if (typeof body.chatId !== "string" || !body.chatId) return c.json({ error: "chatId required" }, 400);
   const w = getWitness(c.req.param("id"));
   if (!w) return c.json({ error: "witness not found" }, 404);
-  if (w.chatId) return c.json({ error: "already linked" }, 400);
-  if (!w.handle) return c.json({ error: "witness has no handle — add their phone/email first" }, 400);
-  const updated = patchWitness(w.id, { linkRequestedAt: new Date().toISOString(), linkError: null });
+  const updated = patchWitness(w.id, {
+    chatId: body.chatId,
+    linkedAt: new Date().toISOString(),
+    status: "active",
+  });
+  // The welcome is a normal outbox message, not an auto-send: it waits for
+  // approval like everything else the friend ever receives.
+  if (!w.chatId) enqueueWelcome(w.id);
   return c.json({ ok: true, witness: updated });
+});
+
+// Unlink — the group was deleted, or it was the wrong one.
+witnessRoutes.post("/:id/unlink", c => {
+  const w = getWitness(c.req.param("id"));
+  if (!w) return c.json({ error: "witness not found" }, 404);
+  return c.json({ ok: true, witness: patchWitness(w.id, { chatId: null, linkedAt: null, status: "invited" }) });
 });
 
 witnessRoutes.post("/:id/primary", c => {

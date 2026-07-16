@@ -1,16 +1,12 @@
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { db } from "../../db";
-import { witness } from "../../db/schema";
-import { getConfig } from "../../services/config";
-import { emit } from "../../services/events";
+import { getConfig, setConfig } from "../../services/config";
 import { handleInbound } from "../../services/messaging/inbound";
 import { markFailed, markSent, sendableOutbound } from "../../services/outbox";
-import { witnessGoalTitles } from "../../services/witnessScope";
 
 // The wire API for the side-by-side messenger daemon (messenger/ at repo
-// root). The daemon is a dumb pipe: it polls sendable rows and link requests,
-// sends over iMessage, and reports back. Every decision stays in here.
+// root, running on the always-on Mac). The daemon is a dumb pipe: it polls
+// sendable rows, publishes the Mac's real group chats, sends over iMessage,
+// and relays inbound. Every decision stays in here.
 export const messagingRoutes = new Hono();
 
 // Approved rows past notBefore with a linked chat — ready for the wire.
@@ -36,60 +32,18 @@ messagingRoutes.post("/outbound/:id/failed", async c => {
   return c.json({ ok: true });
 });
 
-// Witnesses whose group chat the daemon should create: link requested from
-// the dashboard, handle present, not yet linked. welcomeText is rendered
-// HERE (deterministic template) — the daemon never composes words.
-messagingRoutes.get("/link-requests", c => {
-  const userHandle = getConfig<string | null>("USER_IMESSAGE_HANDLE");
-  const rows = db
-    .select()
-    .from(witness)
-    .where(and(isNotNull(witness.linkRequestedAt), isNull(witness.chatId), isNotNull(witness.handle)))
-    .all();
-  const template = getConfig<string>("TEMPLATE.witness_welcome");
-  return c.json(
-    rows.map(w => ({
-      witnessId: w.id,
-      name: w.name,
-      handle: w.handle,
-      userHandle, // daemon adds this to the group; null → daemon skips with error
-      groupName: `${w.name} × dream coach`,
-      welcomeText: template
-        .replaceAll("{{FRIEND}}", w.name)
-        .replaceAll("{{GOALS}}", witnessGoalTitles(w.id).join(", ") || "(no goals scoped yet)"),
-    })),
-  );
+// The daemon publishes the Mac's real group chats; the dashboard offers them
+// as a picker. Group chatIds encode Messages.app internals and must never be
+// constructed — they only ever come from here or from an inbound message.
+messagingRoutes.post("/groups", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!Array.isArray(body.groups)) return c.json({ error: "groups[] required" }, 400);
+  setConfig("MESSENGER_GROUPS", { publishedAt: new Date().toISOString(), groups: body.groups });
+  return c.json({ ok: true, count: body.groups.length });
 });
 
-messagingRoutes.post("/link-requests/:witnessId/linked", async c => {
-  const body = await c.req.json().catch(() => ({}));
-  if (typeof body.chatId !== "string" || !body.chatId) return c.json({ error: "chatId required" }, 400);
-  const id = c.req.param("witnessId");
-  const row = db.select().from(witness).where(eq(witness.id, id)).get();
-  if (!row) return c.json({ error: "witness not found" }, 404);
-  db.update(witness)
-    .set({
-      chatId: body.chatId,
-      linkedAt: new Date().toISOString(),
-      status: "active",
-      linkRequestedAt: null,
-      linkError: null,
-    })
-    .where(eq(witness.id, id))
-    .run();
-  emit("witness", id, "witness_chat_linked", { via: "group_created", chatId: body.chatId });
-  return c.json({ ok: true });
-});
-
-messagingRoutes.post("/link-requests/:witnessId/failed", async c => {
-  const body = await c.req.json().catch(() => ({}));
-  const id = c.req.param("witnessId");
-  const error = typeof body.error === "string" ? body.error : "unknown";
-  // Clear the request AND persist why, so the dashboard shows the reason
-  // instead of spinning on "linking…" forever.
-  db.update(witness).set({ linkRequestedAt: null, linkError: error }).where(eq(witness.id, id)).run();
-  emit("witness", id, "witness_link_failed", { error });
-  return c.json({ ok: true });
+messagingRoutes.get("/groups", c => {
+  return c.json(getConfig<{ publishedAt: string; groups: unknown[] } | null>("MESSENGER_GROUPS") ?? { publishedAt: null, groups: [] });
 });
 
 messagingRoutes.post("/inbound", async c => {

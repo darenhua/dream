@@ -8,7 +8,7 @@
     "dev": "bun --watch src/index.ts"
   },
   "dependencies": {
-    "spectrum-ts": "^10.0.0"
+    "@photon-ai/imessage-kit": "^3.0.0"
   },
   "devDependencies": {
     "typescript": "^5",

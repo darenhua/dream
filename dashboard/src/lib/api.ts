@@ -101,8 +101,6 @@ export interface WitnessRow {
   isPrimary: boolean;
   inviteCode: string | null;
   chatId: string | null;
-  linkRequestedAt: string | null;
-  linkError: string | null;
   linkedAt: string | null;
   promptCadenceDays: number;
   goalIds: string[];
@@ -430,8 +428,15 @@ export const api = {
   setWitnessPrimary: (id: string) =>
     request<{ ok: boolean }>(`/witnesses/${id}/primary`, { method: "POST", body: "{}" }),
   witnessPreview: (id: string) => request<{ contextMd: string }>(`/witnesses/${id}/preview`),
-  requestWitnessLink: (id: string) =>
-    request<{ ok: boolean }>(`/witnesses/${id}/request-link`, { method: "POST", body: "{}" }),
+  // Real group chats published by the messenger daemon on the always-on Mac.
+  messengerGroups: () =>
+    request<{ publishedAt: string | null; groups: { chatId: string; name: string | null; isArchived: boolean }[] }>(
+      "/messaging/groups",
+    ),
+  linkWitnessChat: (id: string, chatId: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/link`, { method: "POST", body: JSON.stringify({ chatId }) }),
+  unlinkWitnessChat: (id: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/unlink`, { method: "POST", body: "{}" }),
   removeWitness: (id: string) => request<{ ok: boolean }>(`/witnesses/${id}`, { method: "DELETE" }),
 
   // --- review writeups + outbox ---

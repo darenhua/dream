@@ -33,6 +33,7 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
   const [inviteOpen, setInviteOpen] = useState(false);
   const [editing, setEditing] = useState<WitnessRow | null>(null);
   const [preview, setPreview] = useState<{ name: string; md: string } | null>(null);
+  const [linking, setLinking] = useState<WitnessRow | null>(null);
 
   const goalTitle = useMemo(() => {
     const m = new Map<string, string>();
@@ -67,27 +68,22 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
                   <span className="font-mono text-xs text-muted-foreground">code {w.inviteCode}</span>
                 )}
                 {w.chatId ? (
-                  <Badge variant="outline" className="text-xs text-emerald-700 dark:text-emerald-300">
-                    <Link2 className="mr-1 size-3" /> chat linked
-                  </Badge>
-                ) : w.linkRequestedAt ? (
-                  <Badge variant="outline" className="text-xs text-muted-foreground">
-                    <Loader2 className="mr-1 size-3 animate-spin" /> creating group…
-                  </Badge>
-                ) : w.handle ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-xs"
-                    title="create the iMessage group (you + friend + bot)"
+                  <Badge
+                    variant="outline"
+                    className="cursor-pointer text-xs text-emerald-700 dark:text-emerald-300"
+                    title="click to unlink"
                     onClick={async () => {
-                      await api.requestWitnessLink(w.id).catch(() => {});
+                      await api.unlinkWitnessChat(w.id).catch(() => {});
                       onChanged();
                     }}
                   >
+                    <Link2 className="mr-1 size-3" /> chat linked
+                  </Badge>
+                ) : (
+                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => setLinking(w)}>
                     <Link2 className="size-3" /> link chat
                   </Button>
-                ) : null}
+                )}
                 <span className="flex-1" />
                 <Button
                   size="sm"
@@ -101,11 +97,6 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
                   <Eye className="size-4" />
                 </Button>
               </div>
-              {w.linkError && (
-                <p className="rounded border border-destructive/40 px-2 py-1 text-xs text-destructive">
-                  couldn't create the group: {w.linkError}
-                </p>
-              )}
               <div className="flex flex-wrap gap-1">
                 {w.goalIds.length === 0 && (
                   <span className="text-xs text-muted-foreground">no goals shared — sees nothing</span>
@@ -132,6 +123,12 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
         onChanged={onChanged}
       />
 
+      <GroupPickerDialog
+        witness={linking}
+        onClose={() => setLinking(null)}
+        onChanged={onChanged}
+      />
+
       <Dialog open={preview !== null} onOpenChange={open => !open && setPreview(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
@@ -141,6 +138,86 @@ export function WitnessCard({ tick, onChanged }: { tick: number; onChanged: () =
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+// The local iMessage kit can't create groups (and group chatIds encode
+// Messages.app internals, so they're never constructed) — you make the group
+// by hand in Messages, then pick it here.
+function GroupPickerDialog({
+  witness,
+  onClose,
+  onChanged,
+}: {
+  witness: WitnessRow | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [tick, setTick] = useState(0);
+  const { data, error } = useApiData(
+    () => (witness ? api.messengerGroups() : Promise.resolve(null)),
+    [witness?.id, tick],
+  );
+  const [busy, setBusy] = useState<string | null>(null);
+  const groups = (data?.groups ?? []).filter(g => !g.isArchived);
+
+  return (
+    <Dialog open={witness !== null} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>which chat is {witness?.name} in?</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-2 text-sm">
+          <p className="text-xs text-muted-foreground">
+            Create the group in Messages first — you, {witness?.name}, and the bot's Apple Account — then pick it
+            here. The messenger daemon on your always-on Mac publishes this list.
+          </p>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          {data?.publishedAt === null && (
+            <p className="rounded border border-dashed px-3 py-2 text-xs text-muted-foreground">
+              no groups published yet — is the messenger daemon running on the Mac?
+            </p>
+          )}
+          <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+            {groups.map(g => (
+              <li key={g.chatId}>
+                <button
+                  disabled={busy !== null}
+                  className="w-full rounded-lg border px-3 py-2 text-left hover:bg-muted"
+                  onClick={async () => {
+                    if (!witness) return;
+                    setBusy(g.chatId);
+                    try {
+                      await api.linkWitnessChat(witness.id, g.chatId);
+                      onChanged();
+                      onClose();
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                >
+                  <span className="font-medium">{g.name ?? "(unnamed group)"}</span>
+                  <span className="ml-2 font-mono text-xs text-muted-foreground">{g.chatId.slice(0, 24)}…</span>
+                </button>
+              </li>
+            ))}
+            {data && groups.length === 0 && data.publishedAt !== null && (
+              <li className="rounded-lg border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
+                no group chats found in Messages
+              </li>
+            )}
+          </ul>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setTick(t => t + 1)}>
+              refresh
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              cancel
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
