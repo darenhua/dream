@@ -542,6 +542,10 @@ export const outboundMessage = sqliteTable(
       enum: ["review_share", "experiment_announcement", "random_prompt", "strike_alert", "duty_ping"],
     }).notNull(),
     bodyText: text("body_text").notNull(), // user-editable pre-send
+    // What the composer originally wrote, frozen at enqueue. bodyText is
+    // overwritten by edits; this is the signal for "is the agent's voice good
+    // enough to trust with autosend" — never write to it after insert.
+    originalBodyText: text("original_body_text"),
     contextJson: text("context_json"), // e.g. suggested follow-up questions
     relatedType: text("related_type"),
     relatedId: text("related_id"),
@@ -550,6 +554,10 @@ export const outboundMessage = sqliteTable(
       .notNull()
       .default("pending_approval"),
     notBefore: text("not_before"), // quiet-hours / spacing gate
+    // The row is the log: createdAt = enqueued, approvedAt = gate passed,
+    // sentAt = on the wire. updatedAt is clobbered by later writes, so the
+    // lifecycle needs its own stamps to be reconstructable from the row alone.
+    approvedAt: text("approved_at"),
     sentAt: text("sent_at"),
     transportMessageId: text("transport_message_id"),
     error: text("error"),

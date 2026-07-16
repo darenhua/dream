@@ -121,9 +121,11 @@ export interface OutboundRow {
   witnessId: string;
   kind: "review_share" | "experiment_announcement" | "random_prompt" | "strike_alert" | "duty_ping";
   bodyText: string;
+  originalBodyText: string | null;
   contextJson: string | null;
   status: "pending_approval" | "approved" | "sent" | "failed" | "cancelled";
   notBefore: string | null;
+  approvedAt: string | null;
   sentAt: string | null;
   createdAt: string;
 }

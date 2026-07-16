@@ -57,6 +57,13 @@
       "when": 1784132936296,
       "tag": "0007_melted_jigsaw",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1784181917785,
+      "tag": "0008_strange_queen_noir",
+      "breakpoints": true
     }
   ]
 }

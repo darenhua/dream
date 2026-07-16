@@ -1,10 +1,9 @@
-import { emit } from "../events";
 import type { ChatTransport, InboundEvent } from "./transport";
 
-// The mock wire: every "delivery" is an append-only event row, inspectable in
-// the admin EventsFeed — proving each message fires at the right time with
-// the right content long before a real transport exists. Inbound can be
-// simulated through handleInbound (admin/test hook).
+// The mock wire: accepts sends and hands back a fake transport id. It emits
+// nothing — the outbound_message row IS the log (status/sentAt/
+// transportMessageId), and markSent already writes the outbound_sent event.
+// Inbound can be simulated through simulateInbound (admin/test hook).
 
 export function createMockTransport(): ChatTransport & {
   simulateInbound: (e: InboundEvent) => Promise<void>;
@@ -18,10 +17,8 @@ export function createMockTransport(): ChatTransport & {
     async stop() {
       onInbound = null;
     },
-    async sendText(chatId, text) {
-      const messageId = `mock-${crypto.randomUUID()}`;
-      emit("outbound_message", null, "mock_delivered", { chatId, text, messageId });
-      return { messageId };
+    async sendText(_chatId, _text) {
+      return { messageId: `mock-${crypto.randomUUID()}` };
     },
     async simulateInbound(e) {
       if (!onInbound) throw new Error("mock transport not started");
