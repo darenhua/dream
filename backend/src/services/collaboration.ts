@@ -49,6 +49,7 @@ import {
 import {
   buildWorkspaceIndex,
   findWorkspaceIndexReference,
+  openLoopSection,
   parseWorkspaceIndexSnapshot,
   searchWorkspaceIndexSnapshot,
   type WorkspaceIndexReference,
@@ -161,7 +162,10 @@ function serializeWorkspaceIndex(row: typeof collaborationWorkspaceIndex.$inferS
     workspaceId: row.workspaceId,
     indexVersion: row.indexVersion,
     generatedAt: row.generatedAt,
-    markdown: row.markdownIndex,
+    // The stored markdown is the immutable orientation snapshot; open loops are
+    // volatile cross-workspace state, so they are computed live and appended
+    // here rather than frozen into the persisted row.
+    markdown: `${row.markdownIndex}\n\n${openLoopSection(row.workspaceId)}`,
     manifest: parseJsonRecord(row.referenceManifestJson),
   };
 }

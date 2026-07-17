@@ -1,7 +1,9 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   collaborationWorkspace,
+  companionBranchDraft,
+  draftChangeSet,
   environmentItem,
   experience,
   experiment,
@@ -349,6 +351,78 @@ export function buildWorkspaceIndex(workspaceId: string): WorkspaceIndexBuild {
       generatedAt,
     },
   };
+}
+
+const MAX_OPEN_LOOPS = 20;
+
+function headlineOf(summaryMd: string): string {
+  return compact(summaryMd.split("\n")[0]?.replace(/^#+\s*/, ""), 120) ?? "untitled draft";
+}
+
+/** Where a listed draft's ball actually sits, so the agent knows whether it is
+ * waiting on the dashboard or back on itself for revision. */
+function loopDisposition(status: string): string {
+  switch (status) {
+    case "ready_for_review":
+      return "awaiting dashboard review";
+    case "drafting":
+      return "in revision (may carry dashboard feedback)";
+    default:
+      return status;
+  }
+}
+
+/**
+ * Cross-conversation state hygiene, computed at READ time (never baked into the
+ * immutable snapshot): other nonterminal creator workspaces and pending
+ * companion inbox drafts, so a blank agent can acknowledge loose threads ("you
+ * never applied X") instead of contradicting them. Read-only awareness — none
+ * of these are addressable through this workspace's tools.
+ *
+ * Single-user deployment: this surfaces every pending companion draft to any
+ * creator workspace. That is intentional here (one owner), but it is the reason
+ * this section must gain an identity filter before a second companion identity
+ * exists — see the identity scoping in companion.ts.
+ */
+export function openLoopSection(currentWorkspaceId: string): string {
+  const lines: string[] = [];
+  const otherWorkspaces = db
+    .select()
+    .from(collaborationWorkspace)
+    .where(inArray(collaborationWorkspace.status, ["open", "draft_ready"]))
+    .all()
+    .filter(row => row.id !== currentWorkspaceId);
+  for (const row of otherWorkspaces) {
+    if (lines.length >= MAX_OPEN_LOOPS) break;
+    const draft = db
+      .select({ status: draftChangeSet.status, summaryMd: draftChangeSet.summaryMd })
+      .from(draftChangeSet)
+      .where(eq(draftChangeSet.workspaceId, row.id))
+      .orderBy(desc(draftChangeSet.updatedAt))
+      .get();
+    const seed = compact(row.userSeedMd, 160) ?? "(none)";
+    const detail = draft ? `draft "${headlineOf(draft.summaryMd)}" — ${loopDisposition(draft.status)}` : "no draft yet";
+    lines.push(`- Open \`${row.mode}\` workspace — seed: "${seed}" (${detail}).`);
+  }
+  const pendingBranches = db
+    .select({ status: companionBranchDraft.status, summaryMd: companionBranchDraft.summaryMd })
+    .from(companionBranchDraft)
+    .where(inArray(companionBranchDraft.status, ["drafting", "ready_for_review"]))
+    .all();
+  for (const row of pendingBranches) {
+    if (lines.length >= MAX_OPEN_LOOPS) break;
+    lines.push(`- Companion branch draft "${headlineOf(row.summaryMd)}" (${loopDisposition(row.status)}; in the dashboard inbox — not a group yet).`);
+  }
+  const total = otherWorkspaces.length + pendingBranches.length;
+  const overflow = total > lines.length ? [`- …and ${total - lines.length} more open loops (see the dashboard).`] : [];
+  const body = lines.length ? [...lines, ...overflow] : ["_None: no other pending workspaces or inbox drafts._"];
+  return [
+    "## Open loops (unapplied work)",
+    "",
+    "Computed live at read time. These exist but are NOT domain state until the dashboard applies them. If one overlaps this conversation, tell the user instead of silently duplicating or contradicting it.",
+    "",
+    ...body,
+  ].join("\n");
 }
 
 export function parseWorkspaceIndexSnapshot(value: string): WorkspaceIndexSnapshot {

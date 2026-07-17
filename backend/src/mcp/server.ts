@@ -89,11 +89,32 @@ const operationSchema = z.object({ type: z.string().trim().min(1) }).catchall(z.
  * tool list is intentionally static and tiny: no generic DB CRUD, no calendar
  * calls, and no way to apply the draft from the cloud conversation.
  */
+// Shown to the connected agent at initialization, before any tool call. A
+// blank cloud agent's first correct move must be discoverable without the
+// user explaining the system.
+const CREATOR_SERVER_INSTRUCTIONS = `
+This is Dream Coach's dashboard-started creation surface. The user begins a
+collaboration in their dashboard, which shows them a one-time code; ask for
+that code if they have not supplied it, and redeem it with
+redeem_collaboration_code before anything else. There is no other way to bind
+a workspace, and you must never invent one.
+
+The user names the direction; you never do. After redemption, follow the
+returned mode instructions: read the workspace index first, ask only
+decision-critical questions, discuss the intended change set in conversation,
+and save/submit a draft only after the user explicitly asks you to. Nothing
+you write changes their system — every draft is reviewed and applied (or
+rejected) in the dashboard.
+`.trim();
+
 export function createCollaborationMcpServer(session: McpSessionBinding): McpServer {
-  const server = new McpServer({
-    name: "dream-coach-collaboration",
-    version: "1.0.0",
-  });
+  const server = new McpServer(
+    {
+      name: "dream-coach-collaboration",
+      version: "1.0.0",
+    },
+    { instructions: CREATOR_SERVER_INSTRUCTIONS },
+  );
 
   server.registerTool(
     "redeem_collaboration_code",
@@ -129,7 +150,8 @@ export function createCollaborationMcpServer(session: McpSessionBinding): McpSer
           "Start with get_workspace_index so you understand the named direction, accepted material, and available evidence before asking questions.",
           "Use search_workspace_index, read_entity_context, and follow_provenance to inspect relevant detail; do not treat index relevance as the user's decision.",
           "Ask only for missing decision-critical information.",
-          "Save one complete atomic draft, then submit it for dashboard review.",
+          "Summarize the intended atomic change set in the conversation and wait for the user's explicit go-ahead.",
+          "Only after that go-ahead, save the one complete atomic draft and submit it for dashboard review.",
           "Do not claim that any organized/raw record, task, calendar event, or witness message was changed.",
         ],
       });

@@ -17,13 +17,21 @@ correct them.
 This MCP can read the redeemed workspace's allowed context and save one draft.
 It cannot create or modify organized/raw records, apply a draft, start or queue
 an experiment, schedule a task, write calendar events, or contact witnesses.
-When the draft is ready, save the complete markdown rationale plus its structured
-operation list, then submit it for dashboard review. The dashboard applies the
-whole reviewed change set or none of it.
+
+Before writing anything: summarize the intended change set in the conversation
+— what the primary entity will say, which related updates and sources it
+includes — and wait for the user's explicit go-ahead ("yes", "submit it",
+"looks right"). Only then save the complete markdown rationale plus its
+structured operation list and submit it for dashboard review. Do not treat the
+user answering your questions as that go-ahead; drafting on their behalf and
+submitting in the same breath takes the review out of the conversation. The
+dashboard applies the whole reviewed change set or none of it.
 
 If get_workspace shows a drafting change set with dashboard feedback, treat that
-feedback as the user's newest instruction. Revise the same atomic draft rather
-than starting a new direction or claiming it was already applied.
+feedback as the user's newest instruction and as their go-ahead to resubmit the
+revised draft. Summarize what you changed, then revise and submit the same
+atomic draft rather than starting a new direction or claiming it was already
+applied.
 `.trim();
 
 const modes: Record<CollaborationMode, { sections: CollaborationContextSection[]; rubric: string }> = {
