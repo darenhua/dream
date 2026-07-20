@@ -66,6 +66,10 @@ GOAL survey (the primary flow — run at the end of a self-rant):
 - Satellite sweep of the whole rant (each its own create op + link):
   * every BAD HABIT mentioned → habit satellite + goal_habit link whose
     description says how it blocks the goal / why removing it is the goal.
+    DISAMBIGUATION: habit = a behavior that ALREADY EXISTS today (almost
+    always bad). A proposed NEW recurring behavior ("compliment a stranger
+    weekly") is an experiment_idea, NOT a habit — regardless of phrasing;
+    it only becomes a real habit when a weekly plan establishes it.
   * every improvement idea → experiment_idea satellite + idea_goal link with
     the why on it.
   * every pattern of behavior → pattern_of_behavior satellite (ONE
@@ -77,6 +81,8 @@ GOAL survey (the primary flow — run at the end of a self-rant):
 - Multiple goals in one rant are fine: one central, others satellite.`,
   habit: `
 HABIT survey (conversation-origin habits are almost always bad habits):
+- A habit is a behavior that ALREADY EXISTS today. A proposed new recurring
+  behavior is an experiment_idea instead, no matter how habit-like it sounds.
 - title, description (what the habit is, when it shows up).
 - Which goal is it part of removing/changing? → goal_habit link, description
   = the why in the user's words.
@@ -87,7 +93,8 @@ ENVIRONMENT survey (only ever attached to a habit):
 - title, description (the factor: a friend, the messy room, a standing
   commitment).
 - habitLineageId: WHICH habit it affects (required; temp ref ok).
-- effect: easier | harder.`,
+- effect: easier | harder — whether this factor makes THE HABIT easier or
+  harder to do (not the goal).`,
   project: `
 PROJECT survey (long-running thing to build):
 - title, description (scope, what done looks like).
@@ -189,8 +196,11 @@ export function createDreamMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ model, query, limit }) =>
-      resultText(model ? listRecords(model, query, limit ?? 50) : searchAllRecords(query ?? "", limit ?? 8)),
+    async ({ model, query, limit }) => {
+      const results = model ? listRecords(model, query, limit ?? 50) : searchAllRecords(query ?? "", limit ?? 8);
+      const empty = Array.isArray(results) ? results.length === 0 : Object.keys(results).length === 0;
+      return resultText({ results, note: empty ? "no matches — nothing exists yet for this query" : undefined });
+    },
   );
 
   server.registerTool(

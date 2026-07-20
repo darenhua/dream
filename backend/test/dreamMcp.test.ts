@@ -132,7 +132,7 @@ describe("dream MCP surface", () => {
       name: "list_records",
       arguments: { model: "organized_goal", query: "athletic movement" },
     });
-    expect(JSON.parse(text(listed))).toHaveLength(1);
+    expect(JSON.parse(text(listed)).results).toHaveLength(1);
     await client.close();
   });
 });
