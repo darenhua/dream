@@ -7,7 +7,7 @@ import { getConfig } from "../config";
 import { emit } from "../events";
 import { enqueueOutbound, markFailed, markSent, sendableOutbound } from "../outbox";
 import { registerStrikeAlertSink, type StrikeReport } from "../strikes";
-import { newWorkspace } from "../projector";
+import { newWorkspace } from "../agentRunner";
 import { linkedPrimaryWitness, listWitnesses } from "../witnesses";
 import { witnessContextMd } from "../witnessScope";
 import { createMockTransport } from "./mockTransport";

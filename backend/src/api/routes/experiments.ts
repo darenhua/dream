@@ -6,19 +6,11 @@ import {
   endExperiment,
   experimentHistory,
   getExperiment,
-  listCandidates,
   listQueue,
   patchTask,
-  pickExperiment,
 } from "../../services/experiments";
-import { openingTurn } from "../../services/scheduleChat";
 
 export const experimentRoutes = new Hono();
-
-// Raw proposal-derived candidates are deliberately a separate, read-only
-// archive. They can inform an organized experiment, but never enter the
-// executable queue from this endpoint.
-experimentRoutes.get("/candidates", c => c.json(listCandidates()));
 
 experimentRoutes.get("/queue", c => c.json(listQueue()));
 
@@ -45,14 +37,6 @@ experimentRoutes.get("/:id", c => {
   return c.json(row);
 });
 
-// queued → scheduling: opens the schedule-agent chat and runs its first turn.
-experimentRoutes.post("/:id/pick", async c => {
-  const result = pickExperiment(c.req.param("id"));
-  if (!result.ok) return c.json(result, 409);
-  const turn = await openingTurn(result.sessionId);
-  return c.json({ ...result, openingTurn: turn });
-});
-
 // A reviewed MCP-authored weekly actionable already has its task plan. This
 // explicit confirmation is the only transition that creates its calendar rows;
 // it does not open the legacy schedule chat or create duplicate task/habit rows.
@@ -71,11 +55,6 @@ experimentRoutes.post("/:id/end", async c => {
   }
   const id = c.req.param("id");
   const result = endExperiment(id, body.verdict, body.outcomeMd ?? body.outcome_md);
-  if (result.ok) {
-    import("../../services/reviewWriteup")
-      .then(({ generateDraft }) => generateDraft(id, "manual"))
-      .catch(() => {});
-  }
   return c.json(result, result.ok ? 200 : 400);
 });
 

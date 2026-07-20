@@ -1,3 +1,4 @@
+import { mkdirSync, rmSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
@@ -332,4 +333,12 @@ export async function runText(
     });
     return { runId, status: "failed", output: null, error };
   }
+}
+
+// Fresh scratch dir for one agent run. (Moved from the deleted projector.)
+export function newWorkspace(agentName: string): string {
+  const dir = join(env.WORKSPACE_PATH, `${agentName}-${Date.now()}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
