@@ -186,5 +186,5 @@ GCal as source of truth), conversation import.
   patterns/philosophies and what goals mean to the user and why chosen).
 - Exact per-model survey contents.
 - Takeaway record shape; group goal-set derivation rule; daily review weight.
-- MCP auth/surface packaging. **[ASSUMPTION: single persistent authenticated
-  surface, no per-conversation OTP ceremony.]**
+- ~~MCP auth/surface packaging~~ **DECIDED: single persistent surface, no
+  code ceremony and no MCP auth. The invite/OTP machinery is deleted.**
