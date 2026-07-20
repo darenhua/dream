@@ -71,6 +71,73 @@ Witness/outbox system: untouched by this phase **[OPEN: long-term fate]**.
 
 ## Part 2 — Proposed schema (v1, old → new)
 
+> ### v1.1 corrections (authoritative over the blocks below)
+>
+> 1. **Table names are NOT renamed.** Existing tables keep their legacy
+>    (ugly) names and are repurposed in place; only genuinely new concepts
+>    get new tables. Code-level variable names may modernize. Name map:
+>    - goal → **`organized_goal`** (kept)
+>    - habit → **`habit`** (kept, repurposed)
+>    - environment → **`environment_item`** (kept, repurposed)
+>    - project → **`project`** (kept)
+>    - experiment_group → **`experiment_group`** (kept)
+>    - active_experiment / pick → **`current_focus`** (kept, + end_date)
+>    - weekly_plan → **`experiment`** (kept; the actionable slims into it)
+>    - weekly_plan_item → **`experiment_task`** (kept, repurposed:
+>      kind(todo|intention), done_at; scheduling columns unused)
+>    - group_goal → **`experiment_group_goal`** (kept, + rank)
+>    - goal_habit → **`goal_habit`** (kept, + description)
+>    - scheduled_event → **`calendar_event`** (kept, + push_status etc.)
+>    - change_set → **`draft_change_set`** (kept, workspace/mode dropped)
+>    - conversation → **`conversation`** (kept, pipeline columns dropped)
+>    - New tables (no legacy equivalent): `pattern_of_behavior`,
+>      `goal_pattern`, `experiment_idea`, `idea_goal`, `idea_project`,
+>      `task`, `group_idea`, `group_habit`, `daily_plan`,
+>      `daily_plan_item`, `leisure_activity`, `takeaway`,
+>      `lineage_parent`, `conversation_record_link`.
+> 2. **One `description` column per table — no multi-markdown columns and
+>    no `why_md` naming.** Wherever the blocks below say `why_md`,
+>    `success_md`, `reasoning_md`, `note_md`, `detail_md`, or split fields,
+>    fold them into a single `description` column. Applies to relationship
+>    tables too (`idea_goal.description`, `goal_habit.description` — the
+>    "why" lives there, just named description). `pattern_of_behavior` gets
+>    ONE description column (no separate trigger/emotion/coping/loop
+>    fields — that structure lives in the survey prompts, not the schema).
+>    Plans keep their short `theme` one-liner plus one `description`.
+>
+> ### v1.2 corrections (also authoritative)
+>
+> 3. **Every record carries its conversation link directly.** In addition
+>    to `conversation_record_link` (which records slices and mentions),
+>    every versionable table gets a nullable `source_conversation_id` FK,
+>    stamped automatically at change-set apply (via the marker token) and
+>    resolved/backfilled when the export containing that conversation is
+>    imported. The agent never wires this by hand — record_create does it.
+> 4. **`valence` is dropped from `habit`.** No good/bad column; what a
+>    habit means lives in its description and its goal relationship.
+> 5. **No status enums on domain records — state is derived from
+>    timestamps and lineage.** A record is "current" iff it is the head of
+>    its lineage; time-layer records expire when now > their deadline
+>    timestamp. Concretely:
+>    - `organized_goal`: drop status(active|sunset|archived) → nullable
+>      `retired_at` timestamp only.
+>    - `habit`: drop status entirely (activity is visible from schedule +
+>      completion data).
+>    - `experiment_group`: drop status → keep the existing `archived_at`
+>      timestamp.
+>    - `experiment_idea`: drop status → nullable `retired_at`.
+>    - `task`: drop status(open|done|dropped) → `done_at` / `dropped_at`
+>      timestamps.
+>    - `current_focus`: status derived from `ended_at` + `end_date`
+>      (expired when today > end_date).
+>    - weekly (`experiment`) / `daily_plan`: no status columns at all;
+>      expiry derived from `week_of` / `date`.
+>    - `draft_change_set`: status derived from timestamps too —
+>      `submitted_at`, `applied_at`, `rejected_at` (drafting = none set).
+>    - `calendar_event`: push tracking as timestamps (`pushed_at`,
+>      `push_failed_at` + error text) instead of a push_status enum;
+>      "not yet pushed" = neither set.
+
 ### Infrastructure (new, shared by every content model)
 ```
 versioning columns on every content table:
