@@ -69,63 +69,191 @@ Witness/outbox system: untouched by this phase **[OPEN: long-term fate]**.
 
 ---
 
-## Part 2 — Proposed schema
+## Part 2 — Proposed schema (v1, old → new)
 
-### Universal versioning columns (every content model)
+### Infrastructure (new, shared by every content model)
 ```
-id              version row id (uuid)
-lineageId       stable logical identity (= first version's id)
-version         int, 1..n
-prevVersionId   nullable (null for v1)
-createdAt
+versioning columns on every content table:
+  id                version row id (uuid, PK)
+  lineage_id        stable logical identity (= first version's id)
+  version           int, 1..n
+  prev_version_id   nullable
+  created_at
+
+lineage_parent      -- remix/combine parentage (multi-row = combine)
+  id, child_type, child_lineage_id, parent_type, parent_version_id, created_at
+
+conversation_record_link   -- provenance spine (replaces extraction_link)
+  id, conversation_id, marker_token, slice_end_idx?,
+  record_type, record_version_id,
+  role: created_central | created_satellite | mentioned, created_at
 ```
-- Living-graph FKs reference **lineageId** (follow the head). Time-layer
-  records (picks, weekly/daily plans) pin **version ids**.
-- `lineage_parent` (polymorphic): `childType, childLineageId, parentType,
-  parentVersionId` — remix/branch parentage; multi-row = combine.
-- Conversation linkage (all models): `conversation_record_link`:
-  `conversationId, sliceEndIdx, markerToken, recordType, recordVersionId,
-  role: created_central | created_satellite | mentioned`.
+Relationship tables reference **lineage ids** → version bumps propagate to
+every relationship automatically (decision #1: never agent work). Time-layer
+records (picks) pin **version ids**.
 
-### Information side
-| Table | Key columns (beyond versioning) | Adapted from |
-|---|---|---|
-| `goal` | title, whyMd (what it means to me / identity), successMd? | `organized_goal` (drop priorityRank — priority is derived from the active pick; drop sources→raw) |
-| `pattern_of_behavior` | title, triggerMd, emotionMd, copingMd, feedbackLoopMd | new |
-| `goal_pattern` | goalLineageId, patternLineageId ("pointer on goal") | new |
-| `habit` | title, note, valence(good/bad), origin(conversation\|system), status(active\|kept\|lapsed), activeExperimentId? (system habits: which pick birthed it) | `habit` (drop rrule/preferredTime → scheduling moves to scheduled_event; drop raw origin enum) |
-| `goal_habit` | goalLineageId, habitLineageId, whyMd ("removing/changing this is part of the goal") | `goal_habit` + why |
-| `environment` | title, note, origin(conversation\|calendar), habitLineageId (required when origin=conversation), effect(easier\|harder) | `environment_item` |
-| `leisure_activity` | title, note, counteractsPatternLineageId?, fitsWhen? (free text: morning/evening/weekend) | new |
-| `conversation` | (existing import columns, pipeline columns removed) | `conversation` |
-| `takeaway` | markdownMd, date, activeExperimentId?, moodEnergy? **[OPEN shape]** | new (rant MCP output) |
+### Old → new, model by model
 
-### Ambition side
-| Table | Key columns | Adapted from |
-|---|---|---|
-| `experiment_idea` | title, descriptionMd (can be one-liner), status(open\|retired) | new |
-| `idea_goal` | ideaLineageId, goalLineageId, whyMd (why doing this serves that goal) | new — THE relationship whose why powers groups & planners |
-| `project` | title, descriptionMd | `project` |
-| `idea_project` | ideaLineageId, projectLineageId (many ideas per project) | new |
-| `task` | title, detailMd, deadlineDate?, status(open\|done\|dropped), experimentIdeaLineageId? (≤1; presence = goal-minded task) | new (NOT the old `experimentTask`) |
+**goal** ← `organized_goal`
+```
+OLD: id, title, identity_clause, synthesis_md, priority_rank,
+     status(active|sunset|archived), timestamps
+NEW: [versioning] title, why_md (identity_clause+synthesis merged: what this
+     means to me), success_md?, status(active|sunset|archived)
+     -- priority_rank DROPPED: priority derives from the active pick's group
+```
 
-### Grouping & time
-| Table | Key columns | Adapted from |
-|---|---|---|
-| `experiment_group` | title, themeMd (the monthly theme / why these cohere), reasoningMd | `experiment_group` (lineage generalizes `parentExperimentGroupId`) |
-| `group_idea` | groupLineageId, ideaLineageId, doneAt?, note? (membership + campaign done-state) | new |
-| `group_habit` | groupLineageId, habitLineageId (bad habits being eliminated) | new |
-| (group goal set) | derived through member ideas' `idea_goal` links **[OPEN: exact union vs curated at creation]** | replaces `experiment_group_goal` |
-| `active_experiment` | groupVersionId (pinned), reasoningMd, startedAt, **endDate**, status(current\|ended\|expired), previousId | `current_focus` + endDate |
-| `weekly_plan` | activeExperimentId, weekOf (Monday), themeMd, weeklyGoalMd, status(planned\|active\|ended), reviewMd | `experiment` kind=actionable, slimmed |
-| `weekly_plan_item` | weeklyPlanId, kind(todo\|intention), text, doneAt? | new (structured, not a text blob) |
-| `daily_plan` | weeklyPlanId, date, themeMd (work one-liner), notesMd, status | new |
-| `scheduled_event` | entityType(habit\|task\|weekly_item\|daily_adhoc\|leisure), entityId, title, startAt, endAt, rrule?, gcalEventId?, **pushStatus(pending\|pushed\|failed)**, status(active\|cancelled) | `calendar_event` + explicit job status; GCal = source of truth |
+**pattern_of_behavior** (new) + **goal_pattern** (new)
+```
+pattern_of_behavior: [versioning] title, trigger_md, emotion_md, coping_md,
+                     feedback_loop_md, note_md?
+goal_pattern:        id, goal_lineage_id, pattern_lineage_id, created_at
+```
 
-### Review inbox
-| Table | Key columns | Adapted from |
-|---|---|---|
-| `change_set` | summaryMd, operationsJson, conversationRef?, status(drafting→ready_for_review→applied\|rejected), rejectionNote/feedback, **reconciliationJson** (AI per-row classification: new / version-bump-of X / remix-of X / link-to-existing X), appliedAt | `draft_change_set` minus workspace/mode/invite |
+**habit** ← `habit` (raw) merged with `organized_habit`
+```
+OLD raw:  id, title, note, valence, status(established|building|lapsed),
+          rrule, preferred_time, duration_minutes, experiment_id, origin
+OLD org:  id, title, note, synthesis_md, status(active|sunset|archived)
+NEW: [versioning] title, note_md, valence(good|bad),
+     origin(conversation|system), status(active|lapsed),
+     active_experiment_id?   -- system habits: which pick birthed it
+     -- rrule/preferred_time/duration DROPPED: timing lives on scheduled_event
+goal_habit: id, goal_lineage_id, habit_lineage_id, why_md, created_at
+```
+
+**environment** ← `environment_item` merged with `organized_environment_item`
+```
+OLD: id, title, note, sub_kind(physical_setup|obligation|social),
+     status(active|removed), rrule, duration_minutes, origin
+NEW: [versioning] title, note_md, origin(conversation|calendar),
+     habit_lineage_id?  -- REQUIRED when origin=conversation,
+     effect(easier|harder)?  -- meaningful for conversation origin
+     -- calendar-origin rows represent standing recurring events
+```
+
+**experiment_idea** (new) + **idea_goal** (new)
+```
+experiment_idea: [versioning] title, description_md (one-liner ok),
+                 status(open|retired)
+idea_goal:       id, idea_lineage_id, goal_lineage_id, why_md, created_at
+                 -- THE why-bearing relationship groups and planners read
+```
+
+**project** ← `project` / **task** (new) / **idea_project** (new)
+```
+project:      [versioning] title, description_md
+idea_project: id, idea_lineage_id, project_lineage_id, created_at
+task:         [versioning] title, detail_md?, deadline_date?,
+              status(open|done|dropped),
+              experiment_idea_lineage_id?  -- ≤1; presence = goal-minded
+```
+
+**experiment_group** ← `experiment_group`
+```
+OLD: id, title, motivation_md, parent_experiment_group_id,
+     status(candidate|active|done|sunset|archived), closing_review_md,
+     archived_at, archived_from_status
+NEW: [versioning] title, theme_md, reasoning_md, status(candidate|archived)
+     -- parent link generalized into lineage_parent
+     -- active/done/sunset DROPPED: "active" derives from the current pick;
+        an unfinished expired group branches to v2 instead of closing
+group_idea:  id, group_lineage_id, idea_lineage_id, done_at?, note?
+group_habit: id, group_lineage_id, habit_lineage_id, created_at
+group_goal:  id, group_lineage_id, goal_lineage_id, rank, created_at
+             -- seeded as union of member ideas' idea_goal links,
+                curated+verified in the group conversation (decision #2)
+```
+
+**active_experiment** ← `current_focus`
+```
+OLD: id, experiment_group_id, previous_current_focus_id,
+     status(current|ended|superseded), entry_reason(pick|sunset),
+     reasoning_md, source_change_set_id, started_at, ended_at
+NEW: id, group_version_id (PINNED), reasoning_md, started_at,
+     end_date, ended_at?, previous_id?, change_set_id, created_at
+     -- "current" = ended_at null; entry_reason and the sunset ceremony die
+     -- current_focus_goal table DROPPED (goal set = group_goal, ranked)
+```
+
+**weekly_plan** ← `experiment` (kind=actionable, radically slimmed)
+```
+OLD: id, title, hypothesis_md, kind, experiment_group_id, week_of,
+     status(queued|scheduling|running|succeeded|failed|archived),
+     proposal_id, bandwidth, planned_duration_days, proposed_changes_json,
+     plan_json, queued_at, started_at, ended_at, outcome_md, review_md
+NEW: id, active_experiment_id, week_of (Monday), theme_md,
+     weekly_goal_md, created_at
+     -- NO status, NO review_md (decision #5): the next plan reads this one
+        plus completion data; nothing succeeds or fails
+weekly_plan_item: id, weekly_plan_id, kind(todo|intention), text, done_at?
+```
+
+**daily_plan** (new)
+```
+daily_plan:      id, weekly_plan_id, date, theme_md (work one-liner),
+                 notes_md?, created_at   -- no status
+daily_plan_item: id, daily_plan_id, kind(block|todo|leisure), text,
+                 scheduled_event_id?, task_lineage_id?, done_at?
+                 -- done_at is the manual dashboard CRUD; doubles as the
+                    habit-tracking signal (decision #5)
+```
+
+**leisure_activity** (new) / **takeaway** (new)
+```
+leisure_activity: [versioning] title, note_md,
+                  counteracts_pattern_lineage_id?, fits_when?
+takeaway:         id, markdown_md, date, active_experiment_id?, created_at
+                  (append-only, not versioned) [shape still open]
+```
+
+**scheduled_event** ← `calendar_event`
+```
+OLD: id, entity_type, entity_id, gcal_event_id, title, start_at, end_at,
+     rrule, block_style, status(active|cancelled|needs_reschedule),
+     last_synced_at
+NEW: id, entity_type(habit|task|weekly_item|daily_adhoc|leisure), entity_id,
+     title, start_at, end_at, rrule?, block_style, gcal_event_id?,
+     push_status(pending|pushed|failed), status(active|cancelled),
+     completed_at?, last_synced_at, timestamps
+     -- needs_reschedule dropped; GCal is source of truth for event state
+```
+
+**change_set** ← `draft_change_set`
+```
+OLD: id, workspace_id, mode, primary_entity_type/id, summary_md,
+     operations_json, source_refs_json, audit_json,
+     status(drafting|ready_for_review|applied|rejected|expired),
+     rejection_note, applied_at, rejected_at
+NEW: id, summary_md, operations_json, audit_json?,
+     reconciliation_json  -- AI per-row classification: new | version-bump-of
+                             X | remix-of X | link-to-existing X,
+     marker_token, status(drafting|ready_for_review|applied|rejected),
+     rejection_note (feedback), applied_at, rejected_at, timestamps
+     -- workspace/mode/invite/primary-entity machinery all dropped
+```
+
+**conversation** ← `conversation` (kept, pipeline columns stripped)
+```
+KEEP: id, source, external_id, title, content_json, raw_json, content_hash,
+      source_created_at, source_updated_at, parse_error, timestamps
+DROP: slug_detected, slug_message_idx, rant_verdict, rant_status,
+      rant_detected_at, rant_resolved_at, detector_note, distill_requested,
+      distilled_at, extractions_reviewed_at, derived_at
+```
+
+### Tables deleted outright
+`extraction`, `extraction_link`, `proposal`, raw `goal`, `goal_evidence`,
+`experience`, `experiment_task`, `experiment_task_goal`, `experiment_goal`,
+`experiment_organized_goal`, `current_focus_goal`, `organized_goal_source`,
+`organized_registry_source`, `project_source`, `experiment_group_goal` (→ new
+`group_goal`), `experiment_group_target`, `experiment_group_context`,
+`experiment_group_project`, `experiment_group_source`,
+`collaboration_invite`, `collaboration_workspace`,
+`collaboration_workspace_index`, `companion_branch_draft`, `chat_session`,
+`chat_message`, `daily_writeup`, `review_writeup`.
+Left dangling untouched (explicitly ignored): `witness`, `witness_goal`,
+`outbound_message`, `inbound_message`, `strike_state`.
 
 ---
 
@@ -217,14 +345,22 @@ change set. Universal mechanics for every survey:
 
 ---
 
-## Part 4 — Open questions this pass surfaced
+## Part 4 — Decisions (resolved with the user)
 
-1. Are relationship rows (idea_goal, goal_habit) themselves versioned
-   insert-only, or replace-on-review? (Spec says relationship data can be
-   "updated" — proposal: same insert-only versioning, they're small.)
-2. Group goal set: derived exact union vs curated at creation.
-3. `strikes.ts` kind-filter must be verified before candidate deletion.
-4. Witness/outbox system: keep dormant, adapt later, or delete.
-5. Does `weekly_plan` keep the succeeded/failed judgment of old actionables,
-   or is reviewMd (+ item done-states) the whole week-end story?
-6. Takeaway shape (freeform markdown vs structured mood/energy fields).
+1. **Relationship propagation is automated, never agent-authored.**
+   Relationship rows reference **lineage ids**, so a version bump propagates
+   to every relationship structurally — no rows to rewrite. (If version-
+   pinned relationship history is ever wanted, auto-copy rows at apply time;
+   not agent work either way.)
+2. **Group goal set: seeded as the union** of member ideas' goal links, then
+   **curated and verified in conversation** at group creation → stored as an
+   explicit `group_goal` set (with priority rank, used when picked).
+3. **Strikes system: ignore entirely, leave dangling** in current code.
+4. **Witness/outbox system: ignore entirely, leave dangling.** Core flow only.
+5. **Plans have NO statuses and no reviewMd/failure states.** A plan is
+   never succeeded/failed — the next plan simply reads its predecessor and
+   the completion data. Completion is tracked by manual CRUD in the
+   dashboard: done-flags on daily-plan items (which doubles as the habit
+   signal) and on weekly items / group ideas. The next-day/next-week MCP
+   reads that completion data and may ask recap questions.
+6. Takeaway shape: still open (freeform markdown + optional links for v1).
