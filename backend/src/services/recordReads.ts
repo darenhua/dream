@@ -195,7 +195,7 @@ export function readRecord(model: VersionedModel, lineageId: string) {
         .from(groupIdea)
         .where(eq(groupIdea.groupLineageId, lineageId))
         .all()
-        .map(row => ({ ...headSummary("experiment_idea", row.ideaLineageId), doneAt: row.doneAt, note: row.note }));
+        .map(row => ({ ...headSummary("experiment_idea", row.ideaLineageId), doneAt: row.doneAt, note: row.note, membershipId: row.id }));
       relations.goalSet = db
         .select()
         .from(experimentGroupGoal)

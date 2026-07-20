@@ -9,10 +9,11 @@ import { api } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ReviewInbox } from "./screens/ReviewInbox";
-import { OrganizedFeed } from "./screens/OrganizedFeed";
+import { PlanBoard } from "./screens/PlanBoard";
 import "./index.css";
 
-// View shell: the organized feed IS the dashboard now; admin is a mode.
+// View shell: the plan board (current pick / weekly / daily) is home; the
+// review inbox is its own page; admin is a mode.
 export function App() {
   const [admin, setAdmin] = useState(false);
   const [page, setPage] = useState<"home" | "review">("home");
@@ -76,7 +77,7 @@ export function App() {
         ) : page === "review" ? (
           <ReviewInbox tick={tick} onChanged={bump} />
         ) : (
-          <OrganizedFeed tick={tick} onChanged={bump} />
+          <PlanBoard tick={tick} onChanged={bump} />
         )}
       </main>
     </div>

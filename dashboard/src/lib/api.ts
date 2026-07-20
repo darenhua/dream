@@ -1037,6 +1037,43 @@ export const api = {
     request(`/review/${id}/apply`, { method: "POST", body: JSON.stringify({ verdicts }) }),
   reviewReject: (id: string, feedback: string | undefined, returnToDrafting: boolean) =>
     request(`/review/${id}/reject`, { method: "POST", body: JSON.stringify({ feedback, returnToDrafting }) }),
+  // ── plan board (rework) ────────────────────────────────────────────────
+  weeklyBoard: () => request<WeeklyBoard>("/organized/weekly"),
+  dailyPlans: (limit = 7) => request<DailyPlanRow[]>(`/organized/daily?limit=${limit}`),
+  toggleWeeklyItem: (id: string, done: boolean) =>
+    request(`/organized/weekly/items/${id}`, { method: "PATCH", body: JSON.stringify({ done }) }),
+  toggleDailyItem: (id: string, done: boolean) =>
+    request(`/organized/daily/items/${id}`, { method: "PATCH", body: JSON.stringify({ done }) }),
+  toggleGroupIdea: (membershipId: string, done: boolean) =>
+    request(`/organized/group-ideas/${membershipId}`, { method: "PATCH", body: JSON.stringify({ done }) }),
+  searchRecords: (query: string) =>
+    request<Record<string, RecordSummary[]>>(`/organized/records${query ? `?query=${encodeURIComponent(query)}` : ""}`),
+  recordDetail: (model: string, lineageId: string) => request<RecordDetail>(`/organized/records/${model}/${lineageId}`),
+};
+
+export type RecordSummary = { lineageId: string; versionId: string; version: number; title: string; description: string | null };
+
+export type WeeklyBoard = {
+  pick: { id: string; endDate: string | null; expired: boolean; groupLineageId: string } | null;
+  plans: { id: string; weekOf: string | null; theme: string; description: string | null; items: { id: string; kind: string; text: string; doneAt: string | null }[] }[];
+};
+
+export type DailyPlanRow = {
+  id: string;
+  date: string;
+  theme: string | null;
+  description: string | null;
+  items: { id: string; kind: string; text: string; doneAt: string | null; taskLineageId: string | null }[];
+};
+
+export type RecordDetail = {
+  model: string;
+  lineageId: string;
+  head: Record<string, unknown>;
+  versions: { id: string; version: number | null }[];
+  relations: Record<string, unknown>;
+  conversationSlices: { conversationId: string; title: string | null }[];
+  rant: { conversationId: string; title: string | null; date: string | null; messages: { role: string; content: string }[] } | null;
 };
 
 // ── review inbox types (rework) ──────────────────────────────────────────

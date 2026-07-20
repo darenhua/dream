@@ -10,6 +10,8 @@ import {
 import { listWeeklyPlans, toggleGroupIdeaDone, toggleWeeklyItem, weeklyPlanContext } from "../../services/weeklyPlan";
 import { latestPick } from "../../services/prioritize";
 import { listDailyPlans, toggleDailyItem } from "../../services/dailyPlan";
+import { readRecord, searchAllRecords } from "../../services/recordReads";
+import { VersionedModelSchema } from "../../services/records";
 
 export const organizedRoutes = new Hono();
 
@@ -109,4 +111,16 @@ organizedRoutes.patch("/daily/items/:id", async c => {
   const body = await c.req.json().catch(() => ({}));
   const row = toggleDailyItem(c.req.param("id"), Boolean(body.done));
   return row ? c.json(row) : c.json({ error: "item not found" }, 404);
+});
+
+organizedRoutes.get("/records", c => {
+  const { query } = c.req.query();
+  return c.json(searchAllRecords(query ?? "", 10));
+});
+
+organizedRoutes.get("/records/:model/:lineageId", c => {
+  const model = VersionedModelSchema.safeParse(c.req.param("model"));
+  if (!model.success) return c.json({ error: "unknown model" }, 400);
+  const record = readRecord(model.data, c.req.param("lineageId"));
+  return record ? c.json(record) : c.json({ error: "record not found" }, 404);
 });
