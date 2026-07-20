@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { draftChangeSet } from "../db/schema";
 import { emit } from "./events";
+import { applyPick as applyPickOperation } from "./prioritize";
 import {
   LINEAGE_REF_FIELDS,
   RelationSchema,
@@ -41,7 +42,16 @@ const LinkOpSchema = z
   })
   .strict();
 
-export const RecordOperationSchema = z.discriminatedUnion("op", [CreateOpSchema, LinkOpSchema]);
+const PickOpSchema = z
+  .object({
+    op: z.literal("pick"),
+    group: z.string().trim().min(1).max(200), // "temp:<tempId>" or a group lineage id
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    reasoning: z.string().trim().min(1).max(50_000),
+  })
+  .strict();
+
+export const RecordOperationSchema = z.discriminatedUnion("op", [CreateOpSchema, LinkOpSchema, PickOpSchema]);
 export const RecordOperationsSchema = z.array(RecordOperationSchema).min(1).max(200);
 export type RecordOperation = z.infer<typeof RecordOperationSchema>;
 
@@ -62,7 +72,12 @@ export const VerdictMapSchema = z.record(z.string(), VerdictSchema);
 function validateOperations(raw: unknown): RecordOperation[] {
   const ops = RecordOperationsSchema.parse(raw);
   const centralCount = ops.filter(o => o.op === "create" && o.role === "central").length;
-  if (centralCount !== 1) throw new Error("a change set needs exactly one central create");
+  const pickCount = ops.filter(o => o.op === "pick").length;
+  if (pickCount > 1) throw new Error("a change set can carry at most one pick");
+  // A pick decision may stand alone (selecting an existing group) or ride
+  // with the creates of a new group; anything else needs one central create.
+  if (pickCount === 0 && centralCount !== 1) throw new Error("a change set needs exactly one central create");
+  if (pickCount === 1 && centralCount > 1) throw new Error("a pick change set carries at most one central create");
   const tempIds = new Set<string>();
   for (const op of ops) {
     if (op.op !== "create") continue;
@@ -71,11 +86,15 @@ function validateOperations(raw: unknown): RecordOperation[] {
     createFieldsSchema(op.model).parse(op.fields);
   }
   for (const op of ops) {
-    if (op.op !== "link") continue;
-    for (const ref of [op.from, op.to]) {
-      if (ref.startsWith("temp:") && !tempIds.has(ref.slice(5))) {
-        throw new Error(`link references unknown ${ref}`);
+    if (op.op === "link") {
+      for (const ref of [op.from, op.to]) {
+        if (ref.startsWith("temp:") && !tempIds.has(ref.slice(5))) {
+          throw new Error(`link references unknown ${ref}`);
+        }
       }
+    }
+    if (op.op === "pick" && op.group.startsWith("temp:") && !tempIds.has(op.group.slice(5))) {
+      throw new Error(`pick references unknown ${op.group}`);
     }
   }
   return ops;
@@ -280,6 +299,11 @@ export function applyRecordChangeSet(id: string, verdictOverrides?: Record<strin
           description: op.description,
           rank: op.rank,
         });
+      }
+
+      for (const op of operations) {
+        if (op.op !== "pick") continue;
+        applyPickOperation({ groupLineageId: resolveRef(op.group), endDate: op.endDate, reasoning: op.reasoning }, id);
       }
 
       const updated = db

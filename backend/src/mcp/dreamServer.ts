@@ -8,6 +8,7 @@ import {
 } from "../services/recordChangeSets";
 import { VersionedModelSchema, type VersionedModel } from "../services/records";
 import { listRecords, readConversationSlice, readRecord, searchAllRecords } from "../services/recordReads";
+import { prioritizeContext } from "../services/prioritize";
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. Five conversational flows share these tools;
@@ -146,6 +147,9 @@ record_create operations contract:
 - Reference fields (environment_item.habitLineageId,
   task.experimentIdeaLineageId, leisure_activity.counteractsPatternLineageId)
   accept "temp:<tempId>" too.
+- pick op (prioritize decisions only): {op:"pick", group, endDate:
+  "YYYY-MM-DD", reasoning}. At most one; may stand alone or ride with the
+  creates of a new group (group: "temp:<tempId>").
 `.trim();
 
 function resultText(value: unknown): CallToolResult {
@@ -215,6 +219,17 @@ export function createDreamMcpServer(): McpServer {
       const slice = readConversationSlice(conversation_id, slice_end_idx ?? null);
       return slice ? resultText(slice) : errorText("conversation not found or not yet imported");
     },
+  );
+
+  server.registerTool(
+    "prioritize_context",
+    {
+      title: "Load the prioritize landscape (monthly decision)",
+      description:
+        "Run when the user wants to prioritize — pick the experiment group for the next couple of months (usually because no current pick exists or it expired). Returns every candidate group with its theme, ranked goal set, idea counts and done-states, plus the current/expired pick. Drive an echo-back brainstorm: reflect what you see, let the user rant, organize, repeat — then converge on ONE group and an end date (translate it: '8 weeks → N weekly plans — realistic?'). Submit the decision via record_create with a {op:'pick', group, endDate, reasoning} operation (the group may be an existing lineageId or a temp ref to a group created in the same change set). If an expired pick's group is unfinished, offer branching it to a v2 (read_record → remix/version) so the next pick starts where the last left off.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => resultText(prioritizeContext()),
   );
 
   server.registerTool(
