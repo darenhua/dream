@@ -9,6 +9,7 @@ import {
 import { VersionedModelSchema, type VersionedModel } from "../services/records";
 import { listRecords, readConversationSlice, readRecord, searchAllRecords } from "../services/recordReads";
 import { prioritizeContext } from "../services/prioritize";
+import { weeklyPlanContext } from "../services/weeklyPlan";
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. Five conversational flows share these tools;
@@ -230,6 +231,17 @@ export function createDreamMcpServer(): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => resultText(prioritizeContext()),
+  );
+
+  server.registerTool(
+    "weekly_plan_context",
+    {
+      title: "Load the weekly-plan context",
+      description:
+        "Run when the user wants to plan their week. Returns the current pick (deadline clock: weeks elapsed/remaining), the full group read (member ideas + done-states, ranked goals with whys), ALL prior weekly plans of this pick with item completions, open deadline tasks, and the leisure list. OPEN the conversation with the state of play — week N of M, last week's completions, the big-ticket position — THEN ask capacity/readiness. Momentum rules: stack wins, start tiny, build up; push back with the deadline when the user defers ('3 weeks left — ok failing this week?'). Schedule ONLY habit blocks being established and must-anchor blocks; everything else becomes items (todo|intention) for the daily planner. Submit via record_create with ONE {op:'create_weekly_plan', weekOf (Monday), theme, description (weekly goal + reported state), items, habitStarts, anchoredEvents, ideasDone} operation after the explicit go-ahead.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => resultText(weeklyPlanContext()),
   );
 
   server.registerTool(

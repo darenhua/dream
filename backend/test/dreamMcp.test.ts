@@ -40,6 +40,7 @@ describe("dream MCP surface", () => {
       "read_record",
       "record_create",
       "revise_record_create",
+      "weekly_plan_context",
     ]);
     const survey = await client.callTool({ name: "get_survey", arguments: { model: "organized_goal" } });
     expect(text(survey)).toContain("Satellite sweep");

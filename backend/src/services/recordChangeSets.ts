@@ -4,6 +4,7 @@ import { db } from "../db";
 import { draftChangeSet } from "../db/schema";
 import { emit } from "./events";
 import { applyPick as applyPickOperation } from "./prioritize";
+import { WeeklyPlanOpSchema, applyWeeklyPlan } from "./weeklyPlan";
 import {
   LINEAGE_REF_FIELDS,
   RelationSchema,
@@ -51,7 +52,7 @@ const PickOpSchema = z
   })
   .strict();
 
-export const RecordOperationSchema = z.discriminatedUnion("op", [CreateOpSchema, LinkOpSchema, PickOpSchema]);
+export const RecordOperationSchema = z.discriminatedUnion("op", [CreateOpSchema, LinkOpSchema, PickOpSchema, WeeklyPlanOpSchema]);
 export const RecordOperationsSchema = z.array(RecordOperationSchema).min(1).max(200);
 export type RecordOperation = z.infer<typeof RecordOperationSchema>;
 
@@ -73,10 +74,13 @@ function validateOperations(raw: unknown): RecordOperation[] {
   const ops = RecordOperationsSchema.parse(raw);
   const centralCount = ops.filter(o => o.op === "create" && o.role === "central").length;
   const pickCount = ops.filter(o => o.op === "pick").length;
+  const weeklyCount = ops.filter(o => o.op === "create_weekly_plan").length;
   if (pickCount > 1) throw new Error("a change set can carry at most one pick");
+  if (weeklyCount > 1) throw new Error("a change set can carry at most one weekly plan");
+  if (weeklyCount === 1 && ops.length !== 1) throw new Error("a weekly plan change set carries only the weekly plan");
   // A pick decision may stand alone (selecting an existing group) or ride
   // with the creates of a new group; anything else needs one central create.
-  if (pickCount === 0 && centralCount !== 1) throw new Error("a change set needs exactly one central create");
+  if (weeklyCount === 0 && pickCount === 0 && centralCount !== 1) throw new Error("a change set needs exactly one central create");
   if (pickCount === 1 && centralCount > 1) throw new Error("a pick change set carries at most one central create");
   const tempIds = new Set<string>();
   for (const op of ops) {
@@ -302,8 +306,12 @@ export function applyRecordChangeSet(id: string, verdictOverrides?: Record<strin
       }
 
       for (const op of operations) {
-        if (op.op !== "pick") continue;
-        applyPickOperation({ groupLineageId: resolveRef(op.group), endDate: op.endDate, reasoning: op.reasoning }, id);
+        if (op.op === "pick") {
+          applyPickOperation({ groupLineageId: resolveRef(op.group), endDate: op.endDate, reasoning: op.reasoning }, id);
+        }
+        if (op.op === "create_weekly_plan") {
+          applyWeeklyPlan(op, id);
+        }
       }
 
       const updated = db

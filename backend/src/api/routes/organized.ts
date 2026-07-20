@@ -7,6 +7,9 @@ import {
   restoreExperimentGroup,
 } from "../../services/organized";
 
+import { listWeeklyPlans, toggleGroupIdeaDone, toggleWeeklyItem, weeklyPlanContext } from "../../services/weeklyPlan";
+import { latestPick } from "../../services/prioritize";
+
 export const organizedRoutes = new Hono();
 
 // The new curated page reads a single coherent model. The legacy raw feed
@@ -68,4 +71,30 @@ organizedRoutes.get("/:type/:id", c => {
     c.req.param("id"),
   );
   return detail ? c.json(detail) : c.json({ error: "organized entity not found" }, 404);
+});
+
+
+// ── Rework: weekly plans + completion CRUD (the manual done toggles that
+// double as the habit/momentum signal) ──────────────────────────────────────
+organizedRoutes.get("/weekly", c => {
+  const pick = latestPick();
+  if (!pick) return c.json({ pick: null, plans: [] });
+  return c.json({
+    pick: { id: pick.pick.id, endDate: pick.pick.endDate, expired: pick.expired, groupLineageId: pick.groupLineageId },
+    plans: listWeeklyPlans(pick.pick.id),
+  });
+});
+
+organizedRoutes.get("/weekly/context", c => c.json(weeklyPlanContext()));
+
+organizedRoutes.patch("/weekly/items/:id", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  const row = toggleWeeklyItem(c.req.param("id"), Boolean(body.done));
+  return row ? c.json(row) : c.json({ error: "item not found" }, 404);
+});
+
+organizedRoutes.patch("/group-ideas/:id", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  const row = toggleGroupIdeaDone(c.req.param("id"), Boolean(body.done));
+  return row ? c.json(row) : c.json({ error: "membership not found" }, 404);
 });
