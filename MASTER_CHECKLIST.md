@@ -61,6 +61,28 @@ IMPLEMENTATION_PLAN.md.
 - [ ] Experiences: not a model. Editable planner prompts: later, fixed set first. Context windowing rules enforced (daily: current weekly + ~7 dailies). (SPEC §7)
 - [ ] Legacy table names kept (organized_goal, current_focus, experiment, experiment_task, calendar_event, draft_change_set...); single description column per table — no multi-markdown fields, no why_md naming. (SCHEMA v1.1)
 
+## MCP testing & review strategy (lightweight, from Phase 3 on)
+- [ ] Dry-run every MCP flow with our own AI before calling it done: boot
+  the backend on localhost, connect a **lightweight Sonnet subagent** as
+  the MCP client (curl/HTTP bridge to the real Streamable HTTP endpoint —
+  the prior branch's trajectory + two-agent-simulation pattern, revived
+  small), and have it play the user side of a flow from
+  CONVERSATION_FLOWS.md.
+- [ ] A second lightweight Sonnet **review subagent** reads
+  CONVERSATION_FLOWS.md + the dry-run transcript and judges: did the
+  conversation follow the flow (digest-first, ≤2-3 questions, explicit
+  go-ahead, "submitted for review" language)? Did data access actually
+  work (reads returned real rows, change set landed with correct
+  rows/FKs/classifications)? It may suggest prompt tweaks; apply and
+  re-run — but keep the loop cheap and unceremonious, not a test suite.
+- [ ] Minimum bar per flow: one happy-path dry run whose created records /
+  read outputs are verified against the DB, plus flow-rule spot-checks by
+  the reviewer. Not exhaustive simulation.
+- [ ] API keys: NONE needed for this harness when driven from a Claude
+  Code session (session subagents act as the MCP client and reviewer).
+  ANTHROPIC_API_KEY is needed only for the server-side reconciliation
+  agent — and later if we want these sims runnable headlessly in CI.
+
 ## Environment facts (this VM)
 - [ ] Baseline verified 2026-07-20: backend `bunx tsc --noEmit` clean; `bun test` 155 pass / 0 fail (scratch DB_PATH); dashboard `bun run build` green. Dashboard `tsc --noEmit` fails on PRE-EXISTING env-TS-version issues (baseUrl deprecation, css side-effect import) — the dashboard gate is `bun run build`, not tsc.
 - [ ] `thoughts/` at repo root is untracked trajectory-test output — never commit it. Never `git add -A`.

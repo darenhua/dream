@@ -111,6 +111,11 @@ Goal: records can be born from a Claude conversation.
 - Done when: live end-to-end: a real MCP conversation creates a goal with
   satellites → review inbox → apply; read_record loads it in a fresh
   thread and a v2 branch submission round-trips.
+- Verified via the dry-run harness (MASTER_CHECKLIST "MCP testing"):
+  a Sonnet subagent plays the user against the real localhost endpoint;
+  a second lightweight reviewer judges the transcript against
+  CONVERSATION_FLOWS.md and DB state, suggesting prompt tweaks. Applies
+  to phases 5-7 flows too.
 
 ## Phase 4 — Conversation import rework
 
