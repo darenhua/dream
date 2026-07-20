@@ -10,6 +10,7 @@ import { VersionedModelSchema, type VersionedModel } from "../services/records";
 import { listRecords, readConversationSlice, readRecord, searchAllRecords } from "../services/recordReads";
 import { prioritizeContext } from "../services/prioritize";
 import { weeklyPlanContext } from "../services/weeklyPlan";
+import { DailyPlanInputSchema, createDailyPlan, dailyPlanContext } from "../services/dailyPlan";
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. Five conversational flows share these tools;
@@ -242,6 +243,37 @@ export function createDreamMcpServer(): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => resultText(weeklyPlanContext()),
+  );
+
+  server.registerTool(
+    "daily_plan_context",
+    {
+      title: "Load the daily-plan context",
+      description:
+        "Run when the user wants to plan tomorrow (or today). Returns the CURRENT weekly plan only (with item completions), the last ~7 daily plans (their reported states and completions — yesterday's exhaustion is tomorrow's leisure budget), open tasks with deadlines (unanchored deadline tasks are the DAILY NAG: raise them every day until scheduled), the leisure list (match activities to the reported mood via their feeling-pairing descriptions), the standing work context, and what is already scheduled on the date. OPEN with the date's reality (calendar + recent state), then ask the fixed three: energy level? social urge? how heavy is work? Then propose: a work-centric theme one-liner, the day's blocks — including INVENTED ones (make-breakfast, a 1pm walk, an ask-your-boss note) and leisure matched to the state — and drain weekly todos into the day.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    },
+    async ({ date }) => resultText(dailyPlanContext(date)),
+  );
+
+  server.registerTool(
+    "create_daily_plan",
+    {
+      title: "Write the confirmed daily plan (conversation IS the review)",
+      description:
+        "Unlike record_create, this writes DIRECTLY: for daily plans the in-conversation confirmation is the review, so call it only after the user explicitly confirms the proposed day. Creates the plan (theme + description carrying the reported energy/social/work state for tomorrow's planner), its items (block|todo|leisure; items with startAt/endAt become scheduled events, pushed to Google Calendar when connected), and links deadline tasks via taskLineageId. Tell the user it is on their calendar/plan — this one IS applied.",
+      inputSchema: DailyPlanInputSchema.shape,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async input => {
+      try {
+        const plan = createDailyPlan(input);
+        return resultText({ status: "created", plan });
+      } catch (error) {
+        return errorText(error instanceof Error ? error.message : "create_daily_plan failed");
+      }
+    },
   );
 
   server.registerTool(

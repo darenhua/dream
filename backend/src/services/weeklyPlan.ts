@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
-import { calendarEvent, experiment, experimentTask, groupIdea, habit, leisureActivity, task } from "../db/schema";
+import { experiment, experimentTask, groupIdea, habit, leisureActivity, task } from "../db/schema";
+import { createScheduledEvents } from "./calendarWriter";
 import { todayLocal } from "../lib/time";
 import { currentPick } from "./prioritize";
 import { readRecord } from "./recordReads";
@@ -103,13 +104,13 @@ export function applyWeeklyPlan(op: WeeklyPlanOp, changeSetId: string): string {
         version: 1,
         title: start.title,
         description: start.description ?? null,
-        origin: "system" as never,
+        origin: "system",
         status: "building",
         currentFocusId: pick.pick.id,
       })
       .run();
-    db.insert(calendarEvent)
-      .values({
+    createScheduledEvents([
+      {
         entityType: "habit",
         entityId: habitId,
         title: start.title,
@@ -117,21 +118,21 @@ export function applyWeeklyPlan(op: WeeklyPlanOp, changeSetId: string): string {
         endAt: start.firstEndAt,
         rrule: start.rrule,
         blockStyle: "experiment",
-      })
-      .run();
+      },
+    ]);
   }
 
   for (const block of op.anchoredEvents) {
-    db.insert(calendarEvent)
-      .values({
+    createScheduledEvents([
+      {
         entityType: block.taskLineageId ? "task" : "weekly_item",
         entityId: block.taskLineageId ?? row.id,
         title: block.title,
         startAt: block.startAt,
         endAt: block.endAt,
         blockStyle: block.taskLineageId ? "task" : "obligation",
-      })
-      .run();
+      },
+    ]);
   }
 
   const now = new Date().toISOString();

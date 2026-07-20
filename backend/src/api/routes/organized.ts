@@ -9,6 +9,7 @@ import {
 
 import { listWeeklyPlans, toggleGroupIdeaDone, toggleWeeklyItem, weeklyPlanContext } from "../../services/weeklyPlan";
 import { latestPick } from "../../services/prioritize";
+import { listDailyPlans, toggleDailyItem } from "../../services/dailyPlan";
 
 export const organizedRoutes = new Hono();
 
@@ -97,4 +98,15 @@ organizedRoutes.patch("/group-ideas/:id", async c => {
   const body = await c.req.json().catch(() => ({}));
   const row = toggleGroupIdeaDone(c.req.param("id"), Boolean(body.done));
   return row ? c.json(row) : c.json({ error: "membership not found" }, 404);
+});
+
+organizedRoutes.get("/daily", c => {
+  const { limit } = c.req.query();
+  return c.json(listDailyPlans(limit ? Number(limit) : 7));
+});
+
+organizedRoutes.patch("/daily/items/:id", async c => {
+  const body = await c.req.json().catch(() => ({}));
+  const row = toggleDailyItem(c.req.param("id"), Boolean(body.done));
+  return row ? c.json(row) : c.json({ error: "item not found" }, 404);
 });

@@ -33,6 +33,8 @@ describe("dream MCP surface", () => {
     const names = tools.tools.map(t => t.name).sort();
     expect(names).toEqual([
       "check_review_status",
+      "create_daily_plan",
+      "daily_plan_context",
       "get_survey",
       "list_records",
       "prioritize_context",

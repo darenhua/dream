@@ -170,6 +170,9 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.steer": PROMPT_STEER,
   "PROMPT.goal_editor": PROMPT_GOAL_EDITOR,
   "PROMPT.record_reconciler": PROMPT_RECORD_RECONCILER,
+  // Standing editable context the daily planner always loads (spec: "work-life
+  // context supplied via a standing record").
+  WORK_CONTEXT: "",
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
   "PROMPT.review_writeup": PROMPT_REVIEW_WRITEUP,
   "PROMPT.witness_composer": PROMPT_WITNESS_COMPOSER,

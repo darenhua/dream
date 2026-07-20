@@ -140,7 +140,7 @@ export const goal = sqliteTable("goal", {
     .notNull()
     .default("backlog"),
   sortOrder: integer("sort_order").notNull().default(0),
-  origin: text("origin", { enum: ["derived", "manual"] }).notNull(),
+  origin: text("origin", { enum: ["derived", "manual", "conversation", "calendar"] }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -171,7 +171,7 @@ export const habit = sqliteTable("habit", {
   preferredTime: text("preferred_time"), // "HH:MM" local
   durationMinutes: integer("duration_minutes"),
   experimentId: text("experiment_id").references(() => experiment.id), // set when born inside an experiment
-  origin: text("origin", { enum: ["derived", "manual", "experiment"] }).notNull(),
+  origin: text("origin", { enum: ["derived", "manual", "experiment", "conversation", "system"] }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -188,7 +188,7 @@ export const environmentItem = sqliteTable("environment_item", {
   status: text("status", { enum: ["active", "removed"] }).notNull().default("active"),
   rrule: text("rrule"),
   durationMinutes: integer("duration_minutes"),
-  origin: text("origin", { enum: ["derived", "manual"] }).notNull(),
+  origin: text("origin", { enum: ["derived", "manual", "conversation", "calendar"] }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -202,7 +202,7 @@ export const experience = sqliteTable("experience", {
   plannedFor: text("planned_for"), // ISO datetime of the one-time calendar event
   hadAt: text("had_at"),
   experimentTaskId: text("experiment_task_id").references(() => experimentTask.id),
-  origin: text("origin", { enum: ["derived", "manual", "experiment"] }).notNull(),
+  origin: text("origin", { enum: ["derived", "manual", "experiment", "conversation", "system"] }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -216,7 +216,7 @@ export const project = sqliteTable("project", {
   ...versioning(),
   title: text("title").notNull(),
   note: text("note"),
-  origin: text("origin", { enum: ["derived", "manual"] }).notNull(),
+  origin: text("origin", { enum: ["derived", "manual", "conversation", "calendar"] }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
