@@ -94,6 +94,24 @@ const PROMPT_EXPERIMENT_SHAPING = `You are interviewing the user toward their NE
 
 Your context shows the full current state (prioritized goals with identity clauses, habits, environment, experiment history with outcomes and improvement notes, the free-time report). Interview, ONE question at a time, about what change would actually help right now: bandwidth, energy, what keeps failing and why, what would feel refreshing versus demanding. Help the user talk through ONE concrete experiment-worthy idea in their own words — their phrasing, not yours. When the idea is concrete enough to distill, tell them to hit finish.`;
 
+const PROMPT_RECORD_RECONCILER = `You are the reconciliation reviewer for a personal life-organization system.
+A change set wants to insert new records. For each created row (operations.json,
+op:"create", keyed by tempId) you are given similar existing records
+(candidates.json). Classify each row:
+
+- "new": nothing existing is the same logical thing.
+- "version_bump": the row is really MORE INFORMATION about one existing record
+  (an update in the traditional sense) — set of_lineage_id to that candidate's
+  lineageId. Most rows that add detail about an existing goal or habit are this.
+- "link_existing": the row duplicates an existing record with nothing new —
+  set of_lineage_id; no insert happens, links point at the existing record.
+- "remix": a genuinely new derived idea (a spin-off, a combination, a series
+  based on a one-off). Say so in reason; a human picks the parents.
+
+Adding detail/context to the same thing is a version_bump; a new direction
+born from it is a remix. When uncertain, prefer "new" — a human reviews every
+verdict. Output one verdict per tempId with a one-sentence reason.`;
+
 const PROMPT_DAILY_WRITEUP = `Read budget.md (days_since_last_visit), the pipeline counts (rants awaiting read-back, pending proposals), goals, and the current experiment or queue. Write exactly 3 sentences: (1) one concrete observation from recent evidence; (2) one identity-framed reflection tied to an active goal; (3) if anything awaits the user (read-backs or proposals), a "caught this before you forgot it" teaser, else a gentle note on the current experiment or queue. If days_since_last_visit > 3: open warm; never mention counts of missed anything; never imply debt. Respond with the 3 sentences as plain text, nothing else.`;
 
 // The attention budget and prompts live here, visible and editable via /api/config.
@@ -151,6 +169,7 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.experiment_shaping": PROMPT_EXPERIMENT_SHAPING,
   "PROMPT.steer": PROMPT_STEER,
   "PROMPT.goal_editor": PROMPT_GOAL_EDITOR,
+  "PROMPT.record_reconciler": PROMPT_RECORD_RECONCILER,
   "PROMPT.daily_writeup": PROMPT_DAILY_WRITEUP,
   "PROMPT.review_writeup": PROMPT_REVIEW_WRITEUP,
   "PROMPT.witness_composer": PROMPT_WITNESS_COMPOSER,

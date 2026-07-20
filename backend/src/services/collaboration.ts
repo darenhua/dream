@@ -389,7 +389,7 @@ export function assertDashboardWorkspaceCapability(workspaceId: string, capabili
 
 export function assertDashboardChangeSetCapability(changeSetId: string, capability: string | null | undefined) {
   const changeSet = db.select().from(draftChangeSet).where(eq(draftChangeSet.id, changeSetId)).get();
-  if (!changeSet) throw new Error("collaboration dashboard capability is invalid");
+  if (!changeSet?.workspaceId) throw new Error("collaboration dashboard capability is invalid");
   assertDashboardWorkspaceCapability(changeSet.workspaceId, capability);
   return changeSet;
 }
@@ -721,7 +721,7 @@ export function applyCollaborationChangeSet(changeSetId: string) {
         .from(draftChangeSet)
         .where(and(eq(draftChangeSet.id, changeSet.id), eq(draftChangeSet.status, "ready_for_review")))
         .get();
-      if (!readyChangeSet) throw new Error("change set is no longer ready for review");
+      if (!readyChangeSet?.workspaceId) throw new Error("change set is no longer ready for review");
       const workspace = db
         .select()
         .from(collaborationWorkspace)
@@ -743,7 +743,7 @@ export function applyCollaborationChangeSet(changeSetId: string) {
       if (!updated) throw new Error("change set was reviewed by another request");
       db.update(collaborationWorkspace)
         .set({ status: "applied" })
-        .where(eq(collaborationWorkspace.id, changeSet.workspaceId))
+        .where(eq(collaborationWorkspace.id, changeSet.workspaceId!))
         .run();
       return { updated, primaryIds: applied.primaryIds };
     });
@@ -782,7 +782,7 @@ export function rejectCollaborationChangeSet(
     if (!changeSet) throw new Error("change set was reviewed by another request");
     db.update(collaborationWorkspace)
       .set({ status: returnToDrafting ? "open" : "rejected" })
-      .where(eq(collaborationWorkspace.id, readyChangeSet.workspaceId))
+      .where(eq(collaborationWorkspace.id, readyChangeSet.workspaceId!))
       .run();
     return changeSet;
   });

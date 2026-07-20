@@ -20,6 +20,7 @@ import { collaborationMcpBackend } from "../services/collaboration";
 import { collaborationRoutes } from "./routes/collaboration";
 import { companionRoutes } from "./routes/companion";
 import { organizedRoutes } from "./routes/organized";
+import { reviewRoutes } from "./routes/review";
 
 export const app = new Hono();
 
@@ -49,6 +50,7 @@ app.route("/api/outbox", outboxRoutes);
 app.route("/api/messaging", messagingRoutes);
 app.route("/api/agent-runs", agentRunRoutes);
 app.route("/api/organized", organizedRoutes);
+app.route("/api/review", reviewRoutes);
 app.route("/api/collaboration", collaborationRoutes);
 // Companion inbox: fail-closed reviewer identity; see routes/companion.ts.
 app.route("/api/companion", companionRoutes);

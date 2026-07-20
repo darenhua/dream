@@ -388,17 +388,15 @@ export const currentFocusGoal = sqliteTable(
   ],
 );
 
+// Rework: stores lineage ids (curated goal set of a group, ranked); FKs
+// dropped because lineage ids span versions.
 export const experimentGroupGoal = sqliteTable(
   "experiment_group_goal",
   {
     id: id(),
-    experimentGroupId: text("experiment_group_id")
-      .notNull()
-      .references(() => experimentGroup.id),
-    organizedGoalId: text("organized_goal_id")
-      .notNull()
-      .references(() => organizedGoal.id),
-    rank: integer("rank"), // rework: curated priority order of the group's goal set
+    experimentGroupId: text("experiment_group_id").notNull(),
+    organizedGoalId: text("organized_goal_id").notNull(),
+    rank: integer("rank"), // curated priority order of the group's goal set
     createdAt: createdAt(),
   },
   t => [uniqueIndex("experiment_group_goal_unique").on(t.experimentGroupId, t.organizedGoalId)],
@@ -461,16 +459,16 @@ export const experimentGroupSource = sqliteTable(
 );
 
 // A goal's persistent ideal sets — which habits/environment constitute it.
+// Rework: repurposed as the goal↔habit lineage link ("removing/changing this
+// habit is part of the goal"); columns keep their legacy names but store
+// lineage ids, so the FKs are gone and description carries the why.
 export const goalHabit = sqliteTable(
   "goal_habit",
   {
     id: id(),
-    goalId: text("goal_id")
-      .notNull()
-      .references(() => goal.id),
-    habitId: text("habit_id")
-      .notNull()
-      .references(() => habit.id),
+    goalId: text("goal_id").notNull(),
+    habitId: text("habit_id").notNull(),
+    description: text("description"),
     createdAt: createdAt(),
   },
   t => [uniqueIndex("goal_habit_unique").on(t.goalId, t.habitId)],
@@ -780,9 +778,8 @@ export const draftChangeSet = sqliteTable(
   "draft_change_set",
   {
     id: id(),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => collaborationWorkspace.id),
+    // Rework: nullable — a record_create change set has no workspace/mode.
+    workspaceId: text("workspace_id").references(() => collaborationWorkspace.id),
     mode: text("mode", {
       enum: [
         "organized_goal",
@@ -792,8 +789,8 @@ export const draftChangeSet = sqliteTable(
         "actionable_experiment",
         "prioritize",
       ],
-    }).notNull(),
-    primaryEntityType: text("primary_entity_type").notNull(),
+    }),
+    primaryEntityType: text("primary_entity_type"),
     primaryEntityId: text("primary_entity_id"),
     summaryMd: text("summary_md").notNull(),
     operationsJson: text("operations_json").notNull(),
@@ -808,6 +805,9 @@ export const draftChangeSet = sqliteTable(
     reconciliationJson: text("reconciliation_json"),
     markerToken: text("marker_token"),
     submittedAt: text("submitted_at"),
+    // tempId → {model, versionId, lineageId, verdict} written at apply; the
+    // import stitcher and read_record resolve provenance through this.
+    appliedRecordsJson: text("applied_records_json"),
     appliedAt: text("applied_at"),
     rejectedAt: text("rejected_at"),
     createdAt: createdAt(),
@@ -960,6 +960,7 @@ export const agentRun = sqliteTable("agent_run", {
       "witness_composer",
       "witness_prompter",
       "goal_editor",
+      "record_reconciler",
     ],
   }).notNull(),
   trigger: text("trigger", { enum: ["daily", "manual"] }).notNull(),

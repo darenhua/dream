@@ -1029,9 +1029,43 @@ export const api = {
     return body as { new: number; updated: number; unchanged: number; errors: unknown[] };
   },
   runDaily: () => request("/jobs/daily", { method: "POST", body: "{}" }),
-  runDetect: () => request("/jobs/detect", { method: "POST", body: "{}" }),
-  runDistill: () => request("/jobs/distill", { method: "POST", body: "{}" }),
-  runDerive: (conversationId?: string) =>
-    request("/jobs/derive", { method: "POST", body: JSON.stringify(conversationId ? { conversationId } : {}) }),
-  runWriteup: () => request("/jobs/writeup", { method: "POST", body: "{}" }),
+  // ── review inbox (rework) ──────────────────────────────────────────────
+  reviewList: (status?: string) => request<RecordChangeSet[]>(`/review${status ? `?status=${status}` : ""}`),
+  reviewGet: (id: string) => request<RecordChangeSet>(`/review/${id}`),
+  reviewReconcile: (id: string) => request(`/review/${id}/reconcile`, { method: "POST", body: "{}" }),
+  reviewApply: (id: string, verdicts: Record<string, RecordVerdict>) =>
+    request(`/review/${id}/apply`, { method: "POST", body: JSON.stringify({ verdicts }) }),
+  reviewReject: (id: string, feedback: string | undefined, returnToDrafting: boolean) =>
+    request(`/review/${id}/reject`, { method: "POST", body: JSON.stringify({ feedback, returnToDrafting }) }),
+};
+
+// ── review inbox types (rework) ──────────────────────────────────────────
+export type RecordVerdict =
+  | { verdict: "new" }
+  | { verdict: "version_bump"; ofLineageId: string }
+  | { verdict: "link_existing"; lineageId: string }
+  | { verdict: "remix"; parents: { model: string; versionId: string }[] };
+
+export type RecordOperation =
+  | { op: "create"; tempId: string; model: string; role: "central" | "satellite"; fields: Record<string, unknown> }
+  | { op: "link"; relation: string; from: string; to: string; description?: string; rank?: number };
+
+export type RecordChangeSet = {
+  id: string;
+  summaryMd: string;
+  operations: RecordOperation[];
+  reconciliation: {
+    candidates?: Record<string, { lineageId: string; versionId: string; version: number; title: string; description: string | null }[]>;
+    verdicts?: Record<string, RecordVerdict>;
+    reasons?: Record<string, string>;
+  } | null;
+  appliedRecords: Record<string, { model: string; versionId: string; lineageId: string; verdict: string; role: string; title: string }> | null;
+  markerToken: string | null;
+  status: string;
+  rejectionNote: string | null;
+  submittedAt: string | null;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
