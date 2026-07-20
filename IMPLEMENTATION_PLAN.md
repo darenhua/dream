@@ -1,5 +1,18 @@
 # Dream Rework — Phased Implementation Plan
 
+> **AS-BUILT STATUS (2026-07-20):** Phases 0-7 and 9 are implemented, tested
+> (backend 84 pass / 0 fail; dashboard build green), committed and pushed on
+> codex/mcp-rework. Phase 8 was cut by design (spec §8a). Notable as-built
+> decisions: the pick and weekly plan are change-set OPERATIONS
+> ({op:"pick"}, {op:"create_weekly_plan"}) through the same review
+> membrane; daily plans write directly (conversation-is-review) via the
+> create_daily_plan tool; reading is two-step (cross-model list_records →
+> read_record with the originating rant inlined); the reconciliation LLM
+> pass is injectable (mocked in tests) and runs through agentRunner
+> (ANTHROPIC_API_KEY or AWS Bedrock via USE_BEDROCK — the /api/review
+> reconcile route auto-falls-back to candidates-only without credentials).
+> Legacy column drops remain deferred to a final cleanup migration.
+
 Companion to REWORK_SPEC.md and SCHEMA_AND_SURVEYS.md (v1.1 corrections
 applied: legacy table names kept, single `description` columns).
 
