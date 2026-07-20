@@ -37,6 +37,30 @@ export function listRecords(model: VersionedModel, query?: string, limit = 50) {
   return searchModel(model, query ?? "", limit);
 }
 
+const ALL_MODELS: VersionedModel[] = [
+  "organized_goal",
+  "habit",
+  "environment_item",
+  "project",
+  "experiment_group",
+  "pattern_of_behavior",
+  "experiment_idea",
+  "task",
+  "leisure_activity",
+];
+
+/** Step 1 of reading: one search across every model ("working out" → the
+ * matching goals, habits, ideas, … together), so the user can pick the record
+ * to actually read. */
+export function searchAllRecords(query: string, limitPerModel = 8) {
+  const results: Record<string, ReturnType<typeof searchModel>> = {};
+  for (const model of ALL_MODELS) {
+    const hits = searchModel(model, query, limitPerModel);
+    if (hits.length) results[model] = hits;
+  }
+  return results;
+}
+
 /** Version chain + branch parentage + conversation provenance for a lineage. */
 function lineageEnvelope(model: VersionedModel, lineageId: string) {
   const table = modelTable(model);
@@ -216,7 +240,13 @@ export function readRecord(model: VersionedModel, lineageId: string) {
     }
   }
 
-  return { model, lineageId, ...envelope, relations };
+  // Step 2 pulls up the rant: inline the originating slice text (the
+  // conversation that created this record), when its export was imported.
+  const originating = envelope.conversationSlices.find(s => s.role === "created_central")
+    ?? envelope.conversationSlices.find(s => s.role === "created_satellite");
+  const rant = originating ? readConversationSlice(originating.conversationId, originating.sliceEndIdx) : null;
+
+  return { model, lineageId, ...envelope, relations, rant };
 }
 
 function readIdeaWithGoals(ideaLineageId: string) {

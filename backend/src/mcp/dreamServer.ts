@@ -7,7 +7,7 @@ import {
   reviseRecordChangeSet,
 } from "../services/recordChangeSets";
 import { VersionedModelSchema, type VersionedModel } from "../services/records";
-import { listRecords, readConversationSlice, readRecord } from "../services/recordReads";
+import { listRecords, readConversationSlice, readRecord, searchAllRecords } from "../services/recordReads";
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. Five conversational flows share these tools;
@@ -22,10 +22,11 @@ apply:
    conversation (any conversation — long self-rant or quick capture). Digest
    everything said so far into the proposed record set. Ask at most 2-3
    decision-critical questions; an intake questionnaire is a failure.
-2. Reading is an explicit user act. Never call read_record/list_records
-   until the user asks you to pull something down ("load up my goal X",
-   "what ideas do I have"). When they don't remember the exact record,
-   list_records first, then read the one they pick.
+2. Reading is an explicit user act, in two steps. Never read until the user
+   asks you to pull something down. Step 1: list_records (cross-model
+   search — "working on a workout habit" → the related goals, habits, ideas
+   together). Step 2: read_record on the one they pick — that pulls the
+   full relation web AND the originating rant into context.
 3. Search before proposing. Before record_create, use list_records to find
    existing related records; propose links to THEIR records conversationally
    ("I found your goal 'higher agency' — is this related?"). The user's
@@ -172,17 +173,18 @@ export function createDreamMcpServer(): McpServer {
   server.registerTool(
     "list_records",
     {
-      title: "List/search records of one model",
+      title: "Search records (step 1 of reading)",
       description:
-        "List the lineage heads of one model, optionally fuzzy-filtered. Use when the user asks to pull something down but doesn't name the exact record, and ALWAYS before record_create to find existing records to link instead of duplicating.",
+        "Fuzzy-search the user's records. Without a model, searches ACROSS all models at once — 'working out' returns the matching goals, habits, experiment ideas, etc. together so the user can pick which to read. With a model, lists/searches only that model. Use when the user asks to pull something down without naming the exact record, and ALWAYS before record_create to find existing records to link instead of duplicating.",
       inputSchema: {
-        model: VersionedModelSchema,
+        model: VersionedModelSchema.optional(),
         query: z.string().trim().max(300).optional(),
         limit: z.number().int().min(1).max(100).optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ model, query, limit }) => resultText(listRecords(model, query, limit ?? 50)),
+    async ({ model, query, limit }) =>
+      resultText(model ? listRecords(model, query, limit ?? 50) : searchAllRecords(query ?? "", limit ?? 8)),
   );
 
   server.registerTool(
@@ -190,7 +192,7 @@ export function createDreamMcpServer(): McpServer {
     {
       title: "Read one record with its typed relation web",
       description:
-        "Pull down one record by lineage id: its version chain, branch parentage, and per-model relations (a goal pulls its habits/patterns/ideas with whys and groups; a group pulls member ideas with done-states and its ranked goal set; a task pulls its idea and calendar items; etc.), plus conversation-slice references. Only when the user explicitly asks.",
+        "Step 2 of reading: pull down ONE record by lineage id — its version chain, branch parentage, per-model relations (a goal pulls its habits/patterns/ideas with whys and groups; a group pulls member ideas with done-states and its ranked goal set; a task pulls its idea and calendar items; etc.), AND the originating rant inline (the conversation slice that created it, once imported). Only when the user explicitly asks.",
       inputSchema: { model: VersionedModelSchema, lineage_id: z.string().min(1) },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
