@@ -296,6 +296,10 @@ export function applyRecordChangeSet(id: string, verdictOverrides?: Record<strin
       return updated;
     });
     emit("draft_change_set", id, "record_change_set_applied", {});
+    // Heal provenance for conversations imported before this apply.
+    if (result.markerToken) {
+      void import("./provenance").then(({ stitchAppliedChangeSet }) => stitchAppliedChangeSet(result.markerToken!)).catch(() => {});
+    }
     return { ok: true as const, changeSet: serializeRecordChangeSet(result) };
   } catch (error) {
     return { ok: false as const, error: error instanceof Error ? error.message : String(error) };

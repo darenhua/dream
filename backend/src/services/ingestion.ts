@@ -3,6 +3,7 @@ import { db } from "../db";
 import { conversation } from "../db/schema";
 import { ParseError, detectSlug, parseConversation } from "../domain/parser";
 import { getConfig } from "./config";
+import { stitchConversation } from "./provenance";
 import { emit } from "./events";
 
 export interface IngestReport {
@@ -39,8 +40,11 @@ export function ingestFile(payload: unknown): IngestReport {
     try {
       const parsed = parseConversation(raw);
 
-      // Cheap first-pass filter: same source updated_at → nothing to do.
+      // Cheap first-pass filter: same source updated_at → nothing to do —
+      // except stitching, which may have new work when a change set was
+      // applied after this conversation was first imported.
       if (existing && existing.sourceUpdatedAt === parsed.sourceUpdatedAt) {
+        stitchConversation(existing.id, parsed.messages);
         report.unchanged++;
         continue;
       }
@@ -81,6 +85,7 @@ export function ingestFile(payload: unknown): IngestReport {
           })
           .where(eq(conversation.id, existing.id))
           .run();
+        stitchConversation(existing.id, parsed.messages);
         report.updated++;
         emit("conversation", existing.id, "conversation_updated", { slugDetected });
       } else {
@@ -100,6 +105,7 @@ export function ingestFile(payload: unknown): IngestReport {
           })
           .returning({ id: conversation.id })
           .get();
+        stitchConversation(inserted.id, parsed.messages);
         report.new++;
         emit("conversation", inserted.id, "conversation_ingested", { slugDetected });
       }

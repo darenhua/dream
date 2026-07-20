@@ -25,10 +25,19 @@ export class ParseError extends Error {
   }
 }
 
+interface RawContentBlock {
+  type?: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+  content?: unknown;
+}
+
 interface RawMessage {
   uuid: string;
   sender: "human" | "assistant";
   text?: string;
+  content?: RawContentBlock[];
   created_at?: string;
   parent_message_uuid?: string;
   attachments?: { file_name?: string; extracted_content?: string }[];
@@ -68,10 +77,40 @@ export function reconstructActivePath(chatMessages: RawMessage[]): RawMessage[] 
   return path.reverse();
 }
 
-// A6b — `text` is authoritative for the visible transcript; attachments' extracted
-// content is appended in marked blocks (rants lean on pasted context).
+function blockToText(block: RawContentBlock): string {
+  if (typeof block.text === "string" && block.text) return block.text;
+  // Tool calls and results must SURVIVE parsing: record_create's result
+  // carries the marker token that stitches records to this conversation.
+  if (block.type === "tool_use") {
+    return `[tool_use: ${block.name ?? "unknown"}]\n${JSON.stringify(block.input ?? null)}`;
+  }
+  if (block.type === "tool_result" || block.type === "mcp_tool_result") {
+    const inner = block.content;
+    const innerText = Array.isArray(inner)
+      ? inner
+          .map(part => (typeof part === "object" && part !== null && "text" in part ? String((part as { text: unknown }).text ?? "") : ""))
+          .filter(Boolean)
+          .join("\n")
+      : typeof inner === "string"
+        ? inner
+        : "";
+    return `[tool_result: ${block.name ?? "unknown"}]\n${innerText}`;
+  }
+  return "";
+}
+
+// The typed content[] blocks are authoritative when present (tool calls and
+// results only exist there); the flat `text` is the legacy fallback.
+// Attachments' extracted content is appended in marked blocks either way.
 export function assembleContent(message: RawMessage): string {
-  let content = message.text ?? "";
+  let content: string;
+  if (Array.isArray(message.content) && message.content.length > 0) {
+    content = message.content.map(blockToText).filter(Boolean).join("\n\n");
+    // Some exports carry text only in `text` even when content[] exists.
+    if (!content && message.text) content = message.text;
+  } else {
+    content = message.text ?? "";
+  }
   for (const att of message.attachments ?? []) {
     if (att.extracted_content) {
       content += `\n\n[attachment: ${att.file_name ?? "unnamed"}]\n${att.extracted_content}`;
