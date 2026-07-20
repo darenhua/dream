@@ -62,6 +62,12 @@ IMPLEMENTATION_PLAN.md.
 - [ ] Legacy table names kept (organized_goal, current_focus, experiment, experiment_task, calendar_event, draft_change_set...); single description column per table — no multi-markdown fields, no why_md naming. (SCHEMA v1.1)
 
 ## MCP testing & review strategy (lightweight, from Phase 3 on)
+- [x] FIRST DRY RUN EXECUTED (2026-07-20): goal-from-rant flow driven by a
+  Sonnet subagent against the live localhost endpoint; reviewer subagent
+  verdict PASS on all seven conversation rules + DB verification; three
+  contract papercuts found and fixed (habit/idea disambiguation, effect
+  direction, shaped empty search results). Prioritize/weekly/daily flows
+  still to be dry-run.
 - [ ] Dry-run every MCP flow with our own AI before calling it done: boot
   the backend on localhost, connect a **lightweight Sonnet subagent** as
   the MCP client (curl/HTTP bridge to the real Streamable HTTP endpoint —

@@ -62,7 +62,7 @@ const MODELS: Record<
     // conversation-origin habits are almost always the bad ones; system
     // habits are born by picks/weekly plans, not by record_create.
     extraFields: { origin: z.enum(["conversation", "system"]).default("conversation") },
-    legacyDefaults: { status: "established" },
+    legacyDefaults: { status: "established", valence: "bad" }, // conversation habits are almost always the bad ones; valence is legacy-dead but should not mislead until dropped
   },
   environment_item: {
     table: environmentItem,
