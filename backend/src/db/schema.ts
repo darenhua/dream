@@ -16,6 +16,19 @@ const updatedAt = () =>
     .$defaultFn(() => new Date().toISOString())
     .$onUpdateFn(() => new Date().toISOString());
 
+// Rework versioning columns (SCHEMA_AND_SURVEYS v1.1-1.3): insert-only
+// content tables. lineage_id groups versions of one logical record (equal to
+// the first version's id, backfilled for legacy rows); relationships point at
+// lineage ids (app-level integrity — lineage ids are not unique, so no FK).
+// source_conversation_id backfills when the originating thread is imported.
+const versioning = () => ({
+  lineageId: text("lineage_id"),
+  version: integer("version"),
+  prevVersionId: text("prev_version_id"),
+  sourceConversationId: text("source_conversation_id"),
+  description: text("description"),
+});
+
 // One row per chat thread; content_json is the reconstructed active path.
 // The pipeline timestamps drive the conversation FSM:
 //   awaiting_distill → awaiting_review → awaiting_derive → derived
@@ -148,6 +161,8 @@ export const goalEvidence = sqliteTable("goal_evidence", {
 // lapsed = not currently held — statuses only, nothing deleted.
 export const habit = sqliteTable("habit", {
   id: id(),
+  ...versioning(),
+  currentFocusId: text("current_focus_id"), // system habits: which pick birthed it
   title: text("title").notNull(),
   note: text("note"),
   valence: text("valence", { enum: ["good", "bad"] }).notNull().default("good"),
@@ -164,6 +179,9 @@ export const habit = sqliteTable("habit", {
 // physical_setup never schedules; obligations carry recurrence (service-enforced).
 export const environmentItem = sqliteTable("environment_item", {
   id: id(),
+  ...versioning(),
+  habitLineageId: text("habit_lineage_id"), // required (app-level) for conversation origin
+  effect: text("effect", { enum: ["easier", "harder"] }),
   title: text("title").notNull(),
   note: text("note"),
   subKind: text("sub_kind", { enum: ["physical_setup", "obligation", "social"] }).notNull(),
@@ -195,6 +213,7 @@ export const experience = sqliteTable("experience", {
 // system.
 export const project = sqliteTable("project", {
   id: id(),
+  ...versioning(),
   title: text("title").notNull(),
   note: text("note"),
   origin: text("origin", { enum: ["derived", "manual"] }).notNull(),
@@ -207,6 +226,8 @@ export const project = sqliteTable("project", {
 // evidence and agent-readable material rather than being overwritten.
 export const organizedGoal = sqliteTable("organized_goal", {
   id: id(),
+  ...versioning(),
+  retiredAt: text("retired_at"),
   title: text("title").notNull(),
   identityClause: text("identity_clause"),
   synthesisMd: text("synthesis_md"),
@@ -300,6 +321,8 @@ export const projectSource = sqliteTable(
 // those execution systems.
 export const experimentGroup = sqliteTable("experiment_group", {
   id: id(),
+  ...versioning(),
+  theme: text("theme"),
   title: text("title").notNull(),
   motivationMd: text("motivation_md"),
   // A branch is a new, independently selectable change story. The parent is
@@ -331,6 +354,7 @@ export const currentFocus = sqliteTable(
     previousCurrentFocusId: text("previous_current_focus_id"),
     status: text("status", { enum: ["current", "ended", "superseded"] }).notNull().default("current"),
     entryReason: text("entry_reason", { enum: ["pick", "sunset"] }).notNull(),
+    endDate: text("end_date"), // pick deadline (YYYY-MM-DD); expiry re-arms prioritize
     reasoningMd: text("reasoning_md").notNull(),
     // Kept as a logical ID rather than an FK because draft_change_set is
     // declared later in this schema module.
@@ -374,6 +398,7 @@ export const experimentGroupGoal = sqliteTable(
     organizedGoalId: text("organized_goal_id")
       .notNull()
       .references(() => organizedGoal.id),
+    rank: integer("rank"), // rework: curated priority order of the group's goal set
     createdAt: createdAt(),
   },
   t => [uniqueIndex("experiment_group_goal_unique").on(t.experimentGroupId, t.organizedGoalId)],
@@ -477,6 +502,10 @@ export const experiment = sqliteTable("experiment", {
   // can enter scheduling/calendar/witness flows.
   kind: text("kind", { enum: ["candidate", "actionable"] }).notNull().default("candidate"),
   experimentGroupId: text("experiment_group_id").references(() => experimentGroup.id),
+  // Rework: a weekly plan belongs to a specific pick, not just a group.
+  currentFocusId: text("current_focus_id"),
+  theme: text("theme"),
+  description: text("description"),
   weekOf: text("week_of"), // local Monday YYYY-MM-DD for an actionable week
   status: text("status", {
     enum: ["queued", "scheduling", "running", "succeeded", "failed", "archived"],
@@ -548,6 +577,7 @@ export const experimentTask = sqliteTable("experiment_task", {
   // task and must never be silently sent to Google Calendar.
   scheduleMode: text("schedule_mode", { enum: ["calendar", "none"] }).notNull().default("calendar"),
   scheduledFor: text("scheduled_for"),
+  doneAt: text("done_at"), // rework: weekly-plan item completion
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -773,6 +803,11 @@ export const draftChangeSet = sqliteTable(
       .notNull()
       .default("drafting"),
     rejectionNote: text("rejection_note"),
+    // Rework: AI reconciliation verdicts per row (new | version-bump-of |
+    // remix-of | link-to-existing) and the marker token for import stitching.
+    reconciliationJson: text("reconciliation_json"),
+    markerToken: text("marker_token"),
+    submittedAt: text("submitted_at"),
     appliedAt: text("applied_at"),
     rejectedAt: text("rejected_at"),
     createdAt: createdAt(),
@@ -834,6 +869,12 @@ export const calendarEvent = sqliteTable(
       .notNull()
       .default("active"),
     lastSyncedAt: text("last_synced_at"),
+    // Rework: explicit push bookkeeping ("was the calendar job done") and
+    // completion tracking; GCal is the source of truth for event state.
+    pushedAt: text("pushed_at"),
+    pushFailedAt: text("push_failed_at"),
+    pushError: text("push_error"),
+    completedAt: text("completed_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1050,6 +1091,197 @@ export const dailyWriteup = sqliteTable("daily_writeup", {
   text: text("text").notNull(),
   agentRunId: text("agent_run_id").references(() => agentRun.id),
   daysSinceLastVisitAtGeneration: integer("days_since_last_visit_at_generation"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ── Rework tables (SCHEMA_AND_SURVEYS v1.1-1.3) ─────────────────────────────
+// Relationship tables store lineage references as plain text: lineage ids are
+// shared across versions so they cannot carry DB-level FKs; integrity lives in
+// the change-set apply path.
+
+// Remix/branch parentage. One row per parent; multiple rows = a combine.
+export const lineageParent = sqliteTable(
+  "lineage_parent",
+  {
+    id: id(),
+    childType: text("child_type").notNull(),
+    childLineageId: text("child_lineage_id").notNull(),
+    parentType: text("parent_type").notNull(),
+    parentVersionId: text("parent_version_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [index("lineage_parent_child").on(t.childType, t.childLineageId)],
+);
+
+// The provenance spine: which conversation slice created/mentioned which
+// record version. Rows are written at import time, matched by marker token.
+export const conversationRecordLink = sqliteTable(
+  "conversation_record_link",
+  {
+    id: id(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversation.id),
+    markerToken: text("marker_token").notNull(),
+    sliceEndIdx: integer("slice_end_idx"),
+    recordType: text("record_type").notNull(),
+    recordVersionId: text("record_version_id").notNull(),
+    role: text("role", { enum: ["created_central", "created_satellite", "mentioned"] }).notNull(),
+    createdAt: createdAt(),
+  },
+  t => [
+    index("conversation_record_link_conversation").on(t.conversationId),
+    index("conversation_record_link_record").on(t.recordType, t.recordVersionId),
+  ],
+);
+
+// A fact about how current-me feels and reacts (trigger → emotion → coping →
+// feedback loop, all in one description). Read by the rant-style read_record
+// conversations, never by planners.
+export const patternOfBehavior = sqliteTable("pattern_of_behavior", {
+  id: id(),
+  ...versioning(),
+  title: text("title").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// "Pointer on goal": which patterns explain/affect a goal.
+export const goalPattern = sqliteTable(
+  "goal_pattern",
+  {
+    id: id(),
+    goalLineageId: text("goal_lineage_id").notNull(),
+    patternLineageId: text("pattern_lineage_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("goal_pattern_unique").on(t.goalLineageId, t.patternLineageId)],
+);
+
+// The volatile ambition record — can be a one-liner. Not yet real by
+// definition; reality begins at pick time (habit materialization).
+export const experimentIdea = sqliteTable("experiment_idea", {
+  id: id(),
+  ...versioning(),
+  title: text("title").notNull(),
+  retiredAt: text("retired_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// THE why-bearing relationship: why doing this idea serves that goal, in the
+// user's words (description). Groups and planners read these.
+export const ideaGoal = sqliteTable(
+  "idea_goal",
+  {
+    id: id(),
+    ideaLineageId: text("idea_lineage_id").notNull(),
+    goalLineageId: text("goal_lineage_id").notNull(),
+    description: text("description"),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("idea_goal_unique").on(t.ideaLineageId, t.goalLineageId)],
+);
+
+export const ideaProject = sqliteTable(
+  "idea_project",
+  {
+    id: id(),
+    ideaLineageId: text("idea_lineage_id").notNull(),
+    projectLineageId: text("project_lineage_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("idea_project_unique").on(t.ideaLineageId, t.projectLineageId)],
+);
+
+// One-off responsibility. An attached experiment idea (≤1) is what makes a
+// task goal-minded; without one it is a plain errand.
+export const task = sqliteTable("task", {
+  id: id(),
+  ...versioning(),
+  title: text("title").notNull(),
+  deadlineDate: text("deadline_date"), // YYYY-MM-DD; drives planner nagging
+  doneAt: text("done_at"),
+  droppedAt: text("dropped_at"),
+  experimentIdeaLineageId: text("experiment_idea_lineage_id"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// Group membership: which ideas a campaign adopted, and per-campaign
+// done-state. Separate from the idea's permanent goal links.
+export const groupIdea = sqliteTable(
+  "group_idea",
+  {
+    id: id(),
+    groupLineageId: text("group_lineage_id").notNull(),
+    ideaLineageId: text("idea_lineage_id").notNull(),
+    doneAt: text("done_at"),
+    note: text("note"),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("group_idea_unique").on(t.groupLineageId, t.ideaLineageId)],
+);
+
+// Bad habits a group is eliminating.
+export const groupHabit = sqliteTable(
+  "group_habit",
+  {
+    id: id(),
+    groupLineageId: text("group_lineage_id").notNull(),
+    habitLineageId: text("habit_lineage_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("group_habit_unique").on(t.groupLineageId, t.habitLineageId)],
+);
+
+// Tomorrow's plan. No status ever: expiry derives from date, completion lives
+// on the items. description records the user's reported state (energy /
+// social / work answers) so successor plans can read it.
+export const dailyPlan = sqliteTable(
+  "daily_plan",
+  {
+    id: id(),
+    weeklyPlanId: text("weekly_plan_id"), // experiment row id (weekly plan)
+    date: text("date").notNull(), // YYYY-MM-DD local
+    theme: text("theme"), // the work-centric one-liner
+    description: text("description"),
+    sourceConversationId: text("source_conversation_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("daily_plan_date").on(t.date)],
+);
+
+// The day's concrete items; done_at is the manual dashboard CRUD and doubles
+// as the habit-tracking signal.
+export const dailyPlanItem = sqliteTable(
+  "daily_plan_item",
+  {
+    id: id(),
+    dailyPlanId: text("daily_plan_id")
+      .notNull()
+      .references(() => dailyPlan.id),
+    kind: text("kind", { enum: ["block", "todo", "leisure"] }).notNull(),
+    text: text("text").notNull(),
+    calendarEventId: text("calendar_event_id"),
+    taskLineageId: text("task_lineage_id"),
+    doneAt: text("done_at"),
+    createdAt: createdAt(),
+  },
+  t => [index("daily_plan_item_plan").on(t.dailyPlanId)],
+);
+
+// Things I like. description must state the feeling-pairing in plain text
+// ("for when I'm overwhelmed: …") — planners read this row alone, never the
+// pattern table; the pattern link is provenance only.
+export const leisureActivity = sqliteTable("leisure_activity", {
+  id: id(),
+  ...versioning(),
+  title: text("title").notNull(),
+  counteractsPatternLineageId: text("counteracts_pattern_lineage_id"),
+  fitsWhen: text("fits_when"), // free text: morning / evening / weekend …
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

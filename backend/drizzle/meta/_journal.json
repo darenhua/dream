@@ -134,6 +134,13 @@
       "when": 1784198511313,
       "tag": "0018_yielding_arachne",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1784557962055,
+      "tag": "0019_slim_the_anarchist",
+      "breakpoints": true
     }
   ]
 }

@@ -71,6 +71,12 @@ Goal: every table from SCHEMA_AND_SURVEYS Part 2 (v1.1) exists.
   round-trip test.
 - Done when: migrations apply cleanly on a fresh DB and on a copy of the
   real DB; tsc green.
+- EXECUTION NOTE (as built): Phase 1 landed ADDITIVE-ONLY — versioning
+  columns, new tables, and the lineage backfill (migration 0019). The v1.2
+  column DROPS (status enums, valence, pipeline columns, priority_rank)
+  are deferred to the phases that rebuild each consumer, plus a final
+  cleanup migration; dropping them now would break still-live legacy code.
+  Real-DB migration test still pending (no data dir on this VM).
 
 ## Phase 2 — Review inbox core (the write membrane)
 
