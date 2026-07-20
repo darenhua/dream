@@ -179,6 +179,31 @@ Retained in spirit: group lineage/branching, pick/sunset one-active-group
 machinery, atomic draft → dashboard review membrane, calendar sync (inverted:
 GCal as source of truth), conversation import.
 
+## 8a. Addendum (supersedes conflicting text above)
+
+- **The rant MCP (command 6) is CUT.** read_record covers the need: the
+  user pulls a record's context down explicitly and vents in that
+  conversation. The `takeaway` table is cut with it; its planner-feeding
+  role moves to daily plans recording the user's reported state (energy /
+  social / work answers) in their description, which successor plans read.
+- **Digest-everything is universal**: record_create at the end of ANY
+  thread (MCP-involved or not) digests the entire conversation into the
+  proposed set — big satellite sweeps and isolated single records alike.
+- **Reading is an explicit user act.** The agent never implicitly pulls
+  MCP data; the user asks ("pull down my goal X"). read_record has
+  per-type read paths mirroring create's per-model surveys: goal → its
+  habits/patterns/ideas+whys/groups; group → member ideas + done states +
+  goal set; project → its ideas; task → its calendar items; etc.
+  Conversation slices (the original rants) are a second-level zoom-in,
+  also on request. read_record can also LIST records of a kind first when
+  the user doesn't know what to reference.
+- **Weekly plans link to the pick**: `experiment.current_focus_id` FK (a
+  weekly belongs to a specific pick, not just a group — groups recur
+  across v2 re-picks).
+- **Leisure descriptions carry their feeling-pairing in plain text** so
+  planners match mood → activity without dereferencing the pattern table
+  (which planners never read); the pattern FK remains as provenance.
+
 ## 9. Still to come from the user
 
 - Dashboard views (stated so far: centers active prioritized goal, active

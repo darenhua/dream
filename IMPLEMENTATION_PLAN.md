@@ -172,14 +172,11 @@ Goal: the daily conversation and the ad-hoc scheduling engine.
 - Done when: a daily plan lands real events on GCal including leisure and
   invented blocks; next-day plan reads completions.
 
-## Phase 8 — Rant MCP + takeaways
+## Phase 8 — CUT (was: rant MCP + takeaways)
 
-- `rant` tool: loads patterns of behavior + bad habits + current focus
-  context; creates nothing by default; optional exit into record_create
-  (takeaway or other records).
-- `takeaway` records feed daily/weekly planners.
-- Done when: a rant conversation produces a takeaway that visibly changes
-  the next daily plan's context.
+The rant MCP and takeaway table are out of scope (spec §8a). Venting =
+read_record-initialized conversations. Daily plans record reported state
+(energy/social/work) in their description; successor plans read it.
 
 ## Phase 9 — Dashboard rework (needs user input on views)
 

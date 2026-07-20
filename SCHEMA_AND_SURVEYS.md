@@ -137,6 +137,25 @@ Witness/outbox system: untouched by this phase **[OPEN: long-term fate]**.
 >    - `calendar_event`: push tracking as timestamps (`pushed_at`,
 >      `push_failed_at` + error text) instead of a push_status enum;
 >      "not yet pushed" = neither set.
+>
+> ### v1.3 corrections (also authoritative)
+>
+> 6. **Rant MCP + `takeaway` table CUT** (spec 8a). Daily plans record the
+>    user's reported state (energy/social/work answers) inside their
+>    `description`; successor plans read it. Remove `takeaway` from the
+>    new-tables list.
+> 7. **`experiment` (weekly plan) gains `current_focus_id` FK** — a weekly
+>    belongs to a specific pick, not just a group (groups recur across
+>    v2 re-picks). "Week N of M" derives from it.
+> 8. **`leisure_activity.description` must state its feeling-pairing in
+>    plain text** ("for when I'm overwhelmed: a run, incense") so planners
+>    match mood to activity without dereferencing `pattern_of_behavior`
+>    (planners never read that table); `counteracts_pattern_lineage_id`
+>    stays as provenance only.
+> 9. **read_record is explicit and typed**: user-invoked only; list-first
+>    listing per kind; per-type pull-downs (goal/group/project/task/idea);
+>    conversation slices as second-level zoom-in.
+
 
 ### Infrastructure (new, shared by every content model)
 ```

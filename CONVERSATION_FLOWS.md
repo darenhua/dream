@@ -6,6 +6,10 @@ first reply, and the path to the create. These become the skill prompts.
 
 ## Universal rules (every flow's system prompt)
 
+0. Digest-everything is universal: record_create at the end of ANY thread
+   (new, long, or MCP-less) digests the entire conversation into the
+   proposed set. Reading is an EXPLICIT user act — the agent never pulls
+   MCP data uninvited; the user asks for it.
 1. The rant precedes the survey. When record_create is invoked at the end of
    a conversation, DIGEST — do not re-interview.
 2. Search the DB before proposing: FK candidates come from the user's own
@@ -61,9 +65,25 @@ first reply, and the path to the create. These become the skill prompts.
   this counteract, and when does it fit?" — because the daily planner
   queries exactly that.
 
-## E. Branch/expand via read_record (v2 flow)
+## E. read_record — explicit, typed reads (+ the v2 branch flow)
 
-- Opening (blank thread): "load up my 'house party' idea — new thinking."
+Reading is always user-initiated ("pull down my goal X"); the agent never
+reads uninvited. Two levels:
+
+- **List-first**: "show me my goals / ideas / groups" → compact listing so
+  the user can pick when they don't remember the exact record.
+- **Typed pull-down** (mirrors create's per-model surveys):
+  - goal → its habits (+relationship descriptions), patterns, ideas
+    (+whys), groups serving it
+  - experiment group → member ideas + done states + curated goal set
+  - project → its linked ideas (and through them, goals)
+  - task → its calendar items, deadline, linked idea if any
+  - idea → its goal links + whys, group memberships, task/project
+- **Zoom-in (second level, on request)**: the originating conversation
+  slices — the actual rant text.
+
+The v2 branch flow on top of it:
+- Opening (blank thread): "pull down my 'house party' idea — new thinking."
 - Agent (read_record): tight recap — current state, goal links + whys,
   group membership, done state. "What's the new thinking?"
 - User rants the variant. Agent states its classification reading:
@@ -105,11 +125,10 @@ first reply, and the path to the create. These become the skill prompts.
   CONFIRMATION IS THE REVIEW -> events written (push to GCal) ->
   "it's on your calendar."
 
-## I. Rant (context only)
+## I. Rant MCP — CUT
 
-- Opening: "I need to vent."
-- Agent first reply: permission + loaded context, briefly named ("I've got
-  the shame-spiral pattern and week 3 of the party push in mind — no need
-  to explain"). Then it converses; creates NOTHING.
-- Exit: at most one offer, only if something notable emerged: "save a
-  takeaway for tomorrow's planner, or leave it as a conversation?"
+Removed from scope entirely (spec §8a). Venting happens in a
+read_record-initialized conversation: the user pulls down the relevant
+record (a goal, the current focus) and rants there with context loaded.
+The takeaway record is cut with it; daily plans record the user's reported
+state in their description, which successor plans read.
