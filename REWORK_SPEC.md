@@ -206,9 +206,12 @@ GCal as source of truth), conversation import.
 
 ## 9. Still to come from the user
 
-- Dashboard views (stated so far: centers active prioritized goal, active
-  weekly experiment, daily plan, experiment groups; must surface relevant
-  patterns/philosophies and what goals mean to the user and why chosen).
+- Dashboard views — DECIDED (high level): the main UI simply displays the
+  current state — active pick/experiment group, current weekly plan, daily
+  plan, and goals (with what they mean to the user and why chosen, plus
+  relevant patterns) — with manual completion CRUD on plan items. The
+  human-in-the-loop approvals/review inbox lives on a SEPARATE page.
+  Fine-grained layout details still open.
 - Exact per-model survey contents.
 - Takeaway record shape; group goal-set derivation rule; daily review weight.
 - ~~MCP auth/surface packaging~~ **DECIDED: single persistent surface, no

@@ -6,7 +6,13 @@ applied: legacy table names kept, single `description` columns).
 Ground rules for every phase:
 - Verification loop before calling a phase done:
   `cd backend && bunx tsc --noEmit` → isolated `bun test` (scratch DB_PATH)
-  → `cd dashboard && bunx tsc --noEmit && bun run build`.
+  → `cd dashboard && bun run build`. (Dashboard `tsc --noEmit` fails on
+  pre-existing env-TS-version issues on this VM — the build is the gate.)
+- Environment facts (verified 2026-07-20 on this VM): zero env vars needed
+  for dev/tests/boot — SQLite auto-creates+migrates at DB_PATH. Needed
+  later: ANTHROPIC_API_KEY (or Bedrock creds) for server-side agent runs
+  (the AI reconciliation pass); GOOGLE_CLIENT_ID/SECRET + OAuth connect
+  for calendar phases 6-7.
 - No destructive table drops early: legacy tables/systems we're ignoring
   (witness, strikes, outbox, raw registries) stay in the schema so dangling
   code keeps compiling. We stop feeding them, we don't rip them out.
@@ -187,7 +193,9 @@ read_record-initialized conversations. Daily plans record reported state
   (conversation slices), review inbox polish (real classification
   rendering instead of raw JSON).
 - Delete dead screens/cards; rename user-facing "organized" language.
-- BLOCKED ON: the user's dashboard-views description (spec §9).
+- Shape (decided): main page = current-state display only (pick, weekly,
+  daily, goals + why chosen + patterns, completion CRUD); approvals/review
+  inbox on a SEPARATE page. Fine-grained layout still open.
 
 ## Sequencing notes
 
