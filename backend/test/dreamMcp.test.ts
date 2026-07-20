@@ -35,6 +35,7 @@ describe("dream MCP surface", () => {
       "check_review_status",
       "get_survey",
       "list_records",
+      "prioritize_context",
       "read_conversation_slice",
       "read_record",
       "record_create",
