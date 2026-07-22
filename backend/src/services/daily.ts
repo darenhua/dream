@@ -1,5 +1,3 @@
-import { derivePendingReviewed } from "./derive";
-import { distillPending } from "./distill";
 import { emit } from "./events";
 
 // The heartbeat: one function, invoked by system cron at 09:00 ET
@@ -21,7 +19,7 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
     const { initMessaging } = await import("./messaging/messenger");
     initMessaging(); // idempotent: gives the tripwire its delivery sink
     const { runStrikeCheck } = await import("./strikes");
-    const { todayLocal } = await import("./writeup");
+    const { todayLocal } = await import("../lib/time");
     report.strikes = await runStrikeCheck(todayLocal());
   } catch (e) {
     report.strikes = { error: e instanceof Error ? e.message : String(e) };
@@ -47,36 +45,6 @@ export async function runHeartbeat(trigger: "daily" | "manual") {
     emit("heartbeat", null, "heartbeat_step_failed", { step: "messaging", error: String(e) });
   }
 
-  // 4. Safety-net sweep: idempotent leftovers from event-driven steps.
-  //    Detection respects AUTO_DETECT — with it off (bulk-import onboarding),
-  //    the heartbeat must not classify the backlog behind the user's back.
-  try {
-    const { getConfig } = await import("./config");
-    if (getConfig<boolean>("AUTO_DETECT")) {
-      const { detectPendingRants } = await import("./rantDetection");
-      report.detect = await detectPendingRants(trigger);
-    } else {
-      report.detect = { skipped: "AUTO_DETECT off" };
-    }
-  } catch (e) {
-    report.detect = { error: e instanceof Error ? e.message : String(e) };
-    emit("heartbeat", null, "heartbeat_step_failed", { step: "detect", error: String(e) });
-  }
-
-  try {
-    report.distill = await distillPending(trigger);
-  } catch (e) {
-    report.distill = { error: e instanceof Error ? e.message : String(e) };
-    emit("heartbeat", null, "heartbeat_step_failed", { step: "distill", error: String(e) });
-  }
-
-  try {
-    report.derive = await derivePendingReviewed(trigger);
-  } catch (e) {
-    report.derive = { error: e instanceof Error ? e.message : String(e) };
-    emit("heartbeat", null, "heartbeat_step_failed", { step: "derive", error: String(e) });
-  }
-
   try {
     report.calendar = await calendarHousekeeping();
   } catch (e) {
@@ -93,5 +61,15 @@ async function calendarHousekeeping() {
   // loadable (and testable) without it.
   const { syncIncremental, isConnected } = await import("./calendarSync");
   if (!isConnected()) return { skipped: "google calendar not connected" };
-  return syncIncremental();
+  const sync = await syncIncremental();
+  // The daily "worker" pass for the write-job queue: give failed pushes
+  // another chance, then push everything still pending. Inline best-effort
+  // pushes after each plan cover the happy path; this covers the stragglers.
+  const { db } = await import("../db");
+  const { calendarEvent } = await import("../db/schema");
+  const { isNotNull } = await import("drizzle-orm");
+  db.update(calendarEvent).set({ pushFailedAt: null, pushError: null }).where(isNotNull(calendarEvent.pushFailedAt)).run();
+  const { pushPendingEvents } = await import("./calendarWriter");
+  const push = await pushPendingEvents(50);
+  return { ...sync, push };
 }

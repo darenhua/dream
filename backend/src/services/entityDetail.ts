@@ -15,6 +15,8 @@ import {
   goalEvidence,
   goalHabit,
   habit,
+  project,
+  projectSource,
   proposal,
 } from "../db/schema";
 import { attemptCounts } from "./goals";
@@ -23,7 +25,14 @@ import { attemptCounts } from "./goals";
 // data model holds for one goal / habit / experiment / environment item /
 // experience, joined once.
 
-export type EntityType = "goal" | "habit" | "environment_item" | "experience" | "experiment" | "experiment_task";
+export type EntityType =
+  | "goal"
+  | "habit"
+  | "environment_item"
+  | "experience"
+  | "project"
+  | "experiment"
+  | "experiment_task";
 
 // Extraction provenance, conversation-joined — the rant explorer's shape.
 export function extractionsFor(entityType: EntityType, entityId: string) {
@@ -67,12 +76,13 @@ export function goalDetail(id: string) {
   const row = db.select().from(goal).where(eq(goal.id, id)).get();
   if (!row) return null;
 
-  // Every experiment that tackled it, newest first — including live and queued.
+  // Operational attempt archaeology only. Raw candidates remain in their
+  // proposal context and should not masquerade as queued or attempted work.
   const experiments = db
     .select({ e: experiment })
     .from(experimentGoal)
     .innerJoin(experiment, eq(experimentGoal.experimentId, experiment.id))
-    .where(eq(experimentGoal.goalId, id))
+    .where(and(eq(experimentGoal.goalId, id), eq(experiment.kind, "actionable")))
     .orderBy(desc(experiment.createdAt))
     .all()
     .map(r => experimentRef(r.e));
@@ -191,6 +201,55 @@ export function experienceDetail(id: string) {
     fromExperiment,
     calendarEvents: calendarEventsFor("experience", id),
     extractions: extractionsFor("experience", id),
+  };
+}
+
+function projectSourceTitle(entityType: string, entityId: string) {
+  switch (entityType) {
+    case "goal":
+      return db.select({ title: goal.title }).from(goal).where(eq(goal.id, entityId)).get()?.title ?? "raw goal";
+    case "habit":
+      return db.select({ title: habit.title }).from(habit).where(eq(habit.id, entityId)).get()?.title ?? "raw habit";
+    case "environment_item":
+      return db
+        .select({ title: environmentItem.title })
+        .from(environmentItem)
+        .where(eq(environmentItem.id, entityId))
+        .get()?.title ?? "raw environment";
+    case "experience":
+      return db
+        .select({ title: experience.title })
+        .from(experience)
+        .where(eq(experience.id, entityId))
+        .get()?.title ?? "raw experience";
+    case "experiment":
+      return db
+        .select({ title: experiment.title })
+        .from(experiment)
+        .where(eq(experiment.id, entityId))
+        .get()?.title ?? "raw experiment";
+    default:
+      return `${entityType}:${entityId}`;
+  }
+}
+
+export function projectDetail(id: string) {
+  const row = db.select().from(project).where(eq(project.id, id)).get();
+  if (!row) return null;
+  const sources = db
+    .select()
+    .from(projectSource)
+    .where(eq(projectSource.projectId, id))
+    .all()
+    .map(source => ({
+      id: source.entityId,
+      title: projectSourceTitle(source.entityType, source.entityId),
+      status: source.entityType,
+    }));
+  return {
+    ...row,
+    sources,
+    extractions: extractionsFor("project", id),
   };
 }
 

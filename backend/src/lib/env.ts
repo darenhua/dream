@@ -6,8 +6,45 @@ function flag(name: string, fallback = false): boolean {
   return v === "1" || v.toLowerCase() === "true";
 }
 
+function csv(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean);
+}
+
+function positiveInteger(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function mcpPublicOrigin(): string {
+  const value = (process.env.MCP_PUBLIC_URL ?? "").trim();
+  if (!value) return "";
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("MCP_PUBLIC_URL must be an absolute http(s) origin, such as https://mcp.example.com");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("MCP_PUBLIC_URL must use http or https");
+  }
+  // A cloud MCP connection carries the one-time dashboard code. Requiring TLS
+  // outside a loopback development endpoint prevents that capability from
+  // travelling over a public clear-text connection by configuration accident.
+  if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)) {
+    throw new Error("MCP_PUBLIC_URL must use https outside localhost");
+  }
+  return url.origin;
+}
+
 export const env = {
   PORT: Number(process.env.PORT ?? 3001),
+  // Leave the default public for the existing direct API deployment. A
+  // reverse-proxied production MCP endpoint should set this to 127.0.0.1.
+  BIND_HOST: process.env.BIND_HOST ?? "0.0.0.0",
   DB_PATH: process.env.DB_PATH ?? "./data/dream.db",
   WORKSPACE_PATH: process.env.WORKSPACE_PATH ?? "./workspace",
 
@@ -28,6 +65,36 @@ export const env = {
   // requires any non-loopback redirect_uri to be pre-registered in the
   // OAuth client's "Authorized redirect URIs" (Google Cloud Console).
   PUBLIC_URL: (process.env.PUBLIC_URL ?? "").replace(/\/$/, ""),
+
+  // MCP deployment. Leave these blank for local development. A remotely
+  // configured MCP endpoint should be HTTPS and set MCP_PUBLIC_URL; optional
+  // host/origin allowlists reject unexpected browser/proxy traffic while
+  // still allowing server-to-server MCP clients that send no Origin header.
+  MCP_PUBLIC_URL: mcpPublicOrigin(),
+  MCP_ALLOWED_ORIGINS: csv("MCP_ALLOWED_ORIGINS"),
+  MCP_ALLOWED_HOSTS: csv("MCP_ALLOWED_HOSTS"),
+  // Only enable this when the TLS proxy is the only network peer and it
+  // overwrites X-Forwarded-* headers. See deployment.md for that boundary.
+  MCP_TRUST_PROXY: flag("MCP_TRUST_PROXY"),
+  MCP_SESSION_IDLE_MINUTES: positiveInteger("MCP_SESSION_IDLE_MINUTES", 30),
+  MCP_MAX_SESSIONS: positiveInteger("MCP_MAX_SESSIONS", 100),
+  MCP_REDEEM_MAX_ATTEMPTS: positiveInteger("MCP_REDEEM_MAX_ATTEMPTS", 8),
+  MCP_REDEEM_WINDOW_MINUTES: positiveInteger("MCP_REDEEM_WINDOW_MINUTES", 15),
+  MCP_REDEEM_MAX_TRACKED_CLIENTS: positiveInteger("MCP_REDEEM_MAX_TRACKED_CLIENTS", 10_000),
+
+  // --- persistent no-code companion ---
+  // The companion holds long-lived personal context, so it fails closed by
+  // default. Exactly two adapters can open it:
+  //  - COMPANION_AUTH_TOKEN_SHA256: hex sha256 of a high-entropy credential
+  //    held only by the MCP client (single-user remote bridge). The plain
+  //    token must never appear in dashboard code, URLs, or transcripts.
+  //  - COMPANION_ALLOW_LOOPBACK_OWNER: private-local/test adapter that grants
+  //    the fixed owner identity to loopback socket peers only.
+  // A multi-user/public deployment needs a real per-user identity boundary
+  // before either of these is acceptable; leave both unset to keep the
+  // endpoint disabled.
+  COMPANION_AUTH_TOKEN_SHA256: (process.env.COMPANION_AUTH_TOKEN_SHA256 ?? "").trim().toLowerCase(),
+  COMPANION_ALLOW_LOOPBACK_OWNER: flag("COMPANION_ALLOW_LOOPBACK_OWNER"),
 
   // --- outbound proxy ---
   // Bun's fetch honors HTTP(S)_PROXY from process.env at request time, so the

@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
 import { db } from "../db";
-import { conversation, experiment, proposal, reviewWriteup } from "../db/schema";
+import { conversation, currentFocus, experiment, experimentGroup, proposal, reviewWriteup } from "../db/schema";
 import { getConfig } from "./config";
 import { enqueueOutbound } from "./outbox";
 import { listWitnesses, scopedGoalIds } from "./witnesses";
@@ -24,7 +24,14 @@ export function runDutyPings(): Record<string, unknown> {
   const endedUnreviewed = db
     .select()
     .from(experiment)
-    .where(and(inArray(experiment.status, ["succeeded", "failed"]), isNotNull(experiment.endedAt), lt(experiment.endedAt, cutoff)))
+    .where(
+      and(
+        eq(experiment.kind, "actionable"),
+        inArray(experiment.status, ["succeeded", "failed"]),
+        isNotNull(experiment.endedAt),
+        lt(experiment.endedAt, cutoff),
+      ),
+    )
     .all()
     .filter(e => {
       const rw = db.select().from(reviewWriteup).where(eq(reviewWriteup.experimentId, e.id)).get();
@@ -88,6 +95,79 @@ export function runDutyPings(): Record<string, unknown> {
   } else {
     report.backlog = { staleProposals: staleProposals.length, staleCandidates: staleCandidates.length, pinged: false };
   }
+
+  // 3. Actionable coverage: this is a reminder-only signal about a change
+  // group the user already chose. It never crafts, queues, schedules, or
+  // starts an experiment. Groups with a queued/scheduling/running actionable
+  // are covered; groups with no current running leaf are reported separately
+  // so callers can distinguish "next is ready" from "nothing approved yet".
+  // Coverage belongs only to the deliberately chosen current focus. This keeps
+  // reminder-only accountability from treating old or merely candidate groups
+  // as obligations.
+  const focus = db.select().from(currentFocus).where(eq(currentFocus.status, "current")).get();
+  const activeGroups = focus
+    ? db
+        .select()
+        .from(experimentGroup)
+        .where(and(eq(experimentGroup.id, focus.experimentGroupId), eq(experimentGroup.status, "active")))
+        .all()
+    : [];
+  const coverageRows = activeGroups.length
+    ? db
+        .select({ experimentGroupId: experiment.experimentGroupId, status: experiment.status, endedAt: experiment.endedAt })
+        .from(experiment)
+        .where(and(eq(experiment.kind, "actionable"), inArray(experiment.experimentGroupId, activeGroups.map(group => group.id))))
+        .all()
+    : [];
+  const runningGroupIds = new Set(
+    coverageRows.filter(row => row.status === "running" && row.experimentGroupId).map(row => row.experimentGroupId!),
+  );
+  const coveredGroupIds = new Set(
+    coverageRows
+      .filter(row => ["queued", "scheduling", "running"].includes(row.status) && row.experimentGroupId)
+      .map(row => row.experimentGroupId!),
+  );
+  const groupsWithoutRunning = activeGroups.filter(group => !runningGroupIds.has(group.id));
+  const groupsWithoutApprovedActionable = activeGroups.filter(group => !coveredGroupIds.has(group.id));
+  const actionableHours = getConfig<number>("DUTY_PING_ACTIONABLE_HOURS");
+  const actionableCutoff = new Date(Date.now() - actionableHours * 3_600_000).toISOString();
+  // The quiet window restarts after a completed weekly actionable. Otherwise
+  // an old group would be pinged immediately after the user finishes a week,
+  // which turns a gentle coverage reminder into an automatic pressure cycle.
+  const coverageAbsentSince = new Map<string, string>();
+  for (const group of groupsWithoutApprovedActionable) {
+    const latestEnded = coverageRows
+      .filter(row => row.experimentGroupId === group.id && row.endedAt)
+      .map(row => row.endedAt!)
+      .sort()
+      .at(-1);
+    coverageAbsentSince.set(group.id, latestEnded ?? group.createdAt);
+  }
+  const eligibleGroups = groupsWithoutApprovedActionable.filter(
+    group => coverageAbsentSince.get(group.id)! < actionableCutoff,
+  );
+  let actionablePings = 0;
+  if (primary) {
+    for (const group of eligibleGroups) {
+      const episode = coverageAbsentSince.get(group.id)!;
+      const row = enqueueOutbound({
+        witnessId: primary.id,
+        kind: "duty_ping",
+        bodyText: getConfig<string>("TEMPLATE.duty_ping_actionable"),
+        relatedType: "experiment_group",
+        relatedId: group.id,
+        dedupeKey: `actionable_coverage:${group.id}:${episode}`,
+      });
+      if (row) actionablePings++;
+    }
+  }
+  report.actionableCoverage = {
+    activeGroups: activeGroups.length,
+    groupsWithoutRunning: groupsWithoutRunning.length,
+    groupsWithoutApprovedActionable: groupsWithoutApprovedActionable.length,
+    eligibleGroups: eligibleGroups.length,
+    pings: actionablePings,
+  };
 
   return report;
 }

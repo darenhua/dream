@@ -1,17 +1,12 @@
 import { count, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db, wipeAllTables } from "../../db";
-import { conversation, environmentItem, event, experience, experiment, goal, habit } from "../../db/schema";
+import { conversation, environmentItem, event, experience, experiment, goal, habit, project } from "../../db/schema";
 import { isConnected } from "../../services/calendarSync";
 import { getConfig, seedConfig } from "../../services/config";
-import { pendingDerives } from "../../services/derive";
-import { pendingDistills } from "../../services/distill";
 import { emit } from "../../services/events";
 import { liveExperiment, listQueue } from "../../services/experiments";
 import { ingestFile } from "../../services/ingestion";
-import { distillPending } from "../../services/distill";
-import { detectPendingRants } from "../../services/rantDetection";
-import { listProposals } from "../../services/proposals";
 import { authRow } from "../../services/google/auth";
 
 export const adminRoutes = new Hono();
@@ -19,13 +14,6 @@ export const adminRoutes = new Hono();
 // The cycle checklist as JSON; all green = the loop is alive.
 adminRoutes.get("/health", c => {
   const conversations = db.select({ n: count() }).from(conversation).get()?.n ?? 0;
-  const rows = db.select().from(conversation).all();
-  const pipeline = {
-    awaitingDistill: pendingDistills().length,
-    awaitingReview: rows.filter(r => r.distilledAt && !r.extractionsReviewedAt).length,
-    awaitingDerive: pendingDerives().length,
-    derived: rows.filter(r => r.derivedAt).length,
-  };
   const activeGoals =
     db.select({ n: count() }).from(goal).where(eq(goal.status, "active")).get()?.n ?? 0;
   const registry = {
@@ -34,6 +22,7 @@ adminRoutes.get("/health", c => {
     environment:
       db.select({ n: count() }).from(environmentItem).where(eq(environmentItem.status, "active")).get()?.n ?? 0,
     experiences: db.select({ n: count() }).from(experience).get()?.n ?? 0,
+    projects: db.select({ n: count() }).from(project).get()?.n ?? 0,
   };
   const live = liveExperiment();
   const lastDaily = db
@@ -47,9 +36,7 @@ adminRoutes.get("/health", c => {
   return c.json({
     ok: true,
     conversations,
-    pipeline,
     activeGoals,
-    pendingProposals: listProposals({ status: "pending" }).length,
     registry,
     experimentQueue: listQueue().length,
     liveExperimentId: live?.id ?? null,
@@ -82,15 +69,6 @@ adminRoutes.post("/import", async c => {
 
   try {
     const report = ingestFile(payload);
-    // Fire-and-forget chain: detect candidates (slug rows auto-accept), then
-    // distill whatever got accepted — the gates fill without waiting for cron.
-    // AUTO_DETECT=false makes bulk imports inert: nothing classifies until
-    // the rant explorer's buttons say so.
-    if (getConfig<boolean>("AUTO_DETECT")) {
-      detectPendingRants("manual")
-        .then(() => distillPending("manual"))
-        .catch(() => {});
-    }
     return c.json(report);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);

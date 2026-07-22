@@ -32,6 +32,19 @@ export interface ScopedExperimentView {
   habits: { title: string; note: string | null; status: string }[];
 }
 
+// Scoped goal titles — used for the group-welcome message ("what this chat
+// will hear about"), never for content beyond the boundary above.
+export function witnessGoalTitles(witnessId: string): string[] {
+  const ids = scopedGoalIds(witnessId);
+  if (!ids.length) return [];
+  return db
+    .select({ title: goal.title })
+    .from(goal)
+    .where(inArray(goal.id, ids))
+    .all()
+    .map(g => g.title);
+}
+
 export function visibleExperimentIds(witnessId: string): string[] {
   const scope = scopedGoalIds(witnessId);
   if (scope.length === 0) return []; // fail closed
@@ -40,7 +53,8 @@ export function visibleExperimentIds(witnessId: string): string[] {
       db
         .select({ experimentId: experimentGoal.experimentId })
         .from(experimentGoal)
-        .where(inArray(experimentGoal.goalId, scope))
+        .innerJoin(experiment, eq(experiment.id, experimentGoal.experimentId))
+        .where(and(inArray(experimentGoal.goalId, scope), eq(experiment.kind, "actionable")))
         .all()
         .map(r => r.experimentId),
     ),
@@ -53,7 +67,7 @@ export function scopedExperimentView(witnessId: string, experimentId: string): S
   if (!visibleExperimentIds(witnessId).includes(experimentId)) return null;
 
   const row = db.select().from(experiment).where(eq(experiment.id, experimentId)).get();
-  if (!row) return null;
+  if (!row || row.kind !== "actionable") return null;
 
   const sharedGoals = db
     .select({ id: goal.id, title: goal.title, identityClause: goal.identityClause })

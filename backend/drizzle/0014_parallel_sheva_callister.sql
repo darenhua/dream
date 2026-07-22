@@ -1,0 +1,2 @@
+ALTER TABLE `collaboration_invite` ADD `dashboard_secret_hash` text;--> statement-breakpoint
+CREATE UNIQUE INDEX `collaboration_invite_dashboard_secret_hash_unique` ON `collaboration_invite` (`dashboard_secret_hash`);

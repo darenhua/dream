@@ -1,0 +1,1 @@
+ALTER TABLE `witness` ADD `link_error` text;

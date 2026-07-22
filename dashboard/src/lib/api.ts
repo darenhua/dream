@@ -2,9 +2,11 @@
 // proxy in src/index.ts (prod: Vercel rewrite).
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   const res = await fetch(`/api${path}`, {
-    headers: init?.body ? { "content-type": "application/json" } : undefined,
     ...init,
+    headers,
   });
   if (!res.ok) {
     let detail = "";
@@ -76,6 +78,11 @@ export interface Vitals {
     queueDepth: number;
     lastEndedAt: string | null;
     daysSinceEnded: number | null;
+    actionableCoverage: {
+      activeGroupCount: number;
+      groupsWithoutRunning: { id: string; title: string }[];
+      groupsWithoutApprovedActionable: { id: string; title: string }[];
+    };
   };
 }
 
@@ -120,9 +127,11 @@ export interface OutboundRow {
   witnessId: string;
   kind: "review_share" | "experiment_announcement" | "random_prompt" | "strike_alert" | "duty_ping";
   bodyText: string;
+  originalBodyText: string | null;
   contextJson: string | null;
   status: "pending_approval" | "approved" | "sent" | "failed" | "cancelled";
   notBefore: string | null;
+  approvedAt: string | null;
   sentAt: string | null;
   createdAt: string;
 }
@@ -132,6 +141,7 @@ export type ExtractionKind =
   | "habit_talk"
   | "environment_talk"
   | "experience_talk"
+  | "project_talk"
   | "experiment_idea"
   | "feeling";
 
@@ -189,6 +199,15 @@ export interface ExperienceRow {
   hadAt: string | null;
 }
 
+export interface ProjectRow {
+  id: string;
+  title: string;
+  note: string | null;
+  origin: "derived" | "manual";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ProposalKind =
   | "goal_create"
   | "goal_update"
@@ -198,6 +217,7 @@ export type ProposalKind =
   | "environment_add"
   | "environment_update"
   | "experience_add"
+  | "project_add"
   | "experiment_propose";
 
 // Extraction joined to its source conversation — the rant-source list.
@@ -222,10 +242,11 @@ export type ExperimentStatus = "queued" | "scheduling" | "running" | "succeeded"
 export interface TaskRow {
   id: string;
   experimentId: string;
-  kind: "experience" | "purchase" | "setup";
+  kind: "experience" | "purchase" | "setup" | "project" | "momentum";
   title: string;
   detail: string | null;
   status: "pending" | "scheduled" | "done" | "skipped";
+  scheduleMode?: "calendar" | "none";
   scheduledFor: string | null;
 }
 
@@ -240,6 +261,10 @@ export interface ExperimentRow {
   startedAt: string | null;
   endedAt: string | null;
   outcomeMd: string | null;
+  kind?: "candidate" | "actionable";
+  experimentGroupId?: string | null;
+  weekOf?: string | null;
+  reviewMd?: string | null;
 }
 
 export interface CurrentExperiment extends ExperimentRow {
@@ -315,6 +340,11 @@ export interface EnvironmentDetail extends EnvironmentRow {
 export interface ExperienceDetail extends ExperienceRow {
   fromExperiment: (ExperimentRef & { taskTitle: string }) | null;
   calendarEvents: CalendarEventRow[];
+  extractions: CitedExtraction[];
+}
+
+export interface ProjectDetail extends ProjectRow {
+  sources: EntityRef[];
   extractions: CitedExtraction[];
 }
 
@@ -400,12 +430,267 @@ export interface HealthReport {
   pipeline: { awaitingDistill: number; awaitingReview: number; awaitingDerive: number; derived: number };
   activeGoals: number;
   pendingProposals: number;
-  registry: { habits: number; environment: number; experiences: number };
+  registry: { habits: number; environment: number; experiences: number; projects: number };
   experimentQueue: number;
   liveExperimentId: string | null;
   liveExperimentTitle: string | null;
   calendarConnected: boolean;
   lastDailyRunAt: string | null;
+}
+
+// --- organized layer + MCP collaboration ---
+//
+// These deliberately do not reuse the raw GoalRow/HabitRow/etc. types above.
+// The organized feed is a user-authored layer over those raw rows, so keeping
+// its response shapes separate prevents the legacy feed from accidentally
+// treating raw proposal-derived state as curated state.
+
+export type CollaborationMode =
+  | "organized_goal"
+  | "organized_habit"
+  | "organized_environment"
+  | "experiment_group"
+  | "actionable_experiment"
+  | "prioritize";
+
+export type OrganizedDetailEntityType =
+  | "organized_goal"
+  | "organized_habit"
+  | "organized_environment"
+  | "experiment_group"
+  | "actionable_experiment";
+
+// A focus workspace has no standalone detail route, but it is a valid primary
+// entity in collaboration records.
+export type OrganizedPrimaryEntityType = OrganizedDetailEntityType | "current_focus";
+
+export interface OrganizedSourceRef {
+  entityType: string;
+  entityId: string;
+  // A draft's sourceRefs are intentionally ID-only. Feed/detail endpoints may
+  // enrich them with a label for the dashboard.
+  title?: string;
+  note?: string;
+  detail?: string | null;
+  extractionCount?: number;
+}
+
+export interface OrganizedGoalRow {
+  id: string;
+  title: string;
+  identityClause: string | null;
+  synthesisMd: string | null;
+  priorityRank: number | null;
+  status: "active" | "sunset" | "archived";
+  sourceCount?: number;
+  sources?: OrganizedSourceRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizedRegistryRow {
+  id: string;
+  title: string;
+  note: string | null;
+  synthesisMd: string | null;
+  status: "active" | "sunset" | "archived";
+  sourceCount?: number;
+  sources?: OrganizedSourceRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExperimentGroupTargetRow {
+  id: string;
+  kind: "habit" | "environment" | "experience" | "project";
+  title: string;
+  detailMd: string | null;
+  status: "pending" | "done";
+  doneAt: string | null;
+}
+
+/** Shallow lineage reference: enough for a breadcrumb + click-through. */
+export interface ExperimentGroupLineageRef {
+  id: string;
+  title: string;
+  status: "candidate" | "active" | "done" | "sunset" | "archived";
+  archivedAt: string | null;
+}
+
+export interface ExperimentGroupRow {
+  id: string;
+  title: string;
+  motivationMd: string | null;
+  status: "candidate" | "active" | "done" | "sunset" | "archived";
+  closingReviewMd: string | null;
+  parentExperimentGroupId?: string | null;
+  archivedAt?: string | null;
+  archivedFromStatus?: "candidate" | "done" | "sunset" | null;
+  parent?: ExperimentGroupLineageRef | null;
+  children?: ExperimentGroupLineageRef[];
+  goals: Pick<OrganizedGoalRow, "id" | "title" | "priorityRank" | "status">[];
+  targets: ExperimentGroupTargetRow[];
+  projectCount?: number;
+  projects?: { id: string; title: string; note: string | null }[];
+  contexts?: { id: string; textMd: string; createdAt: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// There is at most one current focus.  Its goal list is already ordered by
+// the reviewed priority decision, so the dashboard must render it as-is
+// rather than attempting to sort or mutate it locally.
+export interface CurrentFocusRow {
+  id: string;
+  entryReason: "pick" | "sunset";
+  reasoningMd: string;
+  startedAt: string;
+  endedAt: string | null;
+  group: ExperimentGroupRow;
+  goals: Pick<OrganizedGoalRow, "id" | "title" | "priorityRank" | "status">[];
+}
+
+export interface ActionableExperimentRow {
+  id: string;
+  title: string;
+  hypothesisMd: string | null;
+  status: ExperimentStatus;
+  kind: "actionable";
+  experimentGroupId: string | null;
+  weekOf: string | null;
+  reviewMd: string | null;
+  plannedDurationDays: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  groupTitle?: string | null;
+  taskSummary?: { total: number; done: number; scheduled: number };
+  tasks?: TaskRow[];
+}
+
+export interface OrganizedEntityDetail {
+  entityType: OrganizedDetailEntityType;
+  entity: OrganizedGoalRow | OrganizedRegistryRow | ExperimentGroupRow | ActionableExperimentRow;
+  sources: OrganizedSourceRef[];
+  extractions: CitedExtraction[];
+}
+
+export interface OrganizedFeedRow {
+  goals: OrganizedGoalRow[];
+  habits: OrganizedRegistryRow[];
+  environment: OrganizedRegistryRow[];
+  groups: ExperimentGroupRow[];
+  /** Hidden from the default working list; shown in the explicit archive view. */
+  archivedGroups?: ExperimentGroupRow[];
+  archivedGroupCount?: number;
+  actionables: ActionableExperimentRow[];
+  currentFocus: CurrentFocusRow | null;
+  /** Optional during rollout; history is read-only and newest-first. */
+  focusHistory?: CurrentFocusRow[];
+}
+
+export type CollaborationWorkspaceStatus = "open" | "draft_ready" | "applied" | "rejected" | "expired";
+export type DraftChangeSetStatus = "drafting" | "ready_for_review" | "applied" | "rejected" | "expired";
+
+/** A quarantined branch draft from the persistent no-code companion. */
+export interface CompanionBranchDraftRow {
+  id: string;
+  companionIdentityId: string;
+  parentExperimentGroupId: string;
+  userSeedMd: string;
+  summaryMd: string;
+  operations: unknown[];
+  sourceRefs: { entityType: string; entityId: string; note?: string }[];
+  audit: Record<string, unknown> | null;
+  status: DraftChangeSetStatus;
+  rejectionNote: string | null;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  parent?: ExperimentGroupLineageRef | null;
+}
+
+export interface CollaborationInviteRow {
+  id: string;
+  mode: CollaborationMode;
+  primaryEntityType: OrganizedPrimaryEntityType | null;
+  primaryEntityId: string | null;
+  experimentGroupId?: string | null;
+  prioritizeAction?: "pick" | "sunset" | null;
+  userSeedMd: string | null;
+  selectedOrganizedGoalIds: string[];
+  expiresAt: string;
+  redeemedAt: string | null;
+  workspaceId: string | null;
+  createdAt: string;
+}
+
+export interface CollaborationWorkspaceRow {
+  id: string;
+  inviteId: string;
+  mode: CollaborationMode;
+  status: CollaborationWorkspaceStatus;
+  primaryEntityType: OrganizedPrimaryEntityType;
+  primaryEntityId: string | null;
+  experimentGroupId?: string | null;
+  prioritizeAction?: "pick" | "sunset" | null;
+  userSeedMd: string | null;
+  selectedOrganizedGoalIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Operations are intentionally transport-shaped. The dashboard must render
+// them verbatim for review, while the backend validates and applies them
+// transactionally. Keeping an open payload leaves room for every valid
+// coordinated operation without letting the client invent new writes.
+export interface DraftChangeSetOperation {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface DraftChangeSetRow {
+  id: string;
+  workspaceId: string;
+  mode: CollaborationMode;
+  primaryEntityType: OrganizedPrimaryEntityType;
+  primaryEntityId: string | null;
+  summaryMd: string;
+  operations: DraftChangeSetOperation[];
+  sourceRefs: OrganizedSourceRef[];
+  audit?: Record<string, unknown> | null;
+  status: DraftChangeSetStatus;
+  rejectionNote: string | null;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CollaborationInviteStatus {
+  invite: CollaborationInviteRow;
+  workspace: CollaborationWorkspaceRow | null;
+  changeSet: DraftChangeSetRow | null;
+}
+
+export interface CreateCollaborationInviteInput {
+  mode: CollaborationMode;
+  userSeedMd: string;
+  primaryEntityType?: OrganizedPrimaryEntityType;
+  primaryEntityId?: string;
+  experimentGroupId?: string;
+  prioritizeAction?: "pick" | "sunset";
+  selectedOrganizedGoalIds?: string[];
+}
+
+export interface CreatedCollaborationInvite {
+  invite: CollaborationInviteRow;
+  code: string;
+  dashboardCapability: string;
+}
+
+function collaborationCapabilityHeaders(capability: string): HeadersInit {
+  return { "x-collaboration-capability": capability };
 }
 
 export const api = {
@@ -426,6 +711,15 @@ export const api = {
   setWitnessPrimary: (id: string) =>
     request<{ ok: boolean }>(`/witnesses/${id}/primary`, { method: "POST", body: "{}" }),
   witnessPreview: (id: string) => request<{ contextMd: string }>(`/witnesses/${id}/preview`),
+  // Real group chats published by the messenger daemon on the always-on Mac.
+  messengerGroups: () =>
+    request<{ publishedAt: string | null; groups: { chatId: string; name: string | null; isArchived: boolean }[] }>(
+      "/messaging/groups",
+    ),
+  linkWitnessChat: (id: string, chatId: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/link`, { method: "POST", body: JSON.stringify({ chatId }) }),
+  unlinkWitnessChat: (id: string) =>
+    request<{ ok: boolean }>(`/witnesses/${id}/unlink`, { method: "POST", body: "{}" }),
   removeWitness: (id: string) => request<{ ok: boolean }>(`/witnesses/${id}`, { method: "DELETE" }),
 
   // --- review writeups + outbox ---
@@ -552,6 +846,71 @@ export const api = {
   denyProposal: (id: string, note?: string) =>
     request(`/proposals/${id}/deny`, { method: "POST", body: JSON.stringify({ note }) }),
 
+  // --- organized feed + MCP collaboration ---
+  // The MCP never receives these dashboard apply endpoints. It can only redeem
+  // a code and write a workspace draft through the dedicated server; the
+  // dashboard is the one place a reviewed change set can be applied.
+  organizedFeed: () => request<OrganizedFeedRow>("/organized/feed"),
+  organizedDetail: (type: OrganizedDetailEntityType, id: string) =>
+    request<OrganizedEntityDetail>(`/organized/${type}/${id}`),
+  markExperimentGroupTarget: (groupId: string, targetId: string, done: boolean) =>
+    request<ExperimentGroupTargetRow>(`/organized/groups/${groupId}/targets/${targetId}`, {
+      method: "POST",
+      body: JSON.stringify({ done }),
+    }),
+  // Archive hides a noncurrent group without deleting it or touching its
+  // branches; restore returns it to its pre-archive state (never active).
+  archiveExperimentGroup: (groupId: string) =>
+    request<ExperimentGroupRow>(`/organized/groups/${groupId}/archive`, { method: "POST", body: "{}" }),
+  restoreExperimentGroup: (groupId: string, restoreAs?: "candidate" | "done" | "sunset") =>
+    request<ExperimentGroupRow>(`/organized/groups/${groupId}/restore`, {
+      method: "POST",
+      body: JSON.stringify(restoreAs ? { restoreAs } : {}),
+    }),
+
+  // --- persistent companion inbox ---
+  // These routes are behind the companion's fail-closed reviewer identity;
+  // in a private-local deployment they authenticate via the loopback peer.
+  companionDrafts: () => request<CompanionBranchDraftRow[]>("/companion/drafts"),
+  companionDraft: (id: string) => request<CompanionBranchDraftRow>(`/companion/drafts/${id}`),
+  applyCompanionDraft: (id: string) =>
+    request<{ ok: boolean; draft: CompanionBranchDraftRow; createdGroupId: string }>(`/companion/drafts/${id}/apply`, {
+      method: "POST",
+      body: "{}",
+    }),
+  rejectCompanionDraft: (id: string, input: { feedback?: string; returnToDrafting?: boolean } = {}) =>
+    request<{ ok: boolean; draft: CompanionBranchDraftRow }>(`/companion/drafts/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  createCollaborationInvite: (input: CreateCollaborationInviteInput) =>
+    request<CreatedCollaborationInvite>("/collaboration/invites", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  collaborationInvite: (id: string, capability: string) =>
+    request<CollaborationInviteStatus>(`/collaboration/invites/${id}`, { headers: collaborationCapabilityHeaders(capability) }),
+  collaborationWorkspace: (id: string, capability: string) =>
+    request<{ workspace: CollaborationWorkspaceRow; changeSet: DraftChangeSetRow | null }>(
+      `/collaboration/workspaces/${id}`,
+      { headers: collaborationCapabilityHeaders(capability) },
+    ),
+  changeSet: (id: string, capability: string) =>
+    request<DraftChangeSetRow>(`/collaboration/change-sets/${id}`, { headers: collaborationCapabilityHeaders(capability) }),
+  applyChangeSet: (id: string, capability: string) =>
+    request<{ ok: boolean; changeSet: DraftChangeSetRow }>(`/collaboration/change-sets/${id}/apply`, {
+      method: "POST",
+      body: "{}",
+      headers: collaborationCapabilityHeaders(capability),
+    }),
+  rejectChangeSet: (id: string, capability: string, input: { feedback?: string; returnToDrafting?: boolean } = {}) =>
+    request<{ ok: boolean; changeSet: DraftChangeSetRow }>(`/collaboration/change-sets/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify(input),
+      headers: collaborationCapabilityHeaders(capability),
+    }),
+
   // --- goals ---
   goals: (status?: string) => request<GoalRow[]>(`/goals${status ? `?status=${status}` : ""}`),
   goal: (id: string) => request<GoalDetail>(`/goals/${id}`),
@@ -584,8 +943,11 @@ export const api = {
     request<ExperienceRow>("/experiences", { method: "POST", body: JSON.stringify(fields) }),
   experienceHad: (id: string, note?: string) =>
     request<ExperienceRow>(`/experiences/${id}/had`, { method: "POST", body: JSON.stringify({ note }) }),
+  projects: () => request<ProjectRow[]>("/projects"),
+  project: (id: string) => request<ProjectDetail>(`/projects/${id}`),
 
   // --- experiments ---
+  experimentCandidates: () => request<ExperimentRow[]>("/experiments/candidates"),
   experimentQueue: () => request<ExperimentRow[]>("/experiments/queue"),
   currentExperiment: () =>
     request<{ experiment: CurrentExperiment | null }>("/experiments/current").then(r => r.experiment),
@@ -596,6 +958,11 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
+  confirmActionableSchedule: (id: string) =>
+    request<{ ok: boolean; error?: string; experiment?: ExperimentRow; calendarEvents?: number; pushed?: number }>(
+      `/experiments/${id}/confirm-schedule`,
+      { method: "POST", body: "{}" },
+    ),
   endExperiment: (id: string, verdict: "succeeded" | "failed", outcomeMd?: string) =>
     request(`/experiments/${id}/end`, { method: "POST", body: JSON.stringify({ verdict, outcomeMd }) }),
   archiveExperiment: (id: string) => request(`/experiments/${id}/archive`, { method: "POST", body: "{}" }),
@@ -662,9 +1029,80 @@ export const api = {
     return body as { new: number; updated: number; unchanged: number; errors: unknown[] };
   },
   runDaily: () => request("/jobs/daily", { method: "POST", body: "{}" }),
-  runDetect: () => request("/jobs/detect", { method: "POST", body: "{}" }),
-  runDistill: () => request("/jobs/distill", { method: "POST", body: "{}" }),
-  runDerive: (conversationId?: string) =>
-    request("/jobs/derive", { method: "POST", body: JSON.stringify(conversationId ? { conversationId } : {}) }),
-  runWriteup: () => request("/jobs/writeup", { method: "POST", body: "{}" }),
+  // ── review inbox (rework) ──────────────────────────────────────────────
+  reviewList: (status?: string) => request<RecordChangeSet[]>(`/review${status ? `?status=${status}` : ""}`),
+  reviewGet: (id: string) => request<RecordChangeSet>(`/review/${id}`),
+  reviewReconcile: (id: string) => request(`/review/${id}/reconcile`, { method: "POST", body: "{}" }),
+  reviewApply: (id: string, verdicts: Record<string, RecordVerdict>) =>
+    request(`/review/${id}/apply`, { method: "POST", body: JSON.stringify({ verdicts }) }),
+  reviewReject: (id: string, feedback: string | undefined, returnToDrafting: boolean) =>
+    request(`/review/${id}/reject`, { method: "POST", body: JSON.stringify({ feedback, returnToDrafting }) }),
+  // ── plan board (rework) ────────────────────────────────────────────────
+  weeklyBoard: () => request<WeeklyBoard>("/organized/weekly"),
+  dailyPlans: (limit = 7) => request<DailyPlanRow[]>(`/organized/daily?limit=${limit}`),
+  toggleWeeklyItem: (id: string, done: boolean) =>
+    request(`/organized/weekly/items/${id}`, { method: "PATCH", body: JSON.stringify({ done }) }),
+  toggleDailyItem: (id: string, done: boolean) =>
+    request(`/organized/daily/items/${id}`, { method: "PATCH", body: JSON.stringify({ done }) }),
+  toggleGroupIdea: (membershipId: string, done: boolean) =>
+    request(`/organized/group-ideas/${membershipId}`, { method: "PATCH", body: JSON.stringify({ done }) }),
+  searchRecords: (query: string) =>
+    request<Record<string, RecordSummary[]>>(`/organized/records${query ? `?query=${encodeURIComponent(query)}` : ""}`),
+  recordDetail: (model: string, lineageId: string) => request<RecordDetail>(`/organized/records/${model}/${lineageId}`),
+};
+
+export type RecordSummary = { lineageId: string; versionId: string; version: number; title: string; description: string | null };
+
+export type WeeklyBoard = {
+  pick: { id: string; endDate: string | null; expired: boolean; groupLineageId: string } | null;
+  plans: { id: string; weekOf: string | null; theme: string; description: string | null; items: { id: string; kind: string; text: string; doneAt: string | null }[] }[];
+};
+
+export type DailyPlanRow = {
+  id: string;
+  date: string;
+  theme: string | null;
+  description: string | null;
+  items: { id: string; kind: string; text: string; doneAt: string | null; taskLineageId: string | null }[];
+};
+
+export type RecordDetail = {
+  model: string;
+  lineageId: string;
+  head: Record<string, unknown>;
+  versions: { id: string; version: number | null }[];
+  relations: Record<string, unknown>;
+  conversationSlices: { conversationId: string; title: string | null }[];
+  rant: { conversationId: string; title: string | null; date: string | null; messages: { role: string; content: string }[] } | null;
+};
+
+// ── review inbox types (rework) ──────────────────────────────────────────
+export type RecordVerdict =
+  | { verdict: "new" }
+  | { verdict: "version_bump"; ofLineageId: string }
+  | { verdict: "link_existing"; lineageId: string }
+  | { verdict: "remix"; parents: { model: string; versionId: string }[] };
+
+export type RecordOperation =
+  | { op: "create"; tempId: string; model: string; role: "central" | "satellite"; fields: Record<string, unknown> }
+  | { op: "link"; relation: string; from: string; to: string; description?: string; rank?: number };
+
+export type RecordChangeSet = {
+  id: string;
+  summaryMd: string;
+  operations: RecordOperation[];
+  reconciliation: {
+    candidates?: Record<string, { lineageId: string; versionId: string; version: number; title: string; description: string | null }[]>;
+    verdicts?: Record<string, RecordVerdict>;
+    reasons?: Record<string, string>;
+  } | null;
+  appliedRecords: Record<string, { model: string; versionId: string; lineageId: string; verdict: string; role: string; title: string }> | null;
+  markerToken: string | null;
+  status: string;
+  rejectionNote: string | null;
+  submittedAt: string | null;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };

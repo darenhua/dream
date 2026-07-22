@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { computeStrikes, pauseStrikes, resumeStrikes } from "../../services/strikes";
 import { computeVitals } from "../../services/vitals";
-import { todayLocal } from "../../services/writeup";
+import { todayLocal } from "../../lib/time";
 
 // Self-visibility before social visibility: the user sees every derived
 // signal (and the strike count) on the dashboard before any friend does.

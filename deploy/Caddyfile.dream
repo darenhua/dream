@@ -1,0 +1,18 @@
+# Dream Coach TLS vhost. Appended to /etc/caddy/Caddyfile by vm-bootstrap.sh.
+# Caddy obtains/renews the Let's Encrypt certificate automatically via the
+# public :80/:443 listeners (100-48-129-170.nip.io resolves to this VM).
+100-48-129-170.nip.io {
+	# Overwrite, never append: MCP_TRUST_PROXY relies on these exact values.
+	reverse_proxy 127.0.0.1:8130 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		# Streamable HTTP MCP holds long-lived SSE streams.
+		flush_interval -1
+		transport http {
+			read_timeout 3600s
+		}
+	}
+}

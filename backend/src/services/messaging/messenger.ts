@@ -7,7 +7,7 @@ import { getConfig } from "../config";
 import { emit } from "../events";
 import { enqueueOutbound, markFailed, markSent, sendableOutbound } from "../outbox";
 import { registerStrikeAlertSink, type StrikeReport } from "../strikes";
-import { newWorkspace } from "../projector";
+import { newWorkspace } from "../agentRunner";
 import { linkedPrimaryWitness, listWitnesses } from "../witnesses";
 import { witnessContextMd } from "../witnessScope";
 import { createMockTransport } from "./mockTransport";
@@ -48,7 +48,17 @@ export function initMessaging() {
 
 // Send everything approved and past its notBefore. Rows for witnesses with no
 // linked chat stay approved (manual protocol: user copies them by hand).
-export async function flushOutbound(): Promise<{ sent: number; skippedUnlinked: number; failed: number }> {
+// TRANSPORT="external": the side-by-side messenger daemon owns delivery — the
+// in-process flush must not touch rows or the two wires would double-send.
+export async function flushOutbound(): Promise<{
+  sent: number;
+  skippedUnlinked: number;
+  failed: number;
+  external?: boolean;
+}> {
+  if (getConfig<string>("TRANSPORT") === "external") {
+    return { sent: 0, skippedUnlinked: 0, failed: 0, external: true };
+  }
   const rows = sendableOutbound();
   let sent = 0;
   let skippedUnlinked = 0;

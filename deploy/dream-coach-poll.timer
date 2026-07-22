@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll GitHub main every 3 minutes and redeploy Dream Coach on change
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

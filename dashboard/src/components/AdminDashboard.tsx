@@ -1,12 +1,11 @@
 import { useRef, useState } from "react";
 import { Loader2, Play, Upload } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { api, type ConversationRow, type PipelineState } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useApiData } from "@/lib/useApiData";
 import { cn } from "@/lib/utils";
 import { AnchorConfig } from "./admin/AnchorConfig";
@@ -14,29 +13,10 @@ import { CalendarPanel } from "./admin/CalendarPanel";
 import { DangerZone } from "./admin/DangerZone";
 import { EventsFeed } from "./admin/EventsFeed";
 import { HistoryPanel } from "./admin/HistoryPanel";
-import { ProposalLedger } from "./admin/ProposalLedger";
 import { QuickAdd } from "./admin/QuickAdd";
 import { StrikesSection } from "./admin/StrikesSection";
 
-const STATE_STYLE: Record<PipelineState, string> = {
-  parse_failed: "bg-red-200 text-red-900 dark:bg-red-900 dark:text-red-100",
-  pending_detection: "bg-muted text-muted-foreground",
-  rant_candidate: "bg-violet-200 text-violet-900 dark:bg-violet-900 dark:text-violet-100",
-  rejected: "bg-muted text-muted-foreground line-through",
-  idle: "bg-muted text-muted-foreground",
-  awaiting_distill: "bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100",
-  awaiting_review: "bg-emerald-200 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100",
-  awaiting_derive: "bg-sky-200 text-sky-900 dark:bg-sky-900 dark:text-sky-100",
-  derived: "bg-green-200 text-green-900 dark:bg-green-900 dark:text-green-100",
-};
-
-export function AdminDashboard({
-  onChanged,
-  onReviewExtractions,
-}: {
-  onChanged: () => void | Promise<void>;
-  onReviewExtractions: (conversationId: string) => void;
-}) {
+export function AdminDashboard({ onChanged }: { onChanged: () => void | Promise<void> }) {
   const [refreshTick, setRefreshTick] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
@@ -66,19 +46,7 @@ export function AdminDashboard({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Button variant="outline" disabled={running !== null} onClick={() => runJob("daily", api.runDaily)}>
           {running === "daily" ? <Loader2 className="animate-spin" /> : <Play />} run heartbeat now
-          <span className="text-muted-foreground">(strikes → pings → sweep)</span>
-        </Button>
-        <Button variant="outline" disabled={running !== null} onClick={() => runJob("detect", api.runDetect)}>
-          {running === "detect" && <Loader2 className="animate-spin" />} run rant detection
-        </Button>
-        <Button variant="outline" disabled={running !== null} onClick={() => runJob("distill", api.runDistill)}>
-          {running === "distill" && <Loader2 className="animate-spin" />} run distill
-        </Button>
-        <Button variant="outline" disabled={running !== null} onClick={() => runJob("derive", () => api.runDerive())}>
-          {running === "derive" && <Loader2 className="animate-spin" />} run derive (reviewed rants)
-        </Button>
-        <Button variant="outline" disabled={running !== null} onClick={() => runJob("writeup", api.runWriteup)}>
-          {running === "writeup" && <Loader2 className="animate-spin" />} run writeup
+          <span className="text-muted-foreground">(strikes → pings → calendar)</span>
         </Button>
         <Button variant="outline" onClick={() => setImportOpen(true)}>
           <Upload /> import conversations.json
@@ -91,16 +59,11 @@ export function AdminDashboard({
         </p>
       )}
 
-      <PipelineBrowser
-        refreshKey={refreshTick}
-        onChanged={handleChanged}
-        onReviewExtractions={onReviewExtractions}
-      />
+      <ConversationBrowser refreshKey={refreshTick} />
       <CalendarPanel refreshKey={refreshTick} />
       <StrikesSection refreshKey={refreshTick} onChanged={handleChanged} />
       <AnchorConfig onChanged={handleChanged} />
       <QuickAdd onChanged={handleChanged} />
-      <ProposalLedger refreshKey={refreshTick} />
       <EventsFeed refreshKey={refreshTick} />
       <HistoryPanel refreshKey={refreshTick} />
       <DangerZone onChanged={handleChanged} />
@@ -110,87 +73,19 @@ export function AdminDashboard({
   );
 }
 
-// The conversation pipeline browser: every rant with its FSM state and the
-// stage-appropriate action.
-function PipelineBrowser({
-  refreshKey,
-  onChanged,
-  onReviewExtractions,
-}: {
-  refreshKey: number;
-  onChanged: () => Promise<void>;
-  onReviewExtractions: (conversationId: string) => void;
-}) {
+// Plain imported-conversation browser; the pipeline FSM is gone.
+function ConversationBrowser({ refreshKey }: { refreshKey: number }) {
   const [search, setSearch] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
   const { data: conversations } = useApiData(() => api.conversations(), [refreshKey]);
 
   const visible = (conversations ?? []).filter(c =>
     (c.title ?? "").toLowerCase().includes(search.toLowerCase()),
   );
 
-  const act = async (id: string, fn: () => Promise<unknown>) => {
-    setBusy(id);
-    try {
-      await fn();
-      await onChanged();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const actionFor = (c: ConversationRow) => {
-    switch (c.pipelineState) {
-      case "rant_candidate":
-        return (
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => act(c.id, () => api.rantAccept(c.id))}>
-              accept
-            </Button>
-            <Button size="sm" variant="ghost" disabled={busy === c.id} onClick={() => act(c.id, () => api.rantReject(c.id))}>
-              reject
-            </Button>
-          </div>
-        );
-      case "idle":
-      case "rejected":
-        return (
-          <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => act(c.id, () => api.rantAccept(c.id))}>
-            accept as rant
-          </Button>
-        );
-      case "awaiting_review":
-        return (
-          <Button size="sm" variant="outline" onClick={() => onReviewExtractions(c.id)}>
-            review
-          </Button>
-        );
-      case "awaiting_derive":
-        return (
-          <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => act(c.id, () => api.runDerive(c.id))}>
-            derive now
-          </Button>
-        );
-      case "derived":
-        return (
-          <div className="flex gap-1">
-            <Button size="sm" variant="ghost" disabled={busy === c.id} onClick={() => act(c.id, () => api.rederive(c.id))}>
-              re-derive
-            </Button>
-            <Button size="sm" variant="ghost" disabled={busy === c.id} onClick={() => act(c.id, () => api.redistill(c.id))}>
-              re-distill
-            </Button>
-          </div>
-        );
-      default:
-        return null;
-    }
-  };
-
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-medium">pipeline browser</CardTitle>
+        <CardTitle className="text-base font-medium">imported conversations</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <Input
@@ -201,22 +96,11 @@ function PipelineBrowser({
         />
         <ul className="flex max-h-96 flex-col gap-2 overflow-y-auto">
           {visible.map(c => (
-            <li key={c.id} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className={cn("flex flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-sm")}>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {(c.sourceUpdatedAt ?? "").slice(0, 10)}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{c.title ?? "(untitled)"}</span>
-                {c.detectorNote && (
-                  <span className="hidden max-w-48 truncate text-xs text-muted-foreground sm:inline" title={c.detectorNote}>
-                    {c.detectorNote}
-                  </span>
-                )}
-                <Badge className={cn("border-transparent", STATE_STYLE[c.pipelineState])}>
-                  {c.pipelineState.replace("_", " ")}
-                </Badge>
-              </div>
-              {actionFor(c)}
+            <li key={c.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+              <span className="font-mono text-xs text-muted-foreground">
+                {(c.sourceUpdatedAt ?? "").slice(0, 10)}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{c.title ?? "(untitled)"}</span>
             </li>
           ))}
           {visible.length === 0 && (
@@ -245,8 +129,6 @@ function ImportDialog({
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // The raw Claude conversations.json goes straight to the backend; the
-  // detector proposes rant candidates for the user gate right after import.
   const handleFile = async (file: File) => {
     setError(null);
     setReport(null);
@@ -255,8 +137,7 @@ function ImportDialog({
       const result = await api.importFile(file);
       setReport(
         `imported: ${result.new} new · ${result.updated} updated · ${result.unchanged} unchanged` +
-          (result.errors.length ? ` · ${result.errors.length} errors` : "") +
-          " — distilling in the background",
+          (result.errors.length ? ` · ${result.errors.length} errors` : ""),
       );
       await onImported();
     } catch (e) {

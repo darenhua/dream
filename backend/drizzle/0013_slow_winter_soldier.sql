@@ -1,0 +1,2 @@
+ALTER TABLE `collaboration_invite` ADD `experiment_group_id` text REFERENCES experiment_group(id);--> statement-breakpoint
+ALTER TABLE `collaboration_workspace` ADD `experiment_group_id` text REFERENCES experiment_group(id);

@@ -64,3 +64,8 @@ export function tzOffsetMinutes(tz: string, at: Date): number {
   const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
   return Math.round((asUtc - at.getTime()) / 60_000);
 }
+
+// Server-local YYYY-MM-DD. (Moved from the deleted writeup service.)
+export function todayLocal(): string {
+  return new Date().toLocaleDateString("en-CA");
+}

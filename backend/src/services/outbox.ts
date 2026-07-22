@@ -85,11 +85,14 @@ export function enqueueOutbound(fields: {
       witnessId: fields.witnessId,
       kind: fields.kind,
       bodyText: fields.bodyText,
+      originalBodyText: fields.bodyText, // frozen: what the composer wrote, before any edit
       contextJson: fields.contextJson ? JSON.stringify(fields.contextJson) : null,
       relatedType: fields.relatedType ?? null,
       relatedId: fields.relatedId ?? null,
       dedupeKey: fields.dedupeKey ?? null,
       status,
+      // Auto-approved rows never pass through approveOutbound, so stamp here.
+      approvedAt: status === "approved" ? new Date().toISOString() : null,
       notBefore: computeNotBefore(w.timezone),
     })
     .returning()
@@ -103,11 +106,15 @@ export function approveOutbound(id: string, editedBody?: string): OutboundRow | 
   if (!row || row.status !== "pending_approval") return null;
   const updated = db
     .update(outboundMessage)
-    .set({ status: "approved", ...(editedBody !== undefined ? { bodyText: editedBody } : {}) })
+    .set({
+      status: "approved",
+      approvedAt: new Date().toISOString(),
+      ...(editedBody !== undefined ? { bodyText: editedBody } : {}),
+    })
     .where(eq(outboundMessage.id, id))
     .returning()
     .get();
-  emit("outbound_message", id, "outbound_approved", {});
+  emit("outbound_message", id, "outbound_approved", { edited: updated.bodyText !== updated.originalBodyText });
   return updated;
 }
 

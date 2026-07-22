@@ -1,0 +1,6 @@
+[Unit]
+Description=Dream Coach git-poller deploy (fetch main, gate, redeploy)
+
+[Service]
+Type=oneshot
+ExecStart=%h/deployments/dream-coach-git/deploy/dream-coach-poll.sh
