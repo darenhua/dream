@@ -61,5 +61,15 @@ async function calendarHousekeeping() {
   // loadable (and testable) without it.
   const { syncIncremental, isConnected } = await import("./calendarSync");
   if (!isConnected()) return { skipped: "google calendar not connected" };
-  return syncIncremental();
+  const sync = await syncIncremental();
+  // The daily "worker" pass for the write-job queue: give failed pushes
+  // another chance, then push everything still pending. Inline best-effort
+  // pushes after each plan cover the happy path; this covers the stragglers.
+  const { db } = await import("../db");
+  const { calendarEvent } = await import("../db/schema");
+  const { isNotNull } = await import("drizzle-orm");
+  db.update(calendarEvent).set({ pushFailedAt: null, pushError: null }).where(isNotNull(calendarEvent.pushFailedAt)).run();
+  const { pushPendingEvents } = await import("./calendarWriter");
+  const push = await pushPendingEvents(50);
+  return { ...sync, push };
 }

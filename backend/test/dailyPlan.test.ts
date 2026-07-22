@@ -72,6 +72,7 @@ describe("daily plans", () => {
     expect(nag.anchored).toBe(false);
     expect(nag.deadlineDate).toBe(isoDate(12));
     expect(ctx.workContext).toBe("");
+    expect(ctx.calendarNote).toContain("Google Calendar MCP"); // availability comes from the live calendar, never local rows
     expect(listDailyPlans(50)).toHaveLength(9);
   });
 });

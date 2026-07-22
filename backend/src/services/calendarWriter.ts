@@ -4,9 +4,11 @@ import { db } from "../db";
 import { calendarEvent } from "../db/schema";
 
 // The consolidated calendar writer (Phase 7). All plan flows create their
-// rows here; Google Calendar is the source of truth for event state, these
-// rows are bookkeeping with explicit push stamps ("was the calendar job
-// done"). Pushing is best-effort, capped per run, and never blocks a plan.
+// rows here. These rows are ASYNC WRITE JOBS for Google Calendar plus push
+// bookkeeping ("was the calendar job done") — they are NEVER read as
+// availability; Google Calendar is the source of truth and planners read it
+// live through the user's calendar MCP. Pushing is best-effort, capped per
+// run, never blocks a plan; the daily heartbeat retries stragglers.
 
 export type ScheduledEventInput = {
   entityType: "habit" | "task" | "weekly_item" | "daily_adhoc" | "leisure";

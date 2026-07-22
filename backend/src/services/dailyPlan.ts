@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { calendarEvent, dailyPlan, dailyPlanItem, experiment, leisureActivity, task } from "../db/schema";
@@ -132,8 +132,9 @@ export function toggleDailyItem(itemId: string, done: boolean) {
 
 /** The daily conversation's context (windowed per spec §7): the CURRENT
  * weekly plan only, the last ~7 daily plans with completions and reported
- * state, open deadline tasks (the daily nag), leisure, the standing work
- * context, and the date's already-scheduled events. */
+ * state, open deadline tasks (the daily nag), leisure, and the standing work
+ * context. Availability is deliberately absent — the agent reads the live
+ * Google Calendar (source of truth) through the user's calendar MCP. */
 export function dailyPlanContext(forDate?: string) {
   const date = forDate ?? todayLocal();
   const pick = currentPick();
@@ -163,13 +164,6 @@ export function dailyPlanContext(forDate?: string) {
       ),
     }));
 
-  const scheduled = db
-    .select()
-    .from(calendarEvent)
-    .where(and(gte(calendarEvent.startAt, `${date}T00:00:00`), lte(calendarEvent.startAt, `${date}T23:59:59.999Z`)))
-    .all()
-    .map(row => ({ title: row.title, startAt: row.startAt, endAt: row.endAt, entityType: row.entityType, completedAt: row.completedAt }));
-
   return {
     date,
     pick: pick ? { endDate: pick.pick.endDate, groupLineageId: pick.groupLineageId } : null,
@@ -190,6 +184,10 @@ export function dailyPlanContext(forDate?: string) {
       .all()
       .map(row => ({ lineageId: row.lineageId ?? row.id, title: row.title, description: row.description, fitsWhen: row.fitsWhen })),
     workContext: getConfig<string>("WORK_CONTEXT") ?? "",
-    scheduledOnDate: scheduled,
+    // Deliberately NO availability data: Google Calendar is the source of
+    // truth and the user rearranges it constantly. Dream's calendar rows are
+    // pending write jobs, never the calendar.
+    calendarNote:
+      "Read live availability for the target date via the user's Google Calendar MCP before proposing times; Dream's own rows are pending write jobs only.",
   };
 }

@@ -55,6 +55,15 @@ apply:
    let the user veto; the dashboard reviewer classifies finally.
 10. Call get_survey for the model you're about to create — it lists exactly
     what to collect from the conversation and which links matter.
+11. GOOGLE CALENDAR IS THE SOURCE OF TRUTH FOR AVAILABILITY. Before proposing
+    ANY schedule times (daily or weekly planning), read the user's LIVE
+    calendar through their Google Calendar MCP/tools — the whole day ahead
+    for a daily plan, the whole week ahead for a weekly plan — and propose
+    blocks only into real gaps. Never infer availability from Dream's own
+    records or context output: Dream's calendar rows are pending WRITE JOBS,
+    not the calendar (the user moves their events around constantly). If no
+    calendar tool is available in this conversation, say so and ask the user
+    what their day/week looks like before proposing any times.
 `.trim();
 
 const SURVEYS: Record<VersionedModel, string> = {
@@ -249,7 +258,7 @@ export function createDreamMcpServer(): McpServer {
     {
       title: "Load the weekly-plan context",
       description:
-        "Run when the user wants to plan their week. Returns the current pick (deadline clock: weeks elapsed/remaining), the full group read (member ideas + done-states, ranked goals with whys), ALL prior weekly plans of this pick with item completions, open deadline tasks, and the leisure list. OPEN the conversation with the state of play — week N of M, last week's completions, the big-ticket position — THEN ask capacity/readiness. Momentum rules: stack wins, start tiny, build up; push back with the deadline when the user defers ('3 weeks left — ok failing this week?'). Schedule ONLY habit blocks being established and must-anchor blocks; everything else becomes items (todo|intention) for the daily planner. Submit via record_create with ONE {op:'create_weekly_plan', weekOf (Monday), theme, description (weekly goal + reported state), items, habitStarts, anchoredEvents, ideasDone} operation after the explicit go-ahead.",
+        "Run when the user wants to plan their week. FIRST read the user's LIVE calendar for the whole week ahead via their Google Calendar MCP — anchored blocks must not conflict with existing events; Dream returns no availability data of its own. Returns the current pick (deadline clock: weeks elapsed/remaining), the full group read (member ideas + done-states, ranked goals with whys), ALL prior weekly plans of this pick with item completions, open deadline tasks, and the leisure list. OPEN the conversation with the state of play — week N of M, last week's completions, the big-ticket position — THEN ask capacity/readiness. Momentum rules: stack wins, start tiny, build up; push back with the deadline when the user defers ('3 weeks left — ok failing this week?'). Schedule ONLY habit blocks being established and must-anchor blocks; everything else becomes items (todo|intention) for the daily planner. Submit via record_create with ONE {op:'create_weekly_plan', weekOf (Monday), theme, description (weekly goal + reported state), items, habitStarts, anchoredEvents, ideasDone} operation after the explicit go-ahead.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => resultText(weeklyPlanContext()),
@@ -260,7 +269,7 @@ export function createDreamMcpServer(): McpServer {
     {
       title: "Load the daily-plan context",
       description:
-        "Run when the user wants to plan tomorrow (or today). Returns the CURRENT weekly plan only (with item completions), the last ~7 daily plans (their reported states and completions — yesterday's exhaustion is tomorrow's leisure budget), open tasks with deadlines (unanchored deadline tasks are the DAILY NAG: raise them every day until scheduled), the leisure list (match activities to the reported mood via their feeling-pairing descriptions), the standing work context, and what is already scheduled on the date. OPEN with the date's reality (calendar + recent state), then ask the fixed three: energy level? social urge? how heavy is work? Then propose: a work-centric theme one-liner, the day's blocks — including INVENTED ones (make-breakfast, a 1pm walk, an ask-your-boss note) and leisure matched to the state — and drain weekly todos into the day.",
+        "Run when the user wants to plan tomorrow (or today). FIRST read the user's LIVE calendar for the target date via their Google Calendar MCP (all events, whole day) — Dream deliberately returns no availability data, and its own rows are pending write jobs, not the calendar. Returns the CURRENT weekly plan only (with item completions), the last ~7 daily plans (their reported states and completions — yesterday's exhaustion is tomorrow's leisure budget), open tasks with deadlines (unanchored deadline tasks are the DAILY NAG: raise them every day until scheduled), the leisure list (match activities to the reported mood via their feeling-pairing descriptions), the standing work context, and what is already scheduled on the date. OPEN with the date's reality (calendar + recent state), then ask the fixed three: energy level? social urge? how heavy is work? Then propose: a work-centric theme one-liner, the day's blocks — including INVENTED ones (make-breakfast, a 1pm walk, an ask-your-boss note) and leisure matched to the state — and drain weekly todos into the day.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
     },
