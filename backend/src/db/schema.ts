@@ -857,14 +857,14 @@ export const calendarEvent = sqliteTable(
   "calendar_event",
   {
     id: id(),
-    entityType: text("entity_type").notNull(), // habit|environment_item|experience|experiment_task
+    entityType: text("entity_type").notNull(), // habit|environment_item|experience|experiment_task|chain_run
     entityId: text("entity_id").notNull(),
     gcalEventId: text("gcal_event_id").unique(), // null until pushed
     title: text("title").notNull(),
     startAt: text("start_at").notNull(), // first-instance times for recurring events
     endAt: text("end_at").notNull(),
     rrule: text("rrule"),
-    blockStyle: text("block_style", { enum: ["habit", "experiment", "obligation", "task"] }).notNull(),
+    blockStyle: text("block_style", { enum: ["habit", "experiment", "obligation", "task", "chain"] }).notNull(),
     status: text("status", { enum: ["active", "cancelled", "needs_reschedule"] })
       .notNull()
       .default("active"),
@@ -1244,15 +1244,28 @@ export const dailyPlan = sqliteTable(
   "daily_plan",
   {
     id: id(),
-    weeklyPlanId: text("weekly_plan_id"), // experiment row id (weekly plan)
+    weeklyPlanId: text("weekly_plan_id"), // legacy: experiment row id; v2: weekly_plan id
     date: text("date").notNull(), // YYYY-MM-DD local
-    theme: text("theme"), // the work-centric one-liner
+    theme: text("theme"), // the one-liner held in mind for micro-decisions
     description: text("description"),
     sourceConversationId: text("source_conversation_id"),
+    // Planning revamp: the selection-not-creation daily shape. Old rows keep
+    // these null; items on old plans stay in daily_plan_item (dormant).
+    topPriority: text("top_priority"), // the single most important outcome
+    supportingHealth: text("supporting_health"), // one health/life action
+    supportingConnection: text("supporting_connection"), // one relationship/admin action
+    firstDomino: text("first_domino"), // smallest action that starts momentum
+    minimumViableDay: text("minimum_viable_day"), // smallest day that still counts as a win
+    parkingLotJson: text("parking_lot_json"), // string[]: saved, not acted on
+    // Phase 6 hardening: supersede keeps history insert-only (the active plan
+    // for a date is the one with superseded_by_plan_id null); draft_key makes
+    // create retry-safe (same key → same plan, never a duplicate error).
+    supersededByPlanId: text("superseded_by_plan_id"),
+    draftKey: text("draft_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  t => [index("daily_plan_date").on(t.date)],
+  t => [index("daily_plan_date").on(t.date), uniqueIndex("daily_plan_draft_key").on(t.draftKey)],
 );
 
 // The day's concrete items; done_at is the manual dashboard CRUD and doubles
@@ -1286,3 +1299,166 @@ export const leisureActivity = sqliteTable("leisure_activity", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+// ── Planning revamp (PLANNING_REVAMP_SPEC) ──────────────────────────────────
+// Chains, runs, wins, plan docs, and the dedicated weekly plan table. All
+// planning artifacts are DIRECT-write (conversation confirmation is the
+// review); none of these pass through the change-set inbox.
+
+// The atomic unit of execution. Versioned like habit; the library belongs to
+// an experiment group (lineage id), so a new pick starts a new library.
+export const ifThenChain = sqliteTable(
+  "if_then_chain",
+  {
+    id: id(),
+    ...versioning(),
+    experimentGroupLineageId: text("experiment_group_lineage_id").notNull(),
+    trigger: text("trigger").notNull(), // the real-world cue ("I finish breakfast")
+    purpose: text("purpose"), // which problem/goal the chain solves
+    minimumVersion: text("minimum_version"), // the smallest run that still counts
+    rewardKind: text("reward_kind", { enum: ["walk", "cold_drink", "playlist", "easy_task"] }),
+    rewardText: text("reward_text"),
+    status: text("status", { enum: ["draft", "active", "retired"] }).notNull().default("draft"),
+    expiresAt: text("expires_at"), // review-by date (YYYY-MM-DD); chains are not immortal
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("if_then_chain_group").on(t.experimentGroupLineageId)],
+);
+
+// Steps of one chain VERSION row. Canonical shape (service-enforced, not
+// schema): exactly one comically-easy starter first, reward last.
+export const ifThenChainStep = sqliteTable(
+  "if_then_chain_step",
+  {
+    id: id(),
+    chainId: text("chain_id")
+      .notNull()
+      .references(() => ifThenChain.id),
+    position: integer("position").notNull(),
+    kind: text("kind", { enum: ["starter", "warmup", "core", "reward"] }).notNull(),
+    text: text("text").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [index("if_then_chain_step_chain").on(t.chainId)],
+);
+
+// An armed instance of a chain for a specific day. dailyPlanId null = ad-hoc
+// extra run (surplus capacity still earns its win, never a formal plan item).
+export const chainRun = sqliteTable(
+  "chain_run",
+  {
+    id: id(),
+    chainVersionId: text("chain_version_id")
+      .notNull()
+      .references(() => ifThenChain.id),
+    dailyPlanId: text("daily_plan_id").references(() => dailyPlan.id),
+    calendarEventId: text("calendar_event_id"),
+    date: text("date").notNull(), // YYYY-MM-DD local
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    minimumOnly: integer("minimum_only").notNull().default(0), // minimum version still counts
+    // Set when the owning plan is superseded before the run ever started.
+    // A run with ANY progress is evidence and is never cancelled.
+    cancelledAt: text("cancelled_at"),
+    createdAt: createdAt(),
+  },
+  t => [index("chain_run_date").on(t.date), index("chain_run_plan").on(t.dailyPlanId)],
+);
+
+// SNAPSHOT of the chain's steps at arm time — the run stays immutable
+// evidence even if the chain is later revised or retired.
+export const chainRunStep = sqliteTable(
+  "chain_run_step",
+  {
+    id: id(),
+    chainRunId: text("chain_run_id")
+      .notNull()
+      .references(() => chainRun.id),
+    position: integer("position").notNull(),
+    kind: text("kind", { enum: ["starter", "warmup", "core", "reward"] }).notNull(),
+    text: text("text").notNull(),
+    doneAt: text("done_at"),
+    createdAt: createdAt(),
+  },
+  t => [index("chain_run_step_run").on(t.chainRunId)],
+);
+
+// The evidence ledger. auto = derived from chain-run completions;
+// conversation = harvested in review conversations (courage, identity, …).
+// Progress is only ever compared against the user's own trajectory.
+export const winEntry = sqliteTable(
+  "win_entry",
+  {
+    id: id(),
+    date: text("date").notNull(), // YYYY-MM-DD local
+    kind: text("kind", {
+      enum: ["action", "created", "courage", "selfcare", "identity", "lesson", "recognition"],
+    }).notNull(),
+    text: text("text").notNull(),
+    source: text("source", { enum: ["auto", "conversation"] }).notNull(),
+    chainRunStepId: text("chain_run_step_id"), // provenance for auto wins
+    createdAt: createdAt(),
+  },
+  t => [index("win_entry_date").on(t.date)],
+);
+
+// One-pager living context docs per horizon. Docs accrete; plans stay stable
+// once made. refId = dailyPlan id / weekly_plan id / currentFocus id.
+export const planDoc = sqliteTable(
+  "plan_doc",
+  {
+    id: id(),
+    scope: text("scope", { enum: ["daily", "weekly", "monthly"] }).notNull(),
+    refId: text("ref_id").notNull(),
+    contentMd: text("content_md").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [uniqueIndex("plan_doc_scope_ref").on(t.scope, t.refId)],
+);
+
+// The dedicated weekly plan table (weekly moves OFF the legacy experiment
+// table; the old path stays readable for history but v2 never writes it).
+// Weekly is the heavy thinking session: chains/cues/missions built up front
+// so daily planning is selection, not creation.
+export const weeklyPlan = sqliteTable(
+  "weekly_plan",
+  {
+    id: id(),
+    currentFocusId: text("current_focus_id")
+      .notNull()
+      .references(() => currentFocus.id),
+    weekOf: text("week_of").notNull(), // local Monday YYYY-MM-DD
+    direction: text("direction"), // one-sentence weekly direction
+    theme: text("theme"),
+    topOutcomesJson: text("top_outcomes_json"), // string[], ≤3 (service-enforced)
+    milestonesJson: text("milestones_json"), // string[]
+    healthPriority: text("health_priority"),
+    socialPriority: text("social_priority"),
+    maintenancePriority: text("maintenance_priority"),
+    fearToFace: text("fear_to_face"), // the one avoidance pattern faced this week
+    failurePointsJson: text("failure_points_json"), // {point, recovery}[]
+    successDefinition: text("success_definition"),
+    candidateMissionsJson: text("candidate_missions_json"), // string[] pre-derived daily missions
+    description: text("description"), // reported state; successor planners read it
+    sourceConversationId: text("source_conversation_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("weekly_plan_week").on(t.weekOf), index("weekly_plan_focus").on(t.currentFocusId)],
+);
+
+// The 3–5 chains armed for a week (picked from / created into the library).
+export const weeklyPlanChain = sqliteTable(
+  "weekly_plan_chain",
+  {
+    id: id(),
+    weeklyPlanId: text("weekly_plan_id")
+      .notNull()
+      .references(() => weeklyPlan.id),
+    chainLineageId: text("chain_lineage_id").notNull(),
+    createdAt: createdAt(),
+  },
+  t => [uniqueIndex("weekly_plan_chain_unique").on(t.weeklyPlanId, t.chainLineageId)],
+);
