@@ -136,7 +136,9 @@ export const env = {
 // and Google Calendar disconnected (via google/auth isConnected). Dev stays
 // permissive — tests exercise the real paths and dev holds no prod data unless
 // the developer deliberately restores some.
-export const SIDE_EFFECTS_BLOCKED = env.APP_ENV === "staging" || env.APP_ENV === "preview";
+export function sideEffectsBlocked(): boolean {
+  return env.APP_ENV === "staging" || env.APP_ENV === "preview";
+}
 
 // Apply the proxy flag to the process environment exactly once, at load.
 // USE_PROXY=false must also *clear* inherited proxy vars (the user's shell

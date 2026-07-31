@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { googleAuth } from "../../db/schema";
-import { env, SIDE_EFFECTS_BLOCKED } from "../../lib/env";
+import { env, sideEffectsBlocked } from "../../lib/env";
 import { emit } from "../events";
 
 // Hand-rolled OAuth2 for a single user: Desktop-app client + loopback (or
@@ -28,7 +28,7 @@ export function isConnected(): boolean {
   // Staging/preview restore prod snapshots that carry the refresh token; report
   // disconnected so every calendar path (push, inbound sync, experiment
   // confirms) goes dormant exactly as if no Google account were linked.
-  if (SIDE_EFFECTS_BLOCKED) return false;
+  if (sideEffectsBlocked()) return false;
   return authRow() !== null;
 }
 

@@ -1,7 +1,7 @@
 import { count, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db, wipeAllTables } from "../../db";
-import { env, SIDE_EFFECTS_BLOCKED } from "../../lib/env";
+import { env, sideEffectsBlocked } from "../../lib/env";
 import { conversation, environmentItem, event, experience, experiment, goal, habit, project } from "../../db/schema";
 import { isConnected } from "../../services/calendarSync";
 import { getConfig, seedConfig } from "../../services/config";
@@ -38,7 +38,7 @@ adminRoutes.get("/health", c => {
     ok: true,
     env: env.APP_ENV,
     sha: env.GIT_SHA || null,
-    sideEffectsBlocked: SIDE_EFFECTS_BLOCKED,
+    sideEffectsBlocked: sideEffectsBlocked(),
     conversations,
     activeGoals,
     registry,
