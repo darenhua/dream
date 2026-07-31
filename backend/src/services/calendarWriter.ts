@@ -11,13 +11,13 @@ import { calendarEvent } from "../db/schema";
 // run, never blocks a plan; the daily heartbeat retries stragglers.
 
 export type ScheduledEventInput = {
-  entityType: "habit" | "task" | "weekly_item" | "daily_adhoc" | "leisure";
+  entityType: "habit" | "task" | "weekly_item" | "daily_adhoc" | "leisure" | "chain_run";
   entityId: string;
   title: string;
   startAt: string;
   endAt: string;
   rrule?: string | null;
-  blockStyle?: "habit" | "experiment" | "obligation" | "task";
+  blockStyle?: "habit" | "experiment" | "obligation" | "task" | "chain";
 };
 
 export function createScheduledEvents(rows: ScheduledEventInput[]): string[] {
