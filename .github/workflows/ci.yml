@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: install
+        working-directory: backend
+        run: bun install --frozen-lockfile
+      - name: typecheck
+        working-directory: backend
+        run: bunx tsc --noEmit -p .
+      - name: tests (scratch db)
+        working-directory: backend
+        run: DB_PATH="$(mktemp -d)/dream.db" bun test
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: install
+        working-directory: dashboard
+        run: bun install
+      - name: build
+        working-directory: dashboard
+        run: bun run build
