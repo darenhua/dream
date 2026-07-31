@@ -4,6 +4,7 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "../lib/env";
+import { runDataMigrations } from "./dataMigrations";
 import * as schema from "./schema";
 
 mkdirSync(dirname(env.DB_PATH), { recursive: true });
@@ -13,9 +14,11 @@ sqlite.exec("PRAGMA journal_mode = WAL;");
 sqlite.exec("PRAGMA foreign_keys = ON;");
 
 export const db = drizzle(sqlite, { schema });
+export type DreamDb = typeof db;
 
 export function runMigrations() {
   migrate(db, { migrationsFolder: join(import.meta.dir, "../../drizzle") });
+  runDataMigrations(db);
 }
 
 // Migrate at module load: every entrypoint (server, CLI, tests) gets the schema for free.
