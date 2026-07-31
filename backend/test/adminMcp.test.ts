@@ -19,13 +19,13 @@ describe("non-prod side-effect kill-switch", () => {
     setConfig("STRIKE_ALERTS_ENABLED", true);
     try {
       (env as { APP_ENV: string }).APP_ENV = "staging";
-      expect(getConfig("TRANSPORT")).toBe("mock");
-      expect(getConfig("STRIKE_ALERTS_ENABLED")).toBe(false);
+      expect(getConfig<string>("TRANSPORT")).toBe("mock");
+      expect(getConfig<boolean>("STRIKE_ALERTS_ENABLED")).toBe(false);
       expect(isConnected()).toBe(false);
 
       (env as { APP_ENV: string }).APP_ENV = "dev";
-      expect(getConfig("TRANSPORT")).toBe("external");
-      expect(getConfig("STRIKE_ALERTS_ENABLED")).toBe(true);
+      expect(getConfig<string>("TRANSPORT")).toBe("external");
+      expect(getConfig<boolean>("STRIKE_ALERTS_ENABLED")).toBe(true);
     } finally {
       setConfig("TRANSPORT", "mock");
       setConfig("STRIKE_ALERTS_ENABLED", false);

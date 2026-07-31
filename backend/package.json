@@ -8,6 +8,8 @@
     "daily": "bun run src/cli/daily.ts",
     "heartbeat": "bun run src/cli/daily.ts",
     "db:generate": "drizzle-kit generate",
+    "seed": "bun run scripts/seed.ts",
+    "ship": "bash ../scripts/ops/ship.sh",
     "test": "bun test"
   },
   "dependencies": {
