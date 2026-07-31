@@ -2,7 +2,6 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { calendarEvent, chainRun, chainRunStep, ifThenChain, ifThenChainStep, winEntry } from "../db/schema";
-import { todayLocal } from "../lib/time";
 import { createScheduledEvents, pushPendingEvents } from "./calendarWriter";
 import { emit } from "./events";
 
