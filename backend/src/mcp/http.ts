@@ -19,6 +19,11 @@ type Connection = {
 export class DreamMcpHttpServer {
   #connections = new Map<string, Connection>();
   #pendingInitializations = 0;
+  #serverFactory: () => ReturnType<typeof createDreamMcpServer>;
+
+  constructor(serverFactory: () => ReturnType<typeof createDreamMcpServer> = createDreamMcpServer) {
+    this.#serverFactory = serverFactory;
+  }
 
   async #newConnection(): Promise<Connection> {
     let connection: Connection;
@@ -39,7 +44,7 @@ export class DreamMcpHttpServer {
       onsessionclosed: forget,
     });
     connection = { transport, lastTouchedAt: Date.now(), idleTimer: null };
-    const server = createDreamMcpServer();
+    const server = this.#serverFactory();
     await server.connect(transport);
     return connection;
   }

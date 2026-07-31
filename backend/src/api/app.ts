@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { adminMcpRoutes } from "../mcp/adminHttp";
 import { mcpRoutes } from "../mcp/http";
 import { adminRoutes } from "./routes/admin";
 import { agentRunRoutes } from "./routes/agentRuns";
@@ -48,3 +49,5 @@ app.route("/api/organized", organizedRoutes);
 app.route("/api/review", reviewRoutes);
 // Companion inbox: fail-closed reviewer identity; see routes/companion.ts.
 app.route("/", mcpRoutes);
+// Read-only per-environment inspection; fail-closed without its token.
+app.route("/", adminMcpRoutes);
