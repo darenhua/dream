@@ -1,16 +1,26 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { env } from "../src/lib/env";
 import { getConfig, setConfig } from "../src/services/config";
 import { isConnected } from "../src/services/google/auth";
 import { createAdminMcpRoutes } from "../src/mcp/adminHttp";
 
-// env is module-load state; tests flip fields in place and restore.
+// env is module-load state; tests flip fields in place and restore. The MCP
+// host/origin allowlists are cleared so a deployed .env (staging hosts) can't
+// 403 the loopback test requests before auth is even evaluated.
 const savedAppEnv = env.APP_ENV;
 const savedToken = env.ADMIN_MCP_TOKEN_SHA256;
+const savedHosts = env.MCP_ALLOWED_HOSTS;
+const savedOrigins = env.MCP_ALLOWED_ORIGINS;
+beforeEach(() => {
+  (env as { MCP_ALLOWED_HOSTS: string[] }).MCP_ALLOWED_HOSTS = [];
+  (env as { MCP_ALLOWED_ORIGINS: string[] }).MCP_ALLOWED_ORIGINS = [];
+});
 afterEach(() => {
   (env as { APP_ENV: string }).APP_ENV = savedAppEnv;
   (env as { ADMIN_MCP_TOKEN_SHA256: string }).ADMIN_MCP_TOKEN_SHA256 = savedToken;
+  (env as { MCP_ALLOWED_HOSTS: string[] }).MCP_ALLOWED_HOSTS = savedHosts;
+  (env as { MCP_ALLOWED_ORIGINS: string[] }).MCP_ALLOWED_ORIGINS = savedOrigins;
 });
 
 describe("non-prod side-effect kill-switch", () => {

@@ -33,7 +33,6 @@ fi
 
 log "$DREAM_ENV: $BRANCH advanced ${LOCAL:0:8} -> ${REMOTE:0:8}; deploying"
 git reset --hard "$REMOTE" >/dev/null
-compose_backend_env "$REMOTE"
 
 cd "$DIR/backend"
 "$BUN" install --frozen-lockfile --silent
@@ -61,6 +60,11 @@ if [[ "$DREAM_ENV" == "prod" ]]; then
   log "pre-deploy prod snapshot"
   bash "$DIR/scripts/ops/snapshot.sh" prod >/dev/null
 fi
+
+# Compose .env only after the gate: bun auto-loads backend/.env, and the
+# deployed values (MCP host allowlists, live flags) must never leak into the
+# hermetic test run above.
+compose_backend_env "$REMOTE"
 
 log "restart $PM2_APP"
 pm2_restart_or_start >/dev/null

@@ -9,6 +9,14 @@ DREAM_SECRETS="${DREAM_SECRETS:-$HOME/deployments/.secrets/dream-coach/secrets.e
 BUN="${BUN:-$HOME/.bun/bin/bun}"
 SNAPDIR="$DREAM_BASE/snapshots"
 
+# pm2 lives under Volta on the VM and is absent from non-interactive PATHs
+# (cron, plain ssh). Resolve it once here so every script can call `pm2`.
+if ! command -v pm2 >/dev/null 2>&1; then
+  for _p in "$HOME/.volta/bin" "$HOME/.bun/bin" "/usr/local/bin"; do
+    [[ -x "$_p/pm2" ]] && PATH="$_p:$PATH" && break
+  done
+fi
+
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 die() { echo "error: $*" >&2; exit 1; }
 
