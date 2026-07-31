@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { config } from "../db/schema";
+import { SIDE_EFFECTS_BLOCKED } from "../lib/env";
 import { emit } from "./events";
 
 const PREAMBLE = `You are a component of a personal growth system for one user. You only propose; a human ratifies everything. Be concrete, brief, kind. Never shame. Prefer fewer, higher-confidence outputs, ordered by importance.`;
@@ -180,7 +181,15 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   "PROMPT.review_interview": PROMPT_REVIEW_INTERVIEW,
 };
 
+// Keys the non-prod kill-switch pins regardless of what the config table says
+// (a staging DB restored from a prod snapshot may carry live values).
+const GUARDED_OVERRIDES: Record<string, unknown> = {
+  TRANSPORT: "mock",
+  STRIKE_ALERTS_ENABLED: false,
+};
+
 export function getConfig<T>(key: string): T {
+  if (SIDE_EFFECTS_BLOCKED && key in GUARDED_OVERRIDES) return GUARDED_OVERRIDES[key] as T;
   const row = db.select().from(config).where(eq(config.key, key)).get();
   if (row) return JSON.parse(row.value) as T;
   if (key in CONFIG_DEFAULTS) return CONFIG_DEFAULTS[key] as T;
@@ -199,6 +208,8 @@ export function getAllConfig(): Record<string, unknown> {
   const rows = db.select().from(config).all();
   const out: Record<string, unknown> = { ...CONFIG_DEFAULTS };
   for (const row of rows) out[row.key] = JSON.parse(row.value);
+  // Report effective values, not stored ones, so dashboards/agents see reality.
+  if (SIDE_EFFECTS_BLOCKED) Object.assign(out, GUARDED_OVERRIDES);
   return out;
 }
 
