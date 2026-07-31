@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { calendarEvent, chainRun, chainRunStep, ifThenChain, ifThenChainStep, winEntry } from "../db/schema";
@@ -254,9 +254,32 @@ export function runsForDate(date: string) {
   return db
     .select()
     .from(chainRun)
-    .where(eq(chainRun.date, date))
+    .where(and(eq(chainRun.date, date), isNull(chainRun.cancelledAt)))
     .all()
     .map(run => getRun(run.id)!);
+}
+
+/** Supersede support: cancel a plan's runs that never started — their cue
+ * blocks too. A run with ANY progress is evidence and always survives. */
+export function cancelUnstartedRuns(dailyPlanId: string): number {
+  const runs = db.select().from(chainRun).where(eq(chainRun.dailyPlanId, dailyPlanId)).all();
+  const now = new Date().toISOString();
+  let cancelled = 0;
+  for (const run of runs) {
+    if (run.startedAt || run.completedAt || run.cancelledAt) continue;
+    const hasProgress = db
+      .select()
+      .from(chainRunStep)
+      .where(eq(chainRunStep.chainRunId, run.id))
+      .all()
+      .some(s => s.doneAt != null);
+    if (hasProgress) continue;
+    db.update(chainRun).set({ cancelledAt: now }).where(eq(chainRun.id, run.id)).run();
+    if (run.calendarEventId)
+      db.update(calendarEvent).set({ status: "cancelled" }).where(eq(calendarEvent.id, run.calendarEventId)).run();
+    cancelled++;
+  }
+  return cancelled;
 }
 
 function autoWinText(run: NonNullable<ReturnType<typeof getRun>>, minimum: boolean) {

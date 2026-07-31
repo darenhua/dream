@@ -1,4 +1,4 @@
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { db } from "../../db";
@@ -18,7 +18,13 @@ export const planRoutes = new Hono();
 const fail = (c: Context, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 
 function todaysPlan(date: string) {
-  const plan = db.select().from(dailyPlan).where(eq(dailyPlan.date, date)).get();
+  const plan = db
+    .select()
+    .from(dailyPlan)
+    .where(and(eq(dailyPlan.date, date), isNull(dailyPlan.supersededByPlanId)))
+    .orderBy(desc(dailyPlan.createdAt))
+    .limit(1)
+    .get();
   if (!plan) return null;
   return {
     ...plan,
@@ -221,7 +227,13 @@ planRoutes.post("/today/parking-lot", async c => {
   try {
     const body = ParkingSchema.parse(await c.req.json());
     const date = todayLocal();
-    const plan = db.select().from(dailyPlan).where(eq(dailyPlan.date, date)).get();
+    const plan = db
+      .select()
+      .from(dailyPlan)
+      .where(and(eq(dailyPlan.date, date), isNull(dailyPlan.supersededByPlanId)))
+      .orderBy(desc(dailyPlan.createdAt))
+      .limit(1)
+      .get();
     if (!plan) return c.json({ error: `no daily plan for ${date} yet` }, 404);
     const lot = plan.parkingLotJson ? (JSON.parse(plan.parkingLotJson) as string[]) : [];
     lot.push(body.text);

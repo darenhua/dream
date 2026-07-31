@@ -8,6 +8,7 @@ import { ChainInputSchema, chainHead, chainLibrary, createChain, getChainByVersi
 import { emit } from "./events";
 import { currentPick } from "./prioritize";
 import { readRecord } from "./recordReads";
+import { QUALITY_BAR } from "./rubric";
 import { listWeeklyPlans } from "./weeklyPlan";
 import { unreviewedDays, winsForWeek } from "./wins";
 
@@ -225,6 +226,7 @@ export function weeklyPlanContextV2() {
 
   return {
     today,
+    qualityBar: QUALITY_BAR,
     // ALWAYS handled first in conversation: harvest + celebrate, then plan.
     reviewFirst: {
       closingWeekOf: closingWeek?.weekOf ?? mondayOf(today),

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { chainRun, currentFocus, winEntry } from "../db/schema";
@@ -59,7 +59,7 @@ function runStats(from: string, to: string) {
   const runs = db
     .select()
     .from(chainRun)
-    .where(and(gte(chainRun.date, from), lte(chainRun.date, to)))
+    .where(and(gte(chainRun.date, from), lte(chainRun.date, to), isNull(chainRun.cancelledAt)))
     .all();
   return {
     armed: runs.length,

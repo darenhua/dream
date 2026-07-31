@@ -13,6 +13,7 @@ import { WeeklyPlanV2InputSchema, createWeeklyPlanV2, weeklyPlanContextV2 } from
 import { DailyPlanV2InputSchema, createDailyPlanV2, currentTaskContext, dailyPlanContextV2 } from "../services/dailyPlanV2";
 import { AddWinsSchema, addWins } from "../services/wins";
 import { appendPlanDoc, getPlanDoc } from "../services/planDocs";
+import { PLAN_RUBRIC, WINS_RUBRIC } from "../services/rubric";
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. PLANNING IS THE CORE (PLANNING_REVAMP_SPEC):
@@ -55,6 +56,28 @@ E. EVIDENCE, NEVER SHAME. Wins compare the user only against their own
 F. NORTH STAR. Never leave the user staring at a big goal asking "what
    should I do?" — always translate to the current mission, then ONE next
    action.
+G. ALIGN ON STATE FIRST. Planning contexts return nowLocal and planState
+   (today + tomorrow). Open by settling: WHICH date are we planning (at
+   midnight, ask "reviewing today or planning tomorrow?"), and what exists
+   already — an existing plan means revise / continue / fresh is the USER's
+   call, surfaced before anything else. Generate a random draftKey at the
+   start of a planning session and reuse it on retries (same key = same
+   plan, safe). Superseding an existing plan requires its id in "revises".
+H. YOU ARE THE ACTIVE ONE. Assume the user is tired and will try to
+   rubber-stamp a vague plan to end the conversation. Do not let the plan
+   converge until it passes the quality bar below: push back on vagueness
+   ("what does done look like?"), harvest their exact words into the
+   fields, and refuse first-answer convergence on the top priority and the
+   first domino. The user's ideas are the content — your job is translation
+   and rigor, never invention. A plan that fails the bar wastes their
+   tomorrow; thirty more seconds of pushback tonight is the cheap path.
+
+QUALITY BAR — every plan and win list is held to this rubric (it also ships
+in the planning contexts as qualityBar):
+
+${PLAN_RUBRIC}
+
+${WINS_RUBRIC}
 
 PLANNING VOCABULARY. Monthly = the pick (one experiment group + end date +
 a monthly template one-pager). Weekly = the heavy session: build the if-then
@@ -308,7 +331,7 @@ export function createDreamMcpServer(): McpServer {
     {
       title: "Load the daily session context (≤5 minutes: review, then select)",
       description:
-        "Run for the daily conversation — evening review + next-day plan, or morning catch-up. BUDGET: the whole session is ≤5 minutes, exchanges ~1 minute. The context opens with reviewFirst (yesterday's wins + unreviewedDays): literally ask 'what happened?' and harvest wins via record_wins BEFORE planning — actions, courage, self-care, identity evidence, one self-recognition line, one lesson. Then plan by SELECTION, not creation: theme one-liner, top priority, 2–3 chains off the week's armedChains menu (candidateMissions are pre-derived — use them), first domino, minimum viable day, parking lot. Read the LIVE target date via the gcal MCP (read-only) to place cue blocks into real gaps — a block is a reminder ahead of a real-world cue (breakfast, leaving the house), never a command. Echo the day back, get the yes, then create_daily_plan.",
+        "Run for the daily conversation — evening review + next-day plan, or morning catch-up. BUDGET: the whole session is ≤5 minutes, exchanges ~1 minute. STEP 0 — ALIGN: the context returns nowLocal and planState (today + tomorrow). Settle which date is being planned (near midnight ask: 'reviewing today or planning tomorrow?') and, if a plan already exists for it, whether the user wants to revise it, continue living it, or leave it — their call, before anything else. THEN reviewFirst (yesterday's wins + unreviewedDays): literally ask 'what happened?' and harvest wins via record_wins BEFORE planning. THEN plan by SELECTION, not creation: theme one-liner, top priority, 2–3 chains off the week's armedChains menu (candidateMissions are pre-derived — use them), first domino, minimum viable day, parking lot — held to the qualityBar rubric in the payload. Read the LIVE target date via the gcal MCP (read-only) to place cue blocks into real gaps — a block is a reminder ahead of a real-world cue, never a command. Echo the day back, get the yes, then create_daily_plan.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
     },
@@ -320,7 +343,7 @@ export function createDreamMcpServer(): McpServer {
     {
       title: "Write the confirmed daily plan (conversation IS the review)",
       description:
-        "Direct write, only after the user's explicit yes to the echoed-back day. Creates the plan — theme, description (reported energy/social/work state for tomorrow's planner), topPriority, supportingHealth/supportingConnection, firstDomino, minimumViableDay, parkingLot — and arms the selectedChains (≤3; chains replace the old block/todo/leisure items entirely). A selected chain with startAt/endAt gets its cue-reminder calendar block, pushed to Google Calendar when connected. Tell the user the day is set — this IS applied.",
+        "Direct write, only after the user's explicit yes to the echoed-back day. Creates the plan — theme, description (reported energy/social/work state for tomorrow's planner), topPriority, supportingHealth/supportingConnection, firstDomino, minimumViableDay, parkingLot — and arms the selectedChains (≤3; chains replace the old block/todo/leisure items entirely). A selected chain with startAt/endAt gets its cue-reminder calendar block, pushed to Google Calendar when connected. ROBUSTNESS: pass a random draftKey (generated once per session) — retries with the same key return the same plan instead of erroring. If an active plan already exists for the date, the call fails unless you pass its id in revises (only after the user chose to revise): the old plan is kept as history, its UNSTARTED runs and cue blocks are cancelled, and any run with progress survives — completed work is evidence, always. Tell the user the day is set — this IS applied.",
       inputSchema: DailyPlanV2InputSchema.shape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },

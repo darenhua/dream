@@ -1257,10 +1257,15 @@ export const dailyPlan = sqliteTable(
     firstDomino: text("first_domino"), // smallest action that starts momentum
     minimumViableDay: text("minimum_viable_day"), // smallest day that still counts as a win
     parkingLotJson: text("parking_lot_json"), // string[]: saved, not acted on
+    // Phase 6 hardening: supersede keeps history insert-only (the active plan
+    // for a date is the one with superseded_by_plan_id null); draft_key makes
+    // create retry-safe (same key → same plan, never a duplicate error).
+    supersededByPlanId: text("superseded_by_plan_id"),
+    draftKey: text("draft_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  t => [index("daily_plan_date").on(t.date)],
+  t => [index("daily_plan_date").on(t.date), uniqueIndex("daily_plan_draft_key").on(t.draftKey)],
 );
 
 // The day's concrete items; done_at is the manual dashboard CRUD and doubles
@@ -1353,6 +1358,9 @@ export const chainRun = sqliteTable(
     startedAt: text("started_at"),
     completedAt: text("completed_at"),
     minimumOnly: integer("minimum_only").notNull().default(0), // minimum version still counts
+    // Set when the owning plan is superseded before the run ever started.
+    // A run with ANY progress is evidence and is never cancelled.
+    cancelledAt: text("cancelled_at"),
     createdAt: createdAt(),
   },
   t => [index("chain_run_date").on(t.date), index("chain_run_plan").on(t.dailyPlanId)],

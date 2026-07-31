@@ -2,11 +2,13 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { calendarEvent, chainRun, dailyPlan, experimentGroup, task } from "../db/schema";
-import { todayLocal } from "../lib/time";
-import { armChain, getRun, runsForDate } from "./chains";
+import { localMinutes, minToHhmm, todayLocal } from "../lib/time";
+import { armChain, cancelUnstartedRuns, getRun, runsForDate } from "./chains";
+import { getConfig } from "./config";
 import { emit } from "./events";
 import { getPlanDoc } from "./planDocs";
 import { latestPick } from "./prioritize";
+import { QUALITY_BAR } from "./rubric";
 import { currentWeeklyPlanV2 } from "./weeklyPlanV2";
 import { unreviewedDays, winsForDate } from "./wins";
 
@@ -40,15 +42,45 @@ export const DailyPlanV2InputSchema = z
           .refine(c => Boolean(c.startAt) === Boolean(c.endAt), "startAt and endAt come together"),
       )
       .max(3), // 2–3 chain blocks a day is the contract; the cap is hard
+    // Phase 6 hardening (spec §11.2):
+    // retry-safety — the same draftKey always returns the same plan
+    draftKey: z.string().min(8).max(100).optional(),
+    // explicit supersede — required when an active plan already exists
+    revises: z.string().min(1).optional(),
   })
   .strict();
 export type DailyPlanV2Input = z.infer<typeof DailyPlanV2InputSchema>;
 
-/** Direct write: plan row + armed chain runs (+ their cue blocks). */
+/** The active (non-superseded) plan for a date. */
+export function activePlanFor(date: string) {
+  return db
+    .select()
+    .from(dailyPlan)
+    .where(and(eq(dailyPlan.date, date), isNull(dailyPlan.supersededByPlanId)))
+    .orderBy(desc(dailyPlan.createdAt))
+    .limit(1)
+    .get();
+}
+
+/** Direct write: plan row + armed chain runs (+ their cue blocks).
+ * Idempotent on draftKey; supersedes an existing plan only when explicitly
+ * asked (revises), keeping history insert-only and evidence intact. */
 export function createDailyPlanV2(raw: unknown) {
   const input = DailyPlanV2InputSchema.parse(raw);
-  const existing = db.select().from(dailyPlan).where(eq(dailyPlan.date, input.date)).get();
-  if (existing) throw new Error(`a daily plan for ${input.date} already exists`);
+
+  // retry-safety: the same draftKey returns the already-created plan
+  if (input.draftKey) {
+    const prior = db.select().from(dailyPlan).where(eq(dailyPlan.draftKey, input.draftKey)).get();
+    if (prior) return getDailyPlanV2(prior.id)!;
+  }
+
+  const existing = activePlanFor(input.date);
+  if (existing && input.revises !== existing.id) {
+    throw new Error(
+      `a daily plan for ${input.date} already exists (id ${existing.id}, theme "${existing.theme}"). ` +
+        `Align with the user first: revise it (pass revises: "${existing.id}") or plan a different date.`,
+    );
+  }
   const week = currentWeeklyPlanV2(input.date);
 
   const planId = db.transaction(() => {
@@ -65,9 +97,16 @@ export function createDailyPlanV2(raw: unknown) {
         firstDomino: input.firstDomino,
         minimumViableDay: input.minimumViableDay,
         parkingLotJson: JSON.stringify(input.parkingLot),
+        draftKey: input.draftKey ?? null,
       })
       .returning()
       .get();
+    // supersede: old row survives (insert-only history); only its runs with
+    // ZERO progress get cancelled — anything started is evidence and stays.
+    if (existing) {
+      db.update(dailyPlan).set({ supersededByPlanId: plan.id }).where(eq(dailyPlan.id, existing.id)).run();
+      cancelUnstartedRuns(existing.id);
+    }
     for (const selected of input.selectedChains) {
       armChain(selected.chainLineageId, {
         date: input.date,
@@ -80,7 +119,10 @@ export function createDailyPlanV2(raw: unknown) {
     return plan.id;
   });
 
-  emit("daily_plan", planId, "daily_plan_v2_created", { date: input.date });
+  emit("daily_plan", planId, existing ? "daily_plan_v2_superseded" : "daily_plan_v2_created", {
+    date: input.date,
+    supersededPlanId: existing?.id,
+  });
   return getDailyPlanV2(planId)!;
 }
 
@@ -90,7 +132,7 @@ export function getDailyPlanV2(id: string) {
   const runs = db
     .select()
     .from(chainRun)
-    .where(eq(chainRun.dailyPlanId, id))
+    .where(and(eq(chainRun.dailyPlanId, id), isNull(chainRun.cancelledAt)))
     .all()
     .map(run => getRun(run.id)!);
   return {
@@ -104,11 +146,16 @@ function recentDailyPlans(limit = 7) {
   return db
     .select()
     .from(dailyPlan)
+    .where(isNull(dailyPlan.supersededByPlanId))
     .orderBy(desc(dailyPlan.date))
     .limit(limit)
     .all()
     .map(plan => {
-      const runs = db.select().from(chainRun).where(eq(chainRun.dailyPlanId, plan.id)).all();
+      const runs = db
+        .select()
+        .from(chainRun)
+        .where(and(eq(chainRun.dailyPlanId, plan.id), isNull(chainRun.cancelledAt)))
+        .all();
       return {
         ...plan,
         parkingLot: plan.parkingLotJson ? (JSON.parse(plan.parkingLotJson) as string[]) : [],
@@ -116,6 +163,34 @@ function recentDailyPlans(limit = 7) {
         runsCompleted: runs.filter(r => r.completedAt != null).length,
       };
     });
+}
+
+/** Alignment state for one date: the active plan and its runs' progress —
+ * what the conversation needs to decide "revise / continue / fresh". */
+function planStateFor(date: string) {
+  const plan = activePlanFor(date);
+  if (!plan) return { date, plan: null };
+  const view = getDailyPlanV2(plan.id)!;
+  return {
+    date,
+    plan: {
+      id: view.id,
+      theme: view.theme,
+      topPriority: view.topPriority,
+      firstDomino: view.firstDomino,
+      minimumViableDay: view.minimumViableDay,
+      parkingLot: view.parkingLot,
+      createdAt: view.createdAt,
+    },
+    runs: view.runs.map(r => ({
+      id: r.id,
+      trigger: r.chain?.trigger ?? null,
+      startedAt: r.startedAt,
+      completedAt: r.completedAt,
+      stepsDone: r.steps.filter(s => s.doneAt).length,
+      stepsTotal: r.steps.length,
+    })),
+  };
 }
 
 function addDays(dateStr: string, days: number): string {
@@ -138,8 +213,17 @@ export function dailyPlanContextV2(forDate?: string) {
   const date = forDate ?? todayLocal();
   const yesterday = addDays(date, -1);
   const week = currentWeeklyPlanV2(date);
+  const tz = getConfig<string>("TIMEZONE");
+  const today = todayLocal();
   return {
     date,
+    // ALIGN FIRST: what time it actually is, and what plans already exist —
+    // the midnight question ("today or tomorrow?") and the existing-plan
+    // question (revise / continue / fresh) are settled in conversation
+    // BEFORE anything else. The server never guesses.
+    nowLocal: { iso: new Date().toISOString(), date: today, time: minToHhmm(localMinutes(tz)), timezone: tz },
+    planState: { today: planStateFor(today), tomorrow: planStateFor(addDays(today, 1)) },
+    qualityBar: QUALITY_BAR,
     reviewFirst: {
       yesterday,
       yesterdayWins: winsForDate(yesterday),
@@ -195,7 +279,7 @@ export function currentTaskContext() {
     .filter(x => !x.run.completedAt && Date.parse(x.event!.startAt) > now)
     .sort((a, b) => Date.parse(a.event!.startAt) - Date.parse(b.event!.startAt))[0];
 
-  const plan = db.select().from(dailyPlan).where(eq(dailyPlan.date, date)).get();
+  const plan = activePlanFor(date);
   const week = currentWeeklyPlanV2(date);
   const month = monthTheme();
 
