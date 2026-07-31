@@ -18,6 +18,7 @@ import { outboxRoutes } from "./routes/outbox";
 import { messagingRoutes } from "./routes/messaging";
 import { organizedRoutes } from "./routes/organized";
 import { reviewRoutes } from "./routes/review";
+import { planRoutes } from "./routes/plans";
 
 export const app = new Hono();
 
@@ -47,6 +48,7 @@ app.route("/api/messaging", messagingRoutes);
 app.route("/api/agent-runs", agentRunRoutes);
 app.route("/api/organized", organizedRoutes);
 app.route("/api/review", reviewRoutes);
+app.route("/api/plans", planRoutes);
 // Companion inbox: fail-closed reviewer identity; see routes/companion.ts.
 app.route("/", mcpRoutes);
 // Read-only per-environment inspection; fail-closed without its token.
