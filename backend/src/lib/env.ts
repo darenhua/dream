@@ -40,7 +40,25 @@ function mcpPublicOrigin(): string {
   return url.origin;
 }
 
+const APP_ENVS = ["prod", "staging", "preview", "dev"] as const;
+type AppEnv = (typeof APP_ENVS)[number];
+
+function appEnv(): AppEnv {
+  const value = (process.env.APP_ENV ?? "dev").trim().toLowerCase();
+  if (!(APP_ENVS as readonly string[]).includes(value)) {
+    throw new Error(`APP_ENV must be one of ${APP_ENVS.join("|")}, got "${value}"`);
+  }
+  return value as AppEnv;
+}
+
 export const env = {
+  // Which deployed environment this process is. Staging/preview run against
+  // restored copies of prod data (including its Google refresh token), so they
+  // must never fire real side effects — see SIDE_EFFECTS_BLOCKED below.
+  APP_ENV: appEnv(),
+  // Deployed commit, injected into backend/.env by the deploy poller; empty in dev.
+  GIT_SHA: (process.env.GIT_SHA ?? "").trim(),
+
   PORT: Number(process.env.PORT ?? 3001),
   // Leave the default public for the existing direct API deployment. A
   // reverse-proxied production MCP endpoint should set this to 127.0.0.1.
@@ -96,6 +114,11 @@ export const env = {
   COMPANION_AUTH_TOKEN_SHA256: (process.env.COMPANION_AUTH_TOKEN_SHA256 ?? "").trim().toLowerCase(),
   COMPANION_ALLOW_LOOPBACK_OWNER: flag("COMPANION_ALLOW_LOOPBACK_OWNER"),
 
+  // --- per-env admin MCP (read-only inspection) ---
+  // Same fail-closed pattern as the companion: hex sha256 of a bearer token
+  // held only by the MCP client. Unset → /admin-mcp is disabled entirely.
+  ADMIN_MCP_TOKEN_SHA256: (process.env.ADMIN_MCP_TOKEN_SHA256 ?? "").trim().toLowerCase(),
+
   // --- outbound proxy ---
   // Bun's fetch honors HTTP(S)_PROXY from process.env at request time, so the
   // flag works by setting/clearing those vars below, before any client exists.
@@ -106,6 +129,16 @@ export const env = {
     process.env.https_proxy ||
     "",
 };
+
+// The non-prod side-effect kill-switch. Staging/preview run prod-shaped data
+// (snapshot restores carry the Google refresh token and real witness rows), so
+// they force: mock messaging transport, strike alerts off (both via getConfig),
+// and Google Calendar disconnected (via google/auth isConnected). Dev stays
+// permissive — tests exercise the real paths and dev holds no prod data unless
+// the developer deliberately restores some.
+export function sideEffectsBlocked(): boolean {
+  return env.APP_ENV === "staging" || env.APP_ENV === "preview";
+}
 
 // Apply the proxy flag to the process environment exactly once, at load.
 // USE_PROXY=false must also *clear* inherited proxy vars (the user's shell
