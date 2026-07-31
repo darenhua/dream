@@ -10,13 +10,15 @@ import { useApiData } from "@/lib/useApiData";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ReviewInbox } from "./screens/ReviewInbox";
 import { PlanBoard } from "./screens/PlanBoard";
+import { NowBoard } from "./screens/NowBoard";
 import "./index.css";
 
-// View shell: the plan board (current pick / weekly / daily) is home; the
-// review inbox is its own page; admin is a mode.
+// View shell: the NowBoard (chain execution + wins) is home — mobile-first;
+// the review inbox is its own page; admin is a mode, where the legacy plan
+// board remains readable while the old tables stay dormant.
 export function App() {
   const [admin, setAdmin] = useState(false);
-  const [page, setPage] = useState<"home" | "review">("home");
+  const [page, setPage] = useState<"home" | "review" | "legacy">("home");
   const [tick, setTick] = useState(0); // bumped after any mutation to refresh
   const bump = () => setTick(t => t + 1);
   const { data: pendingReview } = useApiData(() => api.reviewList("ready_for_review"), [tick]);
@@ -67,17 +69,29 @@ export function App() {
         {logo}
         <div className="flex items-center gap-4">
           {!admin && reviewButton}
+          {admin && (
+            <Button
+              variant={page === "legacy" ? "secondary" : "ghost"}
+              onClick={() => setPage(page === "legacy" ? "home" : "legacy")}
+            >
+              legacy plan board
+            </Button>
+          )}
           {modeToggle}
         </div>
       </header>
 
       <main>
         {admin ? (
-          <AdminDashboard onChanged={bump} />
+          page === "legacy" ? (
+            <PlanBoard tick={tick} onChanged={bump} />
+          ) : (
+            <AdminDashboard onChanged={bump} />
+          )
         ) : page === "review" ? (
           <ReviewInbox tick={tick} onChanged={bump} />
         ) : (
-          <PlanBoard tick={tick} onChanged={bump} />
+          <NowBoard tick={tick} onChanged={bump} />
         )}
       </main>
     </div>

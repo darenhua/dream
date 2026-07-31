@@ -1106,3 +1106,150 @@ export type RecordChangeSet = {
   createdAt: string;
   updatedAt: string;
 };
+
+// ── planning revamp: chains, runs, wins (NowBoard) ───────────────────────
+
+export type ChainRunStepRow = {
+  id: string;
+  chainRunId: string;
+  position: number;
+  kind: "starter" | "warmup" | "core" | "reward";
+  text: string;
+  doneAt: string | null;
+};
+
+export type ChainMeta = {
+  trigger: string;
+  purpose: string | null;
+  minimumVersion: string | null;
+  rewardKind: string | null;
+  rewardText: string | null;
+} | null;
+
+export type ChainRunView = {
+  id: string;
+  date: string;
+  dailyPlanId: string | null;
+  calendarEventId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  minimumOnly: number;
+  steps: ChainRunStepRow[];
+  chain: ChainMeta;
+};
+
+export type RunSummary = {
+  id: string;
+  trigger: string | null;
+  completedAt: string | null;
+  minimumOnly: number;
+  stepsDone: number;
+  stepsTotal: number;
+};
+
+export type WinEntryRow = {
+  id: string;
+  date: string;
+  kind: "action" | "created" | "courage" | "selfcare" | "identity" | "lesson" | "recognition";
+  text: string;
+  source: "auto" | "conversation";
+  createdAt: string;
+};
+
+export type WinsPayload = {
+  date?: string;
+  weekOf?: string;
+  from?: string;
+  to?: string;
+  entries: WinEntryRow[];
+  byKind: Record<string, { text: string; date: string; source: string }[]>;
+  runs: { armed: number; completed: number; minimum: number };
+  perDay?: { date: string; count: number; runs: { armed: number; completed: number; minimum: number } }[];
+  reviewed?: boolean;
+};
+
+export type NowPayload = {
+  mode: "chain" | "idle";
+  date: string;
+  theme: string | null;
+  topPriority: string | null;
+  firstDomino: string | null;
+  minimumViableDay: string | null;
+  weekDirection: string | null;
+  month: { theme: string | null; endDate: string | null } | null;
+  winsToday: number;
+  runsToday: RunSummary[];
+  block?: { title: string; startAt: string; endAt: string };
+  run?: {
+    id: string;
+    trigger: string | undefined;
+    purpose: string | null | undefined;
+    minimumVersion: string | null | undefined;
+    reward: string | null | undefined;
+    steps: ChainRunStepRow[];
+    currentStepId: string | null;
+  };
+  nextCue?: { runId: string; title: string; startAt: string; minutesUntil: number } | null;
+};
+
+export type DailyPlanV2Row = {
+  id: string;
+  date: string;
+  theme: string | null;
+  description: string | null;
+  topPriority: string | null;
+  supportingHealth: string | null;
+  supportingConnection: string | null;
+  firstDomino: string | null;
+  minimumViableDay: string | null;
+  parkingLot: string[];
+};
+
+export type TodayPayload = {
+  date: string;
+  plan: DailyPlanV2Row | null;
+  runs: ChainRunView[];
+  wins: WinsPayload;
+  unreviewedDays: string[];
+};
+
+export type WeekPayload = {
+  week:
+    | {
+        id: string;
+        weekOf: string;
+        direction: string | null;
+        theme: string | null;
+        topOutcomes: string[];
+        milestones: string[];
+        healthPriority: string | null;
+        socialPriority: string | null;
+        maintenancePriority: string | null;
+        fearToFace: string | null;
+        failurePoints: { point: string; recovery: string }[];
+        successDefinition: string | null;
+        candidateMissions: string[];
+        description: string | null;
+      }
+    | null;
+  chains?: { lineageId: string; trigger: string; status: string }[];
+  wins?: WinsPayload;
+  month: { theme: string | null; endDate: string | null } | null;
+};
+
+export const plans = {
+  now: () => request<NowPayload>("/plans/now"),
+  today: (date?: string) => request<TodayPayload>(`/plans/today${date ? `?date=${date}` : ""}`),
+  week: () => request<WeekPayload>("/plans/week"),
+  wins: (scope: "day" | "week" | "month") => request<WinsPayload>(`/plans/wins?scope=${scope}`),
+  toggleStep: (runId: string, stepId: string, done: boolean) =>
+    request<ChainRunView>(`/plans/runs/${runId}/steps/${stepId}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ done }),
+    }),
+  minimumRun: (runId: string) => request<ChainRunView>(`/plans/runs/${runId}/minimum`, { method: "POST", body: "{}" }),
+  adhocRun: (chainLineageId: string) =>
+    request<ChainRunView>("/plans/runs/adhoc", { method: "POST", body: JSON.stringify({ chainLineageId }) }),
+  addParking: (text: string) =>
+    request<{ parkingLot: string[] }>("/plans/today/parking-lot", { method: "POST", body: JSON.stringify({ text }) }),
+};
