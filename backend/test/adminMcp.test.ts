@@ -12,15 +12,20 @@ const savedAppEnv = env.APP_ENV;
 const savedToken = env.ADMIN_MCP_TOKEN_SHA256;
 const savedHosts = env.MCP_ALLOWED_HOSTS;
 const savedOrigins = env.MCP_ALLOWED_ORIGINS;
+const savedPublicUrl = env.MCP_PUBLIC_URL;
 beforeEach(() => {
+  // configuredHosts() = MCP_ALLOWED_HOSTS ∪ MCP_PUBLIC_URL; all three must be
+  // clear or the loopback test requests 403 before auth runs.
   (env as { MCP_ALLOWED_HOSTS: string[] }).MCP_ALLOWED_HOSTS = [];
   (env as { MCP_ALLOWED_ORIGINS: string[] }).MCP_ALLOWED_ORIGINS = [];
+  (env as { MCP_PUBLIC_URL: string }).MCP_PUBLIC_URL = "";
 });
 afterEach(() => {
   (env as { APP_ENV: string }).APP_ENV = savedAppEnv;
   (env as { ADMIN_MCP_TOKEN_SHA256: string }).ADMIN_MCP_TOKEN_SHA256 = savedToken;
   (env as { MCP_ALLOWED_HOSTS: string[] }).MCP_ALLOWED_HOSTS = savedHosts;
   (env as { MCP_ALLOWED_ORIGINS: string[] }).MCP_ALLOWED_ORIGINS = savedOrigins;
+  (env as { MCP_PUBLIC_URL: string }).MCP_PUBLIC_URL = savedPublicUrl;
 });
 
 describe("non-prod side-effect kill-switch", () => {
