@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { groupIdea, leisureActivity, task, weeklyPlan, weeklyPlanChain } from "../db/schema";
@@ -187,13 +187,17 @@ export function weeklyPlanV2View(id: string) {
   };
 }
 
+/** The plan for the week CONTAINING date — exact week, never a stale one.
+ * A five-week-old plan served as "this week" fed daily selection a dead
+ * chain menu and let briefings state false facts; no plan for the week is
+ * itself the fact ("no weekly yet — make one?"), so null means null. */
 export function currentWeeklyPlanV2(date?: string) {
   const forDate = date ?? todayLocal();
   const row = db
     .select()
     .from(weeklyPlan)
-    .where(lte(weeklyPlan.weekOf, forDate))
-    .orderBy(desc(weeklyPlan.weekOf), desc(weeklyPlan.createdAt))
+    .where(eq(weeklyPlan.weekOf, mondayOf(forDate)))
+    .orderBy(desc(weeklyPlan.createdAt))
     .limit(1)
     .get();
   return row ? weeklyPlanV2View(row.id) : null;

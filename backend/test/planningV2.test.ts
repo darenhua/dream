@@ -5,7 +5,7 @@ import { db, wipeAllTables } from "../src/db";
 import { chainRun, ifThenChain, weeklyPlan, winEntry } from "../src/db/schema";
 import { DreamMcpHttpServer } from "../src/mcp/http";
 import { applyRecordChangeSet, createRecordChangeSet } from "../src/services/recordChangeSets";
-import { createWeeklyPlanV2 } from "../src/services/weeklyPlanV2";
+import { createWeeklyPlanV2, currentWeeklyPlanV2 } from "../src/services/weeklyPlanV2";
 
 beforeEach(() => wipeAllTables());
 
@@ -96,6 +96,20 @@ describe("weekly plan v2", () => {
     expect(plan.chains[0]!.trigger).toBe("I finish breakfast");
     expect(plan.topOutcomes).toHaveLength(1);
     expect(db.select().from(ifThenChain).all()).toHaveLength(1);
+  });
+
+  test("currentWeeklyPlanV2 is exact-week: a stale past week is never 'current'", () => {
+    bootstrapPick();
+    const lastMonday = (() => {
+      const d = new Date(`${currentMonday()}T12:00:00`);
+      d.setDate(d.getDate() - 7);
+      return d.toLocaleDateString("en-CA");
+    })();
+    createWeeklyPlanV2(weeklyInput({ weekOf: lastMonday }));
+    // last week's plan answers only for last week's dates…
+    expect(currentWeeklyPlanV2(lastMonday)?.weekOf).toBe(lastMonday);
+    // …never for this week: no plan for the current week IS the fact.
+    expect(currentWeeklyPlanV2()).toBeNull();
   });
 });
 
