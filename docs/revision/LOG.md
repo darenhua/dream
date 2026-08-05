@@ -34,3 +34,82 @@ Append-only. One dated entry per work-order session: what shipped, deviations fr
 - Hard refusals (TARGET §9 voice) belong at begin/save; the oracle's `blockedBy` field is the machine-readable input for them.
 - Live-data note: prod/staging DBs may carry a stored `TIMEZONE` config row of `America/New_York` that now shadows the LA default — needs a one-time `setConfig("TIMEZONE", "America/Los_Angeles")` (or dashboard /api/config edit) at deploy.
 - Stray `data/dream.db` at **repo root** (Jul 16, wrong location — real dev DB is `backend/data/`): a few test runs this session executed against it from the wrong cwd; contents were wiped by test setup. Believed to be a stale accident, left in place — delete after confirming nothing references it.
+
+## 2026-08-04/05 — WO-2 through WO-6 (same branch, continued session; user directive: "keep going until the ideal mcp state is reached")
+
+### What shipped (3 commits: prompt pack, WO-2/3/4, WO-5/6)
+
+The full 3-tool surface is live end-to-end: `get_planning_context` →
+`begin_planning_flow` → `save_plan`, 14 tools total (3 planning +
+current_task_context + read/append_plan_doc + record_wins unadvertised +
+7 membrane). 134/134 tests green; live smoke of the whole
+monthly→weekly→daily loop verified.
+
+- **Prompt Pack v1** committed as `docs/revision/PROMPT_PACK.md` (canonical
+  string source) with a session addendum listing the retrofit steps — all of
+  which then landed: GLOBAL.v1 instructions, TOOL.*.v1 descriptions verbatim,
+  BRIEF.skeleton.v1 briefing shape, version stamps
+  (`playbookVersion`/`briefingVersion`).
+- **WO-2**: `planning_flow_session` (24h TTL + refresh, lossless expiry,
+  sibling auto-cancel, context snapshot incl. calendar window as dated data);
+  save pipeline with request_id idempotency, `user_confirmed_save`, revision
+  → conflicted; all §7 ERR strings + RCPT.saved.v1.
+- **WO-3**: `monthly_plan` table (era periods, theme/subline/story, promises
+  JSON with provenance/addedAt, revision, supersede). Promise subtraction
+  rejected as walk-back; periodStart immutable; era shrink refused. Oracle
+  reads monthly_plan first; the legacy pick adapter remains only as fallback
+  for pre-migration data.
+- **WO-4**: chains extended (zone, friendlyCueTitle, kind, sharedCueWith,
+  era home; group lineage nullable); era chains store links as steps so
+  runs/NowBoard/GCal/auto-wins are untouched; weekly artifact per TARGET §8
+  with per-zone ≤3 replacing the global cap (overflow surfaces verbatim);
+  carryover on the join row; weekly update = supersede (old row + links +
+  daily pointers survive).
+- **WO-5**: daily = date + theme + selectedChainIds. Killed columns DROPPED
+  (top_priority, supporting_*, first_domino, minimum_viable_day,
+  parking_lot_json, draft_key); rubric.ts deleted; API + NowBoard slimmed;
+  grep-clean verified.
+- **WO-6**: five old tools removed; v2 services reduced to shared reads;
+  trajectory tests = the 3-call flow; template-verbatim tripwire tests (W44 +
+  ECHO byte-identity, GLOBAL law anchors, kill-vocabulary sweeps); eval seeds
+  in `test/fixtures/planningEvals/`.
+
+### Deviations + judgment calls
+
+- **One session for WO-2..6** against REVISION_WORKFLOW's one-WO-per-session
+  rule — explicit user directive. Template protection was delegated to the
+  byte-identity tests rather than fresh-context discipline.
+- **Monthly update mutates in place (revision++)**; supersede reserved for
+  create-over-existing (deferred — create refuses when an era is active).
+  Weekly/daily updates supersede (insert new row) per evidence laws.
+- **Era chains reuse `if_then_chain` + steps** (links → starter/core steps,
+  reward step last) instead of a new table — preserves NowBoard, runs,
+  auto-wins, GCal blocks with zero migration of run history. v2 canonical
+  shape + ACTIVE_CAP now apply only to legacy group chains.
+- **Recurring/maturing set** = prior weeks' `carryover: "continued"` chains
+  (migration §5's minimum-viable derivation). Lifecycle proper still future.
+- **Daily arming carries no times** → no GCal cue block from the minimal
+  daily (artifact has no scheduling by R2). R5 behavior preserved at the
+  armChain layer; blocks return when a scheduling surface exists.
+- **weekly_plan.current_focus_id made nullable** (era rows have no pick);
+  legacy v2 columns (direction, topOutcomes, …) kept as dormant history.
+- **Monthly-create with an active era refuses** (update or explicit
+  supersede later); "era supersede" flow is an open design for a future WO.
+- **`{{tension_1}}` in the monthly-create opener** still renders "(none on
+  file)" — the records-derived tension read needs a loader that doesn't
+  exist yet. Open.
+- **Dashboard**: NowBoard/api.ts trimmed of dead fields only; dashboard has
+  19 PRE-EXISTING tsc errors (ReviewInbox RecordOperation types) untouched.
+  A richer era/weekly dashboard read of the new tables is future work.
+
+### Open questions / next steps
+
+- Claude connector re-point + staging soak + trial round 2 (WO-6's last
+  acceptance item — needs the user).
+- Prod data: one-time `setConfig("TIMEZONE", "America/Los_Angeles")`;
+  existing pick-era data keeps working via the fallback adapter until the
+  first real monthly_plan is saved.
+- Eval bench: fixtures seeded; the LLM-judge harness itself is unbuilt.
+- Legacy services (prioritize pick flow via membrane, weeklyPlan v1,
+  dailyPlan v1 items) still exist for organized-truth/history paths — a
+  later sweep can retire what nothing reads.
