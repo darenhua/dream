@@ -33,6 +33,7 @@ describe("dream MCP surface", () => {
     const names = tools.tools.map(t => t.name).sort();
     expect(names).toEqual([
       "append_plan_doc",
+      "begin_planning_flow",
       "check_review_status",
       "create_daily_plan",
       "create_weekly_plan",
@@ -48,6 +49,7 @@ describe("dream MCP surface", () => {
       "record_create",
       "record_wins",
       "revise_record_create",
+      "save_plan",
       "weekly_plan_context",
     ]);
     const survey = await client.callTool({ name: "get_survey", arguments: { model: "organized_goal" } });

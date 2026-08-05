@@ -2,9 +2,10 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { weeklyPlan, weeklyPlanChain } from "../db/schema";
 import { addDaysStr, localDate, localMinutes, minToHhmm, mondayOf } from "../lib/time";
-import { chainHead, chainLibrary } from "./chains";
+import { chainHead, chainLibrary, eraChainLibrary } from "./chains";
 import { getConfig } from "./config";
 import { activePlanFor, recentDailyPlans } from "./dailyPlanV2";
+import { activeEra, latestEra } from "./monthlyPlans";
 import { getPlanDoc } from "./planDocs";
 import { latestPick } from "./prioritize";
 import { lineageHead } from "./records";
@@ -94,12 +95,32 @@ export type Interpretation = {
 
 // ── Loaders (reuse existing builders; nothing new is stored) ───────────────
 
-/** Monthly-era substance adapter. Pre-WO-3 there is no monthly_plan table:
- * theme comes off the picked group's head, story off the monthly plan doc.
- * Promises are NOT modeled yet and are never faked from old records
- * (anti-path #7: silent import). WO-3 swaps this body for a monthly_plan
- * read; callers keep the same shape. */
-function loadEraSubstance(pick: ReturnType<typeof latestPick>): PlanningFacts["era"] {
+/** Monthly-era substance (WO-3): monthly_plan is the top horizon. Legacy
+ * pick/group adapter remains as a FALLBACK for pre-migration live data only;
+ * once a monthly_plan exists it always wins. Promises are never faked from
+ * old records (anti-path #7: silent import). */
+function loadEraSubstance(pick: ReturnType<typeof latestPick>, forDate: string): PlanningFacts["era"] {
+  const era = activeEra(forDate);
+  if (era)
+    return {
+      focusId: era.id,
+      theme: era.theme,
+      story: era.story,
+      periodStart: era.periodStart,
+      periodEnd: era.periodEnd,
+      expired: false,
+    };
+  const past = latestEra();
+  if (past)
+    return {
+      focusId: past.id,
+      theme: past.theme,
+      story: past.story,
+      periodStart: past.periodStart,
+      periodEnd: past.periodEnd,
+      expired: true,
+    };
+  // Legacy fallback: the pick pair, until the first real era is saved.
   if (!pick) return null;
   const head = lineageHead("experiment_group", pick.groupLineageId) as
     | { theme?: string | null; title?: string | null }
@@ -157,8 +178,13 @@ export function loadPlanningFacts(referenceDate?: string): PlanningFacts {
     : [];
 
   const pick = latestPick();
-  const era = loadEraSubstance(pick);
-  const library = pick && !pick.expired ? chainLibrary(pick.groupLineageId) : [];
+  const era = loadEraSubstance(pick, date);
+  const activeMonthly = activeEra(date);
+  const library = activeMonthly
+    ? eraChainLibrary(activeMonthly.id)
+    : pick && !pick.expired
+      ? chainLibrary(pick.groupLineageId)
+      : [];
   const tomorrow = addDaysStr(date, 1);
   const planOf = (d: string) => {
     const plan = activePlanFor(d);
@@ -193,14 +219,17 @@ export function loadPlanningFacts(referenceDate?: string): PlanningFacts {
 function readClock(now: PlanningFacts["now"]): Interpretation["energy"] {
   const { minutes } = now;
   if (minutes < ORACLE_CLOCK.afterMidnightEndMin)
-    return { lateness: "after-midnight", note: "after midnight — be as kind and quick as possible" };
+    return { lateness: "after-midnight", note: "It's after midnight — be as kind and quick as possible." };
   if (minutes >= ORACLE_CLOCK.veryLateMin)
-    return { lateness: "very-late", note: `it's ${minToHhmm(minutes)} — keep this one short` };
-  if (minutes >= ORACLE_CLOCK.lateMin) return { lateness: "late", note: "getting late — favor the floor" };
+    return {
+      lateness: "very-late",
+      note: `Planning at ${minToHhmm(minutes)}: low energy likely — keep this one short and kind.`,
+    };
+  if (minutes >= ORACLE_CLOCK.lateMin) return { lateness: "late", note: "Getting late — favor the floor." };
   return { lateness: "none", note: null };
 }
 
-function parseIntent(userRequest?: string): Horizon | null {
+export function parseIntent(userRequest?: string): Horizon | null {
   const text = (userRequest ?? "").toLowerCase();
   if (/\bmonth|era\b/.test(text)) return "monthly";
   if (/\bweek/.test(text)) return "weekly";
@@ -218,7 +247,7 @@ function assessSubstance(facts: PlanningFacts): Interpretation["parentSubstance"
   return { monthly, weekly };
 }
 
-function resolveDailyTarget(facts: PlanningFacts, lateness: Lateness): Interpretation["dailyTarget"] {
+export function resolveDailyTarget(facts: PlanningFacts, lateness: Lateness): Interpretation["dailyTarget"] {
   // After midnight "today" is ambiguous by definition — target today's date
   // and let the ambiguity carry the question.
   if (lateness === "after-midnight") return { date: facts.now.date, label: "today" };
@@ -420,20 +449,24 @@ function buildOpeningMove(args: {
   return { kind: "menu", lines };
 }
 
-// ── Renderer (pure) ────────────────────────────────────────────────────────
+// ── Renderer (pure) — BRIEF.skeleton.v1 (PROMPT_PACK §4) ──────────────────
+
+export const BRIEFING_VERSION = "BRIEF.skeleton.v1";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function renderBriefing(interp: Interpretation): string {
-  const { facts, parentSubstance, candidates, energy, dailyTarget, conflicts } = interp;
-  const lines: string[] = ["# Dream Planning Context", ""];
+  const { facts, parentSubstance, candidates, energy, dailyTarget, conflicts, blockedBy } = interp;
+  const lines: string[] = ["# Dream briefing", ""];
 
-  lines.push("## Current date");
-  const dateLine = `${WEEKDAYS[facts.now.dayOfWeek]} ${friendlyDate(facts.now.date)}, ${facts.now.time}`;
-  lines.push(energy.note ? `${dateLine} — ${energy.note}.` : `${dateLine}.`);
+  // ## Now — {{weekday}}, {{local_datetime}}. {{lateness_read}}
+  lines.push("## Now");
+  const nowLine = `${WEEKDAYS[facts.now.dayOfWeek]}, ${friendlyDate(facts.now.date)}, ${facts.now.time}.`;
+  lines.push(energy.note ? `${nowLine} ${energy.note}` : nowLine);
   lines.push("");
 
-  lines.push("## Current state");
+  // ## Facts — existence/period/status only
+  lines.push("## Facts");
   if (!facts.era) lines.push("- No monthly era.");
   else if (facts.era.expired)
     lines.push(
@@ -441,32 +474,66 @@ export function renderBriefing(interp: Interpretation): string {
     );
   else {
     const period = `${friendlyDate(facts.era.periodStart)} → ${facts.era.periodEnd ? friendlyDate(facts.era.periodEnd) : "open"}`;
-    const thin = parentSubstance.monthly === "thin" ? "; story still thin" : "";
-    lines.push(`- Era${facts.era.theme ? ` "${facts.era.theme}"` : ""} (${period})${thin}.`);
+    const substanceNote = parentSubstance.monthly === "thin" ? "theme+story only" : "storied";
+    lines.push(`- Era${facts.era.theme ? ` "${facts.era.theme}"` : ""} active, ${period} (${substanceNote}).`);
   }
   const wk = facts.weekly.plan;
   lines.push(
     wk
-      ? `- Week of ${weekRange(facts.weekly.targetWeekStart)}: plan${wk.theme ? ` "${wk.theme}"` : ""}, ${wk.chainCount} chain${wk.chainCount === 1 ? "" : "s"}.`
-      : `- Week of ${weekRange(facts.weekly.targetWeekStart)}: no plan yet.`,
+      ? `- Weekly plan exists for ${weekRange(facts.weekly.targetWeekStart)} (${wk.chainCount} chain${wk.chainCount === 1 ? "" : "s"}${wk.theme ? `, theme "${wk.theme}"` : ""}).`
+      : `- No weekly plan for ${weekRange(facts.weekly.targetWeekStart)}.`,
   );
   const targetPlan = dailyTarget.label === "today" ? facts.daily.today.plan : facts.daily.tomorrow.plan;
   lines.push(
     targetPlan
-      ? `- ${dailyTarget.label === "today" ? "Today" : "Tomorrow"} (${friendlyDate(dailyTarget.date)}): plan${targetPlan.theme ? ` "${targetPlan.theme}"` : ""}.`
-      : `- ${dailyTarget.label === "today" ? "Today" : "Tomorrow"} (${friendlyDate(dailyTarget.date)}): no plan yet.`,
+      ? `- Daily plan exists for ${dailyTarget.label} (${friendlyDate(dailyTarget.date)})${targetPlan.theme ? `: "${targetPlan.theme}"` : ""}.`
+      : `- No daily plan for ${dailyTarget.label} (${friendlyDate(dailyTarget.date)}).`,
   );
-  for (const conflict of conflicts) lines.push(`- Heads up: ${conflict}.`);
   lines.push("");
 
-  lines.push("## Likely flow");
+  // ## Read — inference lines, prefixed Likely: / Quality: / Energy:
+  lines.push("## Read (inference, not fact)");
   const top = candidates[0];
-  lines.push(top ? `(inference) ${top.horizon}-${top.operation} — ${top.reason}.` : "(inference) nothing pressing.");
+  lines.push(top ? `Likely: ${top.horizon}-${top.operation} — ${top.reason}.` : "Likely: nothing pressing.");
+  const qualityLine = qualityRead(interp);
+  if (qualityLine) lines.push(`Quality: ${qualityLine}`);
+  if (energy.note) lines.push(`Energy: ${energy.note}`);
   lines.push("");
 
-  lines.push("## Opening move");
+  // ## Your opening move
+  lines.push("## Your opening move");
+  lines.push("Say (adapt, don't recite):");
   for (const line of interp.openingMove.lines) lines.push(line);
+  lines.push("");
+
+  // ## Rules for this moment
+  lines.push("## Rules for this moment");
+  lines.push("Confirm the flow in conversation before beginning. If the user corrects");
+  lines.push("date/horizon/operation, follow them.");
+  if (blockedBy?.missingParent === "monthly")
+    lines.push(
+      `INVALID: no active era, so a ${blockedBy.horizon} plan cannot exist yet. Do not work around this. Offer, in one line, to set the era first: "We don't have the big picture yet — want to spend a few minutes on what this stretch is for, then do the week right after?" A thin era (theme + story) is enough to unblock.`,
+    );
+  if (blockedBy?.missingParent === "weekly")
+    lines.push(
+      `INVALID: daily plans select from the week's chains, and no weekly exists for ${weekRange(facts.weekly.targetWeekStart)}. Offer the weekly first — floor is theme-only and takes five minutes; a theme-only week means tomorrow just runs existing chains.`,
+    );
+  for (const conflict of conflicts) lines.push(`Heads up: ${conflict}.`);
   return lines.join("\n");
+}
+
+/** The Quality: inference line — parent substance of the likely flow, driving
+ * the effort cascade. Facts stay in Facts; this is the read. */
+function qualityRead(interp: Interpretation): string | null {
+  const top = interp.candidates[0];
+  if (!top) return null;
+  if (top.horizon === "weekly" && interp.parentSubstance.monthly === "thin")
+    return "the era is theme-and-story-thin — plan on the weekly carrying more depth.";
+  if (top.horizon === "daily" && interp.parentSubstance.weekly === "thin")
+    return "the week is theme-only — tomorrow's plan carries a bit more building than usual.";
+  if (top.horizon === "weekly" && interp.parentSubstance.monthly === "substantial")
+    return "the era is rich — this weekly can be light.";
+  return null;
 }
 
 // ── Composition ────────────────────────────────────────────────────────────
@@ -478,6 +545,7 @@ export function getPlanningContext(input: { user_request?: string; reference_dat
   return {
     markdown,
     structured: {
+      briefingVersion: BRIEFING_VERSION,
       now: facts.now,
       parentSubstance: interp.parentSubstance,
       candidates: interp.candidates,

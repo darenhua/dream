@@ -185,10 +185,10 @@ describe("oracle state matrix", () => {
     for (const [f, req] of fixtures) {
       const { md } = run(f, req);
       expect(md).not.toMatch(NO_SHAME);
-      expect(md.split(/\s+/).length).toBeLessThanOrEqual(130); // ~15s spoken
-      expect(md).toContain("# Dream Planning Context");
-      expect(md).toContain("## Opening move");
-      expect(md).toContain("(inference)");
+      expect(md.split(/\s+/).length).toBeLessThanOrEqual(170); // ~15s spoken body + rules
+      expect(md).toContain("# Dream briefing");
+      expect(md).toContain("## Your opening move");
+      expect(md).toContain("Likely:");
     }
   });
 });
@@ -247,7 +247,7 @@ describe("get_planning_context over MCP", () => {
       structuredContent?: Record<string, unknown>;
     };
     const md = text(result);
-    expect(md).toContain("# Dream Planning Context");
+    expect(md).toContain("# Dream briefing");
     expect(md).toContain("No monthly era.");
     expect(md).toContain("that's the first thing to make");
     const structured = result.structuredContent as { openingMove: { kind: string }; candidates: { horizon: string }[] };

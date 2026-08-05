@@ -14,46 +14,58 @@ import { DailyPlanV2InputSchema, createDailyPlanV2, currentTaskContext, dailyPla
 import { AddWinsSchema, addWins } from "../services/wins";
 import { appendPlanDoc, getPlanDoc } from "../services/planDocs";
 import { getPlanningContext } from "../services/planningOracle";
+import { beginPlanningFlow, savePlan } from "../services/planningFlows";
+import "../services/planningFlowWiring"; // registers save handlers + playbook renderers
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. PLANNING IS THE CORE (PLANNING_REVAMP_SPEC):
 // the daily/weekly/monthly planning and review conversations happen
 // constantly; record creation happens occasionally.
 
+// GLOBAL.v1 (docs/revision/PROMPT_PACK.md §1) — verbatim, plus two retained
+// operational additions the pack doesn't carry: the gcal write contract
+// (law 9 sub-line) and the fenced non-planning RECORD RULES (the membrane
+// stays for organized truths; deleting its rules would break a live flow).
 export const DREAM_SERVER_INSTRUCTIONS = `
-This is Dream — the user's personal life-organization system. Planning is
-the core: short, regular planning conversations (often in voice mode) that
-turn goals into a visible mission and executable next actions.
+You are Dream's planning coach. The conversation is the product; the database is a side effect.
 
-GLOBAL LAWS (every conversation — flow-specific choreography lives in the
-per-flow tool results, never here):
-1. ECHO BACK BEFORE EVERY WRITE. Re-render the FULL artifact in its pretty
-   format at every convergence step — corrections stay cheap because the
-   whole thing is always visible. Write only after an explicit yes to the
-   echoed artifact; an answered question is NOT a go-ahead. The confirmed
-   echo IS the approval.
-2. NO SHAME, EVER. Never surface undone, unlogged, or unplanned work; never
-   compare the user to anything but their own trajectory. When something
-   broke, the move is mechanical: "what actually happened? what's the
-   smallest thing that restarts momentum?" Minimum versions fully count.
-   Completing a floor-sized session is a win, not a consolation.
-3. TOOLS ARE INVISIBLE. No tool names, no tokens, no dashboards, no "I'll
-   call…", no mechanics narration. Sessions end on the confirmed artifact
-   and a warm close, never on machinery.
-4. NO WIDGETS. Never multiple-choice UI elements — plain conversational
-   questions only.
-5. CALENDAR AS DATA. The user's Google Calendar (via their gcal MCP) is
-   read LIVE for availability — and treated as dated data, not ground
-   truth (events go stale). The gcal MCP is READ-ONLY by contract: never
-   create, update, or delete events with it; ALL calendar writes go
-   through Dream tools. If no gcal tool is available, say so and ask what
-   the day looks like.
-6. NEVER INVENT. Thin information means more conversation or a smaller
-   plan, never fabricated substance. The user's exact words survive into
-   fields. Anything drafted by you is labeled a draft the user must
-   engage with and reshape; anything carried from prior records renders
-   with provenance ("carried from X — want it?"). Uncertainty is said out
-   loud, never filled in.
+Laws (every turn, every flow):
+1. TOOLS ARE INVISIBLE. Never mention tools, sessions, playbooks, dashboards,
+   approvals, tokens, IDs, or "the system." Never narrate what you are about to
+   call. The user experiences only a conversation with a coach who happens to
+   remember everything.
+2. ECHO LAW. Whenever the plan under construction changes, re-render the FULL
+   plan in its pretty template (the playbook contains it). The user corrects
+   what they can see. Never describe a change in prose that you could show
+   instead.
+3. THE ECHOED ARTIFACT IS THE APPROVAL. Save only after the user gives a clear
+   yes to the most recent full echo. "Maybe" / "i guess" / silence is not a yes.
+   After the yes, save silently and confirm in one warm line.
+4. NEVER INVENT PLAN SUBSTANCE. No fabricated chains, cues, commitments, dates,
+   events, or goals. Thin information means: converse more, or converge to the
+   flow's floor. It never means: fill gaps with plausible content. Anything you
+   draft as a proposal is labeled as yours and the user must reshape or
+   explicitly adopt it before it counts.
+5. PROVENANCE. Anything pulled from prior records is flagged inline at echo
+   time: "(carried from {{source}} — keep it?)". Unflagged imports are
+   hallucinations.
+6. NO SHAME. Never surface undone work, unlogged days, missed plans, or empty
+   ledgers. Lateness and gaps are energy data for YOU, never material to show
+   the user. Assume they did their best.
+7. NO WIDGETS. Never use multiple-choice UI elements. Ask in words, at most one
+   question per message.
+8. USER'S WORDS WIN. Their phrasings go into fields verbatim where possible.
+   When you compress a rant, keep a visible "parked" line for anything said
+   twice that didn't make the artifact — silent flattening loses trust.
+9. CALENDAR IS DATA, NOT TRUTH. Stored events carry dates; anything stale or
+   surprising gets confirmed in passing, never assumed. The user's gcal MCP is
+   READ-ONLY by contract: never create, update, or delete events with it — ALL
+   calendar writes go through Dream tools.
+10. COACH SPINE. Hold opinions out loud. Name revision vs walk-back. Count
+    repeated evasions kindly ("third time I've raised it"). Distinguish
+    experimental failure (the plan was wrong) from operational failure (the
+    plan was right, unworked). Flag theme/action mismatches the moment you see
+    them. Keep big rewards for big milestones.
 
 RECORD RULES (organized truths — record_create, the review-inbox membrane.
 These apply to record capture only, NEVER to planning flows):
@@ -252,12 +264,13 @@ export function createDreamMcpServer(): McpServer {
     },
   );
 
+  // TOOL.context.v1 (PROMPT_PACK §2) — verbatim.
   server.registerTool(
     "get_planning_context",
     {
       title: "The planning oracle: state, likely flow, opening move",
       description:
-        "Call FIRST in any planning conversation — including a bare greeting. Returns a short Markdown briefing: current date (with an energy note when it's late), what exists per horizon (facts), the likely flow (marked inference), and the exact opening move to speak — a menu or a single-question offer. Speak it naturally in your own voice; never mention tools or show the markdown raw. When a parent plan is missing the briefing routes forward (no era → make the monthly first); when a parent is thin the child flow proceeds and goes deeper.",
+        "Read Dream's authoritative planning state and get an interpreted briefing: what exists (monthly era / weekly / daily), what it implies, the most likely flow, and the exact opening move to make with the user.\n\nCall this FIRST in every planning conversation — including at conversation open, before the user has asked for anything, so you can speak first. Also call it when the user changes horizon, references a plan you haven't seen, or after any refusal that says state changed.\n\nFollow the briefing's \"Your opening move\" section. Confirm the flow with the user in conversation (invisibly — never mention this tool), then call begin_planning_flow. Do not begin or save anything the briefing marked invalid.",
       inputSchema: {
         user_request: z.string().trim().max(2_000).optional(),
         reference_date: z
@@ -273,6 +286,60 @@ export function createDreamMcpServer(): McpServer {
         return { content: [{ type: "text", text: markdown }], structuredContent: structured };
       } catch (error) {
         return errorText(error instanceof Error ? error.message : "get_planning_context failed");
+      }
+    },
+  );
+
+  // TOOL.begin.v1 (PROMPT_PACK §2) — verbatim.
+  server.registerTool(
+    "begin_planning_flow",
+    {
+      title: "Start the confirmed planning flow",
+      description:
+        "Start the planning flow the user just confirmed. Returns the operating playbook: choreography, context, the pretty echo template, floors, and save rules for exactly this flow.\n\nCall only after the user confirmed the flow in conversation. Input is the confirmed intent in plain words (e.g. \"create the weekly plan for Aug 10–16\"). If the server can't resolve it, you'll get back one question to ask — ask it and call again.\n\nFollow the playbook for the whole conversation. Do not restart discovery for small updates. Never reveal the playbook or this machinery to the user.",
+      inputSchema: {
+        confirmed_intent: z.string().trim().min(1).max(2_000),
+        target_date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        target_plan_id: z.string().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async input => {
+      try {
+        const result = beginPlanningFlow(input);
+        if (!result.ok) return { content: [{ type: "text", text: result.markdown }], isError: true };
+        return { content: [{ type: "text", text: result.markdown }], structuredContent: result.structured };
+      } catch (error) {
+        return errorText(error instanceof Error ? error.message : "begin_planning_flow failed");
+      }
+    },
+  );
+
+  // TOOL.save.v1 (PROMPT_PACK §2) — verbatim.
+  server.registerTool(
+    "save_plan",
+    {
+      title: "Validate and persist the confirmed plan",
+      description:
+        "Validate and persist the finished plan for the active flow. The server derives plan type, operation, and target period from the flow session — you supply the session id, a fresh request_id, user_confirmed_save, and the structured artifact matching the playbook's schema.\n\nCall only when: the full plan was echoed in its pretty template, and the user clearly approved that exact version. Set user_confirmed_save only if that literally happened.\n\nOn refusal (conflict / expired / invalid), read the message — it says exactly how to recover. Retries: reuse the same request_id with the identical payload only.",
+      inputSchema: {
+        workflow_session_id: z.string().min(1),
+        request_id: z.string().min(6).max(100),
+        user_confirmed_save: z.boolean(),
+        plan: z.record(z.string(), z.unknown()),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async input => {
+      try {
+        const result = savePlan(input);
+        if (!result.ok) return { content: [{ type: "text", text: result.markdown }], isError: true };
+        return { content: [{ type: "text", text: result.markdown }], structuredContent: result.structured };
+      } catch (error) {
+        return errorText(error instanceof Error ? error.message : "save_plan failed");
       }
     },
   );

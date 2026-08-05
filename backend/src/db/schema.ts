@@ -1262,6 +1262,8 @@ export const dailyPlan = sqliteTable(
     // create retry-safe (same key → same plan, never a duplicate error).
     supersededByPlanId: text("superseded_by_plan_id"),
     draftKey: text("draft_key"),
+    // Planning MCP migration: optimistic-concurrency revision for save_plan.
+    revision: integer("revision").notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1312,18 +1314,25 @@ export const ifThenChain = sqliteTable(
   {
     id: id(),
     ...versioning(),
-    experimentGroupLineageId: text("experiment_group_lineage_id").notNull(),
-    trigger: text("trigger").notNull(), // the real-world cue ("I finish breakfast")
+    // Legacy home: the picked group's library. New-era chains hang off a
+    // monthly_plan instead (planning MCP migration WO-4); one of the two is set.
+    experimentGroupLineageId: text("experiment_group_lineage_id"),
+    monthlyPlanId: text("monthly_plan_id"),
+    trigger: text("trigger").notNull(), // cueText: the real-world cue ("I finish brushing my teeth")
+    friendlyCueTitle: text("friendly_cue_title"), // "Brush your teeth!" — calendar-facing
+    zone: text("zone", { enum: ["before_work", "during_work", "after_work"] }),
+    kind: text("kind", { enum: ["habit", "one_off"] }),
+    sharedCueWithLineageId: text("shared_cue_with_lineage_id"), // one-offs riding another chain's anchor
     purpose: text("purpose"), // which problem/goal the chain solves
     minimumVersion: text("minimum_version"), // the smallest run that still counts
     rewardKind: text("reward_kind", { enum: ["walk", "cold_drink", "playlist", "easy_task"] }),
-    rewardText: text("reward_text"),
+    rewardText: text("reward_text"), // the `:D` line
     status: text("status", { enum: ["draft", "active", "retired"] }).notNull().default("draft"),
     expiresAt: text("expires_at"), // review-by date (YYYY-MM-DD); chains are not immortal
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  t => [index("if_then_chain_group").on(t.experimentGroupLineageId)],
+  t => [index("if_then_chain_group").on(t.experimentGroupLineageId), index("if_then_chain_era").on(t.monthlyPlanId)],
 );
 
 // Steps of one chain VERSION row. Canonical shape (service-enforced, not
@@ -1426,9 +1435,9 @@ export const weeklyPlan = sqliteTable(
   "weekly_plan",
   {
     id: id(),
-    currentFocusId: text("current_focus_id")
-      .notNull()
-      .references(() => currentFocus.id),
+    // Legacy pick linkage — nullable since the planning migration: era weeks
+    // carry monthlyPlanId instead (pick is sunset on the planning path).
+    currentFocusId: text("current_focus_id").references(() => currentFocus.id),
     weekOf: text("week_of").notNull(), // local Monday YYYY-MM-DD
     direction: text("direction"), // one-sentence weekly direction
     theme: text("theme"),
@@ -1443,6 +1452,15 @@ export const weeklyPlan = sqliteTable(
     candidateMissionsJson: text("candidate_missions_json"), // string[] pre-derived daily missions
     description: text("description"), // reported state; successor planners read it
     sourceConversationId: text("source_conversation_id"),
+    // Planning MCP migration: optimistic-concurrency revision (save_plan
+    // conflict detection) + supersede + chain-era artifact fields.
+    revision: integer("revision").notNull().default(1),
+    supersededByPlanId: text("superseded_by_plan_id"),
+    monthlyPlanId: text("monthly_plan_id"), // the era this week serves (null on legacy rows)
+    leisurePoolJson: text("leisure_pool_json"), // string[] — separate from chain rewards
+    datedEventsJson: text("dated_events_json"), // {date,title}[]
+    bigRewardJson: text("big_reward_json"), // {description, milestone}
+    doOnceJson: text("do_once_json"), // string[]
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1458,7 +1476,75 @@ export const weeklyPlanChain = sqliteTable(
       .notNull()
       .references(() => weeklyPlan.id),
     chainLineageId: text("chain_lineage_id").notNull(),
+    // Per-week carryover status (BRIEF item 36): how this chain relates to
+    // the prior week — new this week, extended, or continued as-is.
+    carryover: text("carryover", { enum: ["new", "extended", "continued"] }),
     createdAt: createdAt(),
   },
   t => [uniqueIndex("weekly_plan_chain_unique").on(t.weeklyPlanId, t.chainLineageId)],
+);
+
+// ── Planning MCP migration (docs/revision, TARGET_SPEC v2) ──────────────────
+
+// The monthly ERA — the planning top horizon, replacing the experiment_group
+// + current_focus pick pair on the planning path (user ruling: pick is fully
+// sunset; the membrane keeps groups only for organized-truth ops). Periods
+// are user-chosen (e.g. "Aug 4 → Oct 12", ten weeks) — NEVER calendar-month
+// arithmetic. Promises live as JSON on the row: append/revise-only, enforced
+// at save_plan (a payload missing a saved promise id is a walk-back and is
+// rejected). Supersede keeps the old row; updates bump revision in place.
+export const monthlyPlan = sqliteTable(
+  "monthly_plan",
+  {
+    id: id(),
+    title: text("title").notNull(), // "Ten weeks of audacity"
+    periodStart: text("period_start").notNull(), // YYYY-MM-DD, user-chosen
+    periodEnd: text("period_end").notNull(),
+    theme: text("theme").notNull(),
+    themeSubline: text("theme_subline"),
+    story: text("story").notNull(), // first person, his phrasings
+    promisesJson: text("promises_json").notNull().default("[]"),
+    subordinateNotesJson: text("subordinate_notes_json"), // serving/starving, framing — rendered small
+    revision: integer("revision").notNull().default(1),
+    supersededByPlanId: text("superseded_by_plan_id"),
+    sourceConversationId: text("source_conversation_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [index("monthly_plan_period").on(t.periodStart), index("monthly_plan_superseded").on(t.supersededByPlanId)],
+);
+
+// The server-side workflow session behind begin_planning_flow / save_plan
+// (TARGET §4.2). One active session per (planType, targetStartDate);
+// beginning a sibling auto-cancels the stale one. TTL 24h, refreshed on any
+// session-bound activity; expiry is lossless (re-begin accepts the drafted
+// artifact). Operation, type, period, target id, and expected revision come
+// from this row at save time — never from the agent.
+export const planningFlowSession = sqliteTable(
+  "planning_flow_session",
+  {
+    id: id(),
+    planType: text("plan_type", { enum: ["daily", "weekly", "monthly"] }).notNull(),
+    operation: text("operation", { enum: ["create", "update"] }).notNull(),
+    targetStartDate: text("target_start_date").notNull(), // date / weekOf / era anchor
+    targetEndDate: text("target_end_date"),
+    targetPlanId: text("target_plan_id"), // update flows: the row being revised
+    initialPlanRevision: integer("initial_plan_revision"), // update flows: revision at begin time
+    status: text("status", { enum: ["active", "completed", "cancelled", "expired", "conflicted"] })
+      .notNull()
+      .default("active"),
+    contextSnapshotJson: text("context_snapshot_json"), // parent substance, priors, calendar window (dated data)
+    playbookVersion: text("playbook_version").notNull(), // e.g. "PB.weekly-create.v1"
+    requestId: text("request_id"), // set on successful save — idempotency anchor
+    payloadHash: text("payload_hash"), // sha256 of the saved artifact; same id+hash → cached receipt
+    receiptJson: text("receipt_json"),
+    resultPlanId: text("result_plan_id"),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  t => [
+    index("planning_flow_session_target").on(t.planType, t.targetStartDate, t.status),
+    index("planning_flow_session_status").on(t.status),
+  ],
 );
