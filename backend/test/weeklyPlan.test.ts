@@ -17,7 +17,9 @@ function futureDate(days: number): string {
 function nextMonday(offsetWeeks = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7) + offsetWeeks * 7);
-  return d.toISOString().slice(0, 10);
+  // Render in LOCAL time (getDay above is local too) — toISOString would flip
+  // to tomorrow's date every evening once the process runs in a real timezone.
+  return d.toLocaleDateString("en-CA");
 }
 
 function bootstrapPick() {

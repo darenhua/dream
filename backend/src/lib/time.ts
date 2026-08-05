@@ -1,5 +1,7 @@
-// Timezone-correct helpers, no deps: all free-time math runs in the user's
-// configured TIMEZONE, never server UTC (the likeliest silent-bug source).
+// Timezone-correct helpers: all free-time math runs in the user's configured
+// TIMEZONE, never server UTC or server locale (the likeliest silent-bug source).
+
+import { getConfig } from "../services/config";
 
 export function localDate(tz: string, d: Date = new Date()): string {
   // en-CA formats as YYYY-MM-DD.
@@ -65,7 +67,10 @@ export function tzOffsetMinutes(tz: string, at: Date): number {
   return Math.round((asUtc - at.getTime()) / 60_000);
 }
 
-// Server-local YYYY-MM-DD. (Moved from the deleted writeup service.)
+// USER-local YYYY-MM-DD, resolved through the configured TIMEZONE — never the
+// server's locale. Every planning service dates through this one function, so
+// "today" agrees with nowLocal/lateness everywhere (the server has lived in a
+// different timezone than the user before; that class of bug dies here).
 export function todayLocal(): string {
-  return new Date().toLocaleDateString("en-CA");
+  return localDate(getConfig<string>("TIMEZONE"));
 }
