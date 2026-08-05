@@ -8,9 +8,7 @@ import {
 } from "../services/recordChangeSets";
 import { VersionedModelSchema, type VersionedModel } from "../services/records";
 import { listRecords, readConversationSlice, readRecord, searchAllRecords } from "../services/recordReads";
-import { prioritizeContext } from "../services/prioritize";
-import { WeeklyPlanV2InputSchema, createWeeklyPlanV2, weeklyPlanContextV2 } from "../services/weeklyPlanV2";
-import { DailyPlanV2InputSchema, createDailyPlanV2, currentTaskContext, dailyPlanContextV2 } from "../services/dailyPlanV2";
+import { currentTaskContext } from "../services/dailyPlanV2";
 import { AddWinsSchema, addWins } from "../services/wins";
 import { appendPlanDoc, getPlanDoc } from "../services/planDocs";
 import { getPlanningContext } from "../services/planningOracle";
@@ -340,78 +338,6 @@ export function createDreamMcpServer(): McpServer {
         return { content: [{ type: "text", text: result.markdown }], structuredContent: result.structured };
       } catch (error) {
         return errorText(error instanceof Error ? error.message : "save_plan failed");
-      }
-    },
-  );
-
-  server.registerTool(
-    "prioritize_context",
-    {
-      title: "Load the prioritize landscape (monthly decision)",
-      description:
-        "Run when the user wants to set the monthly-level direction and none exists (or it expired). Returns every candidate group with its theme and ranked goal set, plus the current/expired pick. Drive an echo-back brainstorm: reflect what you see, let the user rant, organize, repeat — then converge on ONE group and an end date (translate it: '8 weeks → N weekly plans — realistic?'). Submit the decision via record_create with a {op:'pick', group, endDate, reasoning} operation (the group may be an existing lineageId or a temp ref to a group created in the same change set). The monthly one-pager (theme + story) lives in append_plan_doc (scope monthly, ref_id = the pick id).",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async () => resultText(prioritizeContext()),
-  );
-
-  server.registerTool(
-    "weekly_plan_context",
-    {
-      title: "Load the weekly session context (build the week)",
-      description:
-        "Run when the user wants to plan their week — the ONE heavy thinking session. Read the LIVE week ahead via the user's Google Calendar MCP (read-only!). Returns the pick clock (weeks elapsed/remaining), the full group read, the chain LIBRARY (create/revise/retire/re-pick), prior v2 weekly plans, legacy weekly history, open deadline tasks, and leisure. Build the week so every day becomes cheap: chains and cues built here make daily planning selection, not creation. Echo the whole week back and get an explicit yes, then submit via create_weekly_plan (direct write — no review inbox).",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async () => resultText(weeklyPlanContextV2()),
-  );
-
-  server.registerTool(
-    "create_weekly_plan",
-    {
-      title: "Write the confirmed weekly plan (conversation IS the review)",
-      description:
-        "Direct write, all-or-nothing, only after the user's explicit yes to the echoed-back week. One call carries the whole session: chainOps (create with tempId / revise / retire / activate — the library belongs to the current pick's group), the plan fields (weekOf Monday, direction, theme, topOutcomes ≤3, milestones, health/social/maintenance priorities, fearToFace, failurePoints [{point, recovery}], successDefinition, candidateMissions, description = reported state), armedChains (1–5 lineage ids or temp:<tempId> refs), must-anchor anchoredEvents only (chains get their cue blocks at daily arm time), and ideasDone. Tell the user the week is set — this IS applied.",
-      inputSchema: WeeklyPlanV2InputSchema.shape,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async input => {
-      try {
-        const plan = createWeeklyPlanV2(input);
-        return resultText({ status: "created", plan });
-      } catch (error) {
-        return errorText(error instanceof Error ? error.message : "create_weekly_plan failed");
-      }
-    },
-  );
-
-  server.registerTool(
-    "daily_plan_context",
-    {
-      title: "Load the daily session context (≤5 minutes: select)",
-      description:
-        "Run for the daily conversation — planning tomorrow, or a morning catch-up. BUDGET: the whole session is ≤5 minutes, exchanges ~1 minute. The context returns nowLocal and planState (today + tomorrow): settle which date is being planned and, if a plan already exists for it, whether the user wants to revise it, continue living it, or leave it — their call, before anything else. Plan by SELECTION, not creation: theme one-liner plus 2–3 chains off the week's armedChains menu. Read the LIVE target date via the gcal MCP (read-only) to place cue blocks into real gaps — a block is a reminder ahead of a real-world cue, never a command. Echo the day back, get the yes, then create_daily_plan.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
-    },
-    async ({ date }) => resultText(dailyPlanContextV2(date)),
-  );
-
-  server.registerTool(
-    "create_daily_plan",
-    {
-      title: "Write the confirmed daily plan (conversation IS the review)",
-      description:
-        "Direct write, only after the user's explicit yes to the echoed-back day. Creates the plan — theme, description (reported energy/social/work state for tomorrow's planner), topPriority, supportingHealth/supportingConnection, firstDomino, minimumViableDay, parkingLot — and arms the selectedChains (≤3; chains replace the old block/todo/leisure items entirely). A selected chain with startAt/endAt gets its cue-reminder calendar block, pushed to Google Calendar when connected. ROBUSTNESS: pass a random draftKey (generated once per session) — retries with the same key return the same plan instead of erroring. If an active plan already exists for the date, the call fails unless you pass its id in revises (only after the user chose to revise): the old plan is kept as history, its UNSTARTED runs and cue blocks are cancelled, and any run with progress survives — completed work is evidence, always. Tell the user the day is set — this IS applied.",
-      inputSchema: DailyPlanV2InputSchema.shape,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async input => {
-      try {
-        const plan = createDailyPlanV2(input);
-        return resultText({ status: "created", plan });
-      } catch (error) {
-        return errorText(error instanceof Error ? error.message : "create_daily_plan failed");
       }
     },
   );

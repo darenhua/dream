@@ -6,6 +6,7 @@ import { calendarEvent, dailyPlan, experimentGroup, planDoc, weeklyPlan, weeklyP
 import { todayLocal } from "../../lib/time";
 import { armChain, chainHead, getRun, markMinimumRun, runsForDate, toggleRunStep } from "../../services/chains";
 import { latestPick } from "../../services/prioritize";
+import { activeEra } from "../../services/monthlyPlans";
 import { unreviewedDays, winsForDate, winsForFocus, winsForWeek } from "../../services/wins";
 
 // The new dashboard's API (PLANNING_REVAMP_SPEC §7). The now-screen never
@@ -26,10 +27,7 @@ function todaysPlan(date: string) {
     .limit(1)
     .get();
   if (!plan) return null;
-  return {
-    ...plan,
-    parkingLot: plan.parkingLotJson ? (JSON.parse(plan.parkingLotJson) as string[]) : [],
-  };
+  return plan;
 }
 
 function currentWeeklyPlan(date: string) {
@@ -43,6 +41,8 @@ function currentWeeklyPlan(date: string) {
 }
 
 function monthTheme(): { theme: string | null; endDate: string | null } | null {
+  const era = activeEra();
+  if (era) return { theme: era.theme, endDate: era.periodEnd };
   const pick = latestPick();
   if (!pick) return null;
   const group = db.select().from(experimentGroup).where(eq(experimentGroup.id, pick.pick.experimentGroupId)).get();
@@ -68,9 +68,6 @@ planRoutes.get("/now", c => {
   const base = {
     date,
     theme: plan?.theme ?? null,
-    topPriority: plan?.topPriority ?? null,
-    firstDomino: plan?.firstDomino ?? null,
-    minimumViableDay: plan?.minimumViableDay ?? null,
     weekDirection: week?.direction ?? week?.theme ?? null,
     month: monthTheme(),
     winsToday: winsForDate(date).entries.length,
@@ -222,28 +219,6 @@ planRoutes.get("/wins", c => {
 });
 
 // Parking lot: save the distraction without acting on it.
-const ParkingSchema = z.object({ text: z.string().trim().min(1).max(2_000) }).strict();
-planRoutes.post("/today/parking-lot", async c => {
-  try {
-    const body = ParkingSchema.parse(await c.req.json());
-    const date = todayLocal();
-    const plan = db
-      .select()
-      .from(dailyPlan)
-      .where(and(eq(dailyPlan.date, date), isNull(dailyPlan.supersededByPlanId)))
-      .orderBy(desc(dailyPlan.createdAt))
-      .limit(1)
-      .get();
-    if (!plan) return c.json({ error: `no daily plan for ${date} yet` }, 404);
-    const lot = plan.parkingLotJson ? (JSON.parse(plan.parkingLotJson) as string[]) : [];
-    lot.push(body.text);
-    db.update(dailyPlan).set({ parkingLotJson: JSON.stringify(lot) }).where(eq(dailyPlan.id, plan.id)).run();
-    return c.json({ parkingLot: lot });
-  } catch (e) {
-    return fail(c, e);
-  }
-});
-
 // One-pagers: living context per horizon; docs accrete, plans stay stable.
 planRoutes.get("/docs/:scope/:refId", c => {
   const scope = c.req.param("scope");

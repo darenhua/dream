@@ -207,10 +207,6 @@ function NowView({ tick, onChanged }: { tick: number; onChanged: () => void }) {
         </div>
       )}
 
-      <GlanceCard label="top priority" value={data.topPriority} />
-      <GlanceCard label="first domino" value={data.firstDomino} className="border-sky-300 dark:border-sky-800" />
-      <GlanceCard label="minimum viable day — still a win" value={data.minimumViableDay} />
-
       <div className="flex items-center justify-between rounded-xl border bg-card p-3">
         <div className="text-sm">
           <Flame className="mr-1 inline size-4 text-amber-500" />
@@ -255,7 +251,6 @@ function NowView({ tick, onChanged }: { tick: number; onChanged: () => void }) {
 
 function DayView({ tick, onChanged }: { tick: number; onChanged: () => void }) {
   const { data, refresh } = useApiData<TodayPayload>(() => plans.today(), [tick]);
-  const [parking, setParking] = useState("");
   if (!data) return null;
   const plan = data.plan;
   return (
@@ -268,13 +263,6 @@ function DayView({ tick, onChanged }: { tick: number; onChanged: () => void }) {
       {plan && (
         <>
           <GlanceCard label="theme" value={plan.theme} detail={plan.description} />
-          <GlanceCard label="top priority" value={plan.topPriority} />
-          <div className="grid grid-cols-2 gap-2">
-            <GlanceCard label="health" value={plan.supportingHealth} />
-            <GlanceCard label="connection" value={plan.supportingConnection} />
-          </div>
-          <GlanceCard label="first domino" value={plan.firstDomino} />
-          <GlanceCard label="minimum viable day" value={plan.minimumViableDay} />
         </>
       )}
 
@@ -298,36 +286,6 @@ function DayView({ tick, onChanged }: { tick: number; onChanged: () => void }) {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">parking lot — saved, not acted on</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {(plan?.parkingLot ?? []).map((item, i) => (
-            <div key={i} className="break-words rounded-lg border p-2 text-sm">{item}</div>
-          ))}
-          <form
-            className="flex gap-2"
-            onSubmit={e => {
-              e.preventDefault();
-              if (!parking.trim() || !plan) return;
-              plans.addParking(parking.trim()).then(() => {
-                setParking("");
-                refresh();
-                onChanged();
-              });
-            }}
-          >
-            <Input
-              value={parking}
-              onChange={e => setParking(e.target.value)}
-              placeholder={plan ? "park a distraction…" : "needs a plan first"}
-              disabled={!plan}
-            />
-            <Button type="submit" variant="outline" disabled={!plan || !parking.trim()}>park</Button>
-          </form>
-        </CardContent>
-      </Card>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { addDaysStr, mondayOf, todayLocal } from "../src/lib/time";
 import "../src/services/planningFlowWiring";
 import { beginPlanningFlow, savePlan } from "../src/services/planningFlows";
 import { getPlanningContext } from "../src/services/planningOracle";
+import { currentWeeklyPlanV2 } from "../src/services/weeklyPlanV2";
 import { weeklyChainsView, weeklyHeadFor } from "../src/services/weeklyPlansV3";
 
 beforeEach(() => wipeAllTables());
@@ -320,6 +321,35 @@ describe("domain invariants at the write boundary", () => {
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("unreachable");
     expect(r.markdown).toContain("outside this flow's period");
+  });
+
+  test("daily update supersedes: zero-progress runs cancel, plan history survives", () => {
+    bootstrapEra();
+    bootstrapWeek();
+    const menu = weeklyChainsView(weeklyHeadFor(WEEK)!.id);
+    const first = save(sid(begin("make the daily plan", MIDWEEK)), {
+      date: MIDWEEK,
+      theme: "ship the want",
+      selectedChainIds: [menu[0]!.lineageId],
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+    const updated = save(sid(begin("revise the daily plan", MIDWEEK)), {
+      date: MIDWEEK,
+      theme: "sharper",
+      selectedChainIds: [menu[1]!.lineageId],
+    });
+    expect(updated.ok).toBe(true);
+    const runs = db.select().from(chainRun).all();
+    expect(runs.filter(r => r.cancelledAt != null)).toHaveLength(1); // old, unstarted
+    expect(runs.filter(r => r.cancelledAt == null)).toHaveLength(1); // new
+  });
+
+  test("currentWeeklyPlanV2 stays exact-week after consolidation", () => {
+    bootstrapEra();
+    bootstrapWeek();
+    expect(currentWeeklyPlanV2(MIDWEEK)?.weekOf).toBe(WEEK);
+    expect(currentWeeklyPlanV2(addDaysStr(WEEK, 7))).toBeNull(); // next week: no plan is the fact
   });
 
   test("weekly update supersedes: old row survives, head bumps revision", () => {

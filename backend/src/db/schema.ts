@@ -1240,34 +1240,27 @@ export const groupHabit = sqliteTable(
 // Tomorrow's plan. No status ever: expiry derives from date, completion lives
 // on the items. description records the user's reported state (energy /
 // social / work answers) so successor plans can read it.
+// The minimal daily (ruling R2): date + theme + armed chains, nothing else.
+// The v1-era generic-productivity field family is demolished (WO-5/WO-6);
+// save_plan's request_id idempotency replaced per-call draft keys.
 export const dailyPlan = sqliteTable(
   "daily_plan",
   {
     id: id(),
-    weeklyPlanId: text("weekly_plan_id"), // legacy: experiment row id; v2: weekly_plan id
+    weeklyPlanId: text("weekly_plan_id"), // legacy: experiment row id; v2+: weekly_plan id
     date: text("date").notNull(), // YYYY-MM-DD local
     theme: text("theme"), // the one-liner held in mind for micro-decisions
-    description: text("description"),
+    description: text("description"), // legacy reported-state column (dormant)
     sourceConversationId: text("source_conversation_id"),
-    // Planning revamp: the selection-not-creation daily shape. Old rows keep
-    // these null; items on old plans stay in daily_plan_item (dormant).
-    topPriority: text("top_priority"), // the single most important outcome
-    supportingHealth: text("supporting_health"), // one health/life action
-    supportingConnection: text("supporting_connection"), // one relationship/admin action
-    firstDomino: text("first_domino"), // smallest action that starts momentum
-    minimumViableDay: text("minimum_viable_day"), // smallest day that still counts as a win
-    parkingLotJson: text("parking_lot_json"), // string[]: saved, not acted on
-    // Phase 6 hardening: supersede keeps history insert-only (the active plan
-    // for a date is the one with superseded_by_plan_id null); draft_key makes
-    // create retry-safe (same key → same plan, never a duplicate error).
+    // Supersede keeps history insert-only: the active plan for a date is the
+    // one with superseded_by_plan_id null.
     supersededByPlanId: text("superseded_by_plan_id"),
-    draftKey: text("draft_key"),
-    // Planning MCP migration: optimistic-concurrency revision for save_plan.
+    // Optimistic-concurrency revision for save_plan conflict detection.
     revision: integer("revision").notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  t => [index("daily_plan_date").on(t.date), uniqueIndex("daily_plan_draft_key").on(t.draftKey)],
+  t => [index("daily_plan_date").on(t.date)],
 );
 
 // The day's concrete items; done_at is the manual dashboard CRUD and doubles

@@ -1172,9 +1172,6 @@ export type NowPayload = {
   mode: "chain" | "idle";
   date: string;
   theme: string | null;
-  topPriority: string | null;
-  firstDomino: string | null;
-  minimumViableDay: string | null;
   weekDirection: string | null;
   month: { theme: string | null; endDate: string | null } | null;
   winsToday: number;
@@ -1197,12 +1194,6 @@ export type DailyPlanV2Row = {
   date: string;
   theme: string | null;
   description: string | null;
-  topPriority: string | null;
-  supportingHealth: string | null;
-  supportingConnection: string | null;
-  firstDomino: string | null;
-  minimumViableDay: string | null;
-  parkingLot: string[];
 };
 
 export type TodayPayload = {
@@ -1250,6 +1241,4 @@ export const plans = {
   minimumRun: (runId: string) => request<ChainRunView>(`/plans/runs/${runId}/minimum`, { method: "POST", body: "{}" }),
   adhocRun: (chainLineageId: string) =>
     request<ChainRunView>("/plans/runs/adhoc", { method: "POST", body: JSON.stringify({ chainLineageId }) }),
-  addParking: (text: string) =>
-    request<{ parkingLot: string[] }>("/plans/today/parking-lot", { method: "POST", body: JSON.stringify({ text }) }),
 };

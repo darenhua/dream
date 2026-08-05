@@ -2,14 +2,15 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { wipeAllTables } from "../src/db";
+import { addDaysStr, mondayOf, todayLocal } from "../src/lib/time";
 import { DreamMcpHttpServer } from "../src/mcp/http";
-import { applyRecordChangeSet, createRecordChangeSet } from "../src/services/recordChangeSets";
+import "../src/services/planningFlowWiring";
+import { beginPlanningFlow, savePlan } from "../src/services/planningFlows";
 import {
   interpretPlanningState,
   renderBriefing,
   type PlanningFacts,
 } from "../src/services/planningOracle";
-import { createWeeklyPlanV2 } from "../src/services/weeklyPlanV2";
 
 // WO-1 acceptance: the oracle interpretation unit fixtures. The pure seams
 // (interpret + render) run against hand-built facts — zero DB — across the
@@ -214,29 +215,52 @@ async function connect(host: DreamMcpHttpServer) {
   return client;
 }
 
-function futureDate(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toLocaleDateString("en-CA");
-}
-
-function currentMonday(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  return d.toLocaleDateString("en-CA");
-}
-
-function bootstrapPick() {
-  const cs = createRecordChangeSet({
-    summaryMd: "group + pick",
-    operations: [
-      { op: "create", tempId: "goal", model: "organized_goal", role: "satellite", fields: { title: "reclaim wanting" } },
-      { op: "create", tempId: "group", model: "experiment_group", role: "central", fields: { title: "ten weeks of audacity", theme: "audacity, skill, talent" } },
-      { op: "link", relation: "group_goal", from: "temp:group", to: "temp:goal", rank: 0 },
-      { op: "pick", group: "temp:group", endDate: futureDate(70), reasoning: "nothing to lose" },
-    ],
+function bootstrapEraAndWeek() {
+  const today = todayLocal();
+  const mFlow = beginPlanningFlow({ confirmed_intent: "create the monthly era" });
+  if (!mFlow.ok) throw new Error(mFlow.markdown);
+  const mSave = savePlan({
+    workflow_session_id: mFlow.structured.session_id as string,
+    request_id: crypto.randomUUID(),
+    user_confirmed_save: true,
+    plan: {
+      title: "Ten weeks of audacity",
+      periodStart: today,
+      periodEnd: addDaysStr(today, 70),
+      theme: "audacity, skill, talent",
+      story: "New city, nobody knows me. ".repeat(12).trim(),
+      promises: [],
+    },
   });
-  expect(applyRecordChangeSet(cs.id).ok).toBe(true);
+  if (!mSave.ok) throw new Error(mSave.markdown);
+  const week = mondayOf(today);
+  const wFlow = beginPlanningFlow({ confirmed_intent: "plan the week" });
+  if (!wFlow.ok) throw new Error(wFlow.markdown);
+  const wSave = savePlan({
+    workflow_session_id: wFlow.structured.session_id as string,
+    request_id: crypto.randomUUID(),
+    user_confirmed_save: true,
+    plan: {
+      weekStart: week,
+      weekEnd: addDaysStr(week, 6),
+      theme: "take up space",
+      chains: [
+        {
+          cueText: "I finish brushing my teeth",
+          friendlyCueTitle: "Brush your teeth!",
+          zone: "before_work",
+          links: ["step outside", "text my family"],
+          reward: "pre-set water bottle",
+          kind: "habit",
+          carryover: "new",
+        },
+      ],
+      leisurePool: [],
+      datedEvents: [],
+      doOnce: [],
+    },
+  });
+  if (!wSave.ok) throw new Error(wSave.markdown);
 }
 
 describe("get_planning_context over MCP", () => {
@@ -257,29 +281,7 @@ describe("get_planning_context over MCP", () => {
   });
 
   test("era + weekly, no daily: single-question daily offer", async () => {
-    bootstrapPick();
-    createWeeklyPlanV2({
-      weekOf: currentMonday(),
-      direction: "take up space",
-      theme: "take up space",
-      topOutcomes: ["one shipped thing"],
-      description: "capacity fine",
-      chainOps: [
-        {
-          op: "create",
-          tempId: "teeth",
-          chain: {
-            trigger: "I finish brushing my teeth",
-            steps: [
-              { kind: "starter", text: "step outside" },
-              { kind: "core", text: "text my family" },
-              { kind: "reward", text: "pre-set water bottle" },
-            ],
-          },
-        },
-      ],
-      armedChains: ["temp:teeth"],
-    });
+    bootstrapEraAndWeek();
     const host = new DreamMcpHttpServer();
     const client = await connect(host);
     const result = (await client.callTool({ name: "get_planning_context", arguments: { user_request: "hey" } })) as {
