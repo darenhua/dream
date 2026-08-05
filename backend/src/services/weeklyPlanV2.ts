@@ -10,7 +10,6 @@ import { currentPick } from "./prioritize";
 import { readRecord } from "./recordReads";
 import { QUALITY_BAR } from "./rubric";
 import { listWeeklyPlans } from "./weeklyPlan";
-import { unreviewedDays, winsForWeek } from "./wins";
 
 // Weekly plan v2 (PLANNING_REVAMP_SPEC §4.3): the ONE heavy thinking session.
 // Direct write — the conversation's echo-back + explicit confirmation is the
@@ -213,13 +212,12 @@ function weeksBetween(from: string, to: string): number {
   return Math.max(0, Math.round((new Date(to).getTime() - new Date(from).getTime()) / (7 * 24 * 3600 * 1000)));
 }
 
-/** The weekly conversation's context. REVIEW FIRST: the closing week's win
- * rollup opens the session — the plan is grounded in evidence, never mood. */
+/** The weekly conversation's context: the pick clock, the group, the chain
+ * library, and history priors. No review gate — planning opens directly. */
 export function weeklyPlanContextV2() {
   const pick = currentPick();
   if (!pick) return { error: "no current pick — run prioritize first", currentPick: null };
   const today = todayLocal();
-  const closingWeek = currentWeeklyPlanV2(today);
   const priorV2 = db
     .select()
     .from(weeklyPlan)
@@ -231,12 +229,6 @@ export function weeklyPlanContextV2() {
   return {
     today,
     qualityBar: QUALITY_BAR,
-    // ALWAYS handled first in conversation: harvest + celebrate, then plan.
-    reviewFirst: {
-      closingWeekOf: closingWeek?.weekOf ?? mondayOf(today),
-      winRollup: winsForWeek(closingWeek?.weekOf ?? mondayOf(today)),
-      unreviewedDays: unreviewedDays(),
-    },
     pick: {
       id: pick.pick.id,
       startedAt: pick.pick.startedAt,

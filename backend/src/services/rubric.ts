@@ -49,5 +49,7 @@ AN EFFECTIVE WIN LIST / RECAP (all eight):
    material ("what broke → smallest restart"), or not at all.
 `.trim();
 
-/** Compact form embedded in planning-context payloads. */
-export const QUALITY_BAR = { plan: PLAN_RUBRIC, wins: WINS_RUBRIC };
+/** Compact form embedded in planning-context payloads. Wins are deferred
+ * scope (ruling R4): no wins rubric ships into any planning context — the
+ * WINS_RUBRIC export above survives only for a future non-planning surface. */
+export const QUALITY_BAR = { plan: PLAN_RUBRIC };

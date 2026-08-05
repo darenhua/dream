@@ -10,7 +10,6 @@ import { getPlanDoc } from "./planDocs";
 import { latestPick } from "./prioritize";
 import { QUALITY_BAR } from "./rubric";
 import { currentWeeklyPlanV2 } from "./weeklyPlanV2";
-import { unreviewedDays, winsForDate } from "./wins";
 
 // Daily plan v2 (PLANNING_REVAMP_SPEC §4.2): a ≤5-minute conversation that is
 // SELECTION, not creation — theme, top priority, 2–3 chains off the weekly
@@ -142,7 +141,10 @@ export function getDailyPlanV2(id: string) {
   };
 }
 
-function recentDailyPlans(limit = 7) {
+/** Prior daily plans as PRIORS (themes, choices — how the user plans), never
+ * as a completion ledger: no armed/completed counts here, by the no-shame
+ * law. Exported for the planning oracle. */
+export function recentDailyPlans(limit = 7) {
   return db
     .select()
     .from(dailyPlan)
@@ -150,19 +152,10 @@ function recentDailyPlans(limit = 7) {
     .orderBy(desc(dailyPlan.date))
     .limit(limit)
     .all()
-    .map(plan => {
-      const runs = db
-        .select()
-        .from(chainRun)
-        .where(and(eq(chainRun.dailyPlanId, plan.id), isNull(chainRun.cancelledAt)))
-        .all();
-      return {
-        ...plan,
-        parkingLot: plan.parkingLotJson ? (JSON.parse(plan.parkingLotJson) as string[]) : [],
-        runsArmed: runs.length,
-        runsCompleted: runs.filter(r => r.completedAt != null).length,
-      };
-    });
+    .map(plan => ({
+      ...plan,
+      parkingLot: plan.parkingLotJson ? (JSON.parse(plan.parkingLotJson) as string[]) : [],
+    }));
 }
 
 /** Alignment state for one date: the active plan and its runs' progress —
@@ -206,12 +199,10 @@ function monthTheme() {
   return { theme: group?.theme ?? group?.title ?? null, endDate: pick.pick.endDate, focusId: pick.pick.id };
 }
 
-/** The ≤5-minute conversation's context. REVIEW FIRST: yesterday's evidence
- * opens the session (and any unreviewed days get a quick compile) — then the
- * plan is pure selection from the weekly pre-built lists. */
+/** The ≤5-minute conversation's context: align on the date, then pure
+ * selection from the weekly pre-built lists. No review gate. */
 export function dailyPlanContextV2(forDate?: string) {
   const date = forDate ?? todayLocal();
-  const yesterday = addDays(date, -1);
   const week = currentWeeklyPlanV2(date);
   const tz = getConfig<string>("TIMEZONE");
   const today = todayLocal();
@@ -224,11 +215,6 @@ export function dailyPlanContextV2(forDate?: string) {
     nowLocal: { iso: new Date().toISOString(), date: today, time: minToHhmm(localMinutes(tz)), timezone: tz },
     planState: { today: planStateFor(today), tomorrow: planStateFor(addDays(today, 1)) },
     qualityBar: QUALITY_BAR,
-    reviewFirst: {
-      yesterday,
-      yesterdayWins: winsForDate(yesterday),
-      unreviewedDays: unreviewedDays(),
-    },
     month: monthTheme(),
     week: week
       ? {

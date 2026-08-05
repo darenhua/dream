@@ -140,6 +140,9 @@ describe("phase 6 hardening", () => {
     expect(ctx.planState.today.plan?.theme).toBe("ship the want");
     expect(ctx.planState.tomorrow.plan).toBeNull();
     expect(ctx.qualityBar.plan).toContain("shoelace test");
-    expect(ctx.qualityBar.wins).toContain("Undeniable");
+    // WO-0: no wins rubric, no review gate in any planning context
+    expect(ctx.qualityBar.wins).toBeUndefined();
+    expect(ctx.reviewFirst).toBeUndefined();
+    expect(JSON.stringify(ctx)).not.toMatch(/unreviewed/i);
   });
 });

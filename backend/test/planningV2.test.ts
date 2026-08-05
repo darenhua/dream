@@ -119,9 +119,10 @@ describe("MCP planning trajectory (weekly → daily → wins → doing mode)", (
     const host = new DreamMcpHttpServer();
     const client = await connect(host);
 
-    // weekly session: context opens with reviewFirst, then direct write
+    // weekly session: planning opens directly — no review gate anywhere (WO-0)
     const weeklyCtx = JSON.parse(text(await client.callTool({ name: "weekly_plan_context", arguments: {} })));
-    expect(weeklyCtx.reviewFirst).toBeDefined();
+    expect(weeklyCtx.reviewFirst).toBeUndefined();
+    expect(JSON.stringify(weeklyCtx)).not.toMatch(/unreviewed/i);
     expect(weeklyCtx.chainLibrary).toHaveLength(0);
     const weekly = JSON.parse(
       text(await client.callTool({ name: "create_weekly_plan", arguments: weeklyInput() as never })),
