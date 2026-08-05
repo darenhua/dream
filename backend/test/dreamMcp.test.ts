@@ -38,6 +38,7 @@ describe("dream MCP surface", () => {
       "create_weekly_plan",
       "current_task_context",
       "daily_plan_context",
+      "get_planning_context",
       "get_survey",
       "list_records",
       "prioritize_context",

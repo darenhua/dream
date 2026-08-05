@@ -141,8 +141,9 @@ describe("phase 6 hardening", () => {
     expect(ctx.planState.tomorrow.plan).toBeNull();
     expect(ctx.qualityBar.plan).toContain("shoelace test");
     // WO-0: no wins rubric, no review gate in any planning context
-    expect(ctx.qualityBar.wins).toBeUndefined();
-    expect(ctx.reviewFirst).toBeUndefined();
+    const raw = ctx as Record<string, unknown> & { qualityBar: Record<string, unknown> };
+    expect(raw.qualityBar.wins).toBeUndefined();
+    expect(raw.reviewFirst).toBeUndefined();
     expect(JSON.stringify(ctx)).not.toMatch(/unreviewed/i);
   });
 });

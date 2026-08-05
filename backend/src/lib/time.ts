@@ -39,6 +39,18 @@ export function dayOfWeek(dateStr: string): number {
   return new Date(`${dateStr}T00:00:00Z`).getUTCDay();
 }
 
+// Monday of the week containing a local YYYY-MM-DD (weeks run Mon–Sun).
+export function mondayOf(dateStr: string): string {
+  return addDaysStr(dateStr, -((dayOfWeek(dateStr) + 6) % 7));
+}
+
+// Date-string arithmetic, tz-independent (local date in, local date out).
+export function addDaysStr(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // ISO datetime for a local date + minutes, expressed in tz. Computes the tz
 // offset for that moment via Intl (handles DST) without any date library.
 export function zonedIso(tz: string, dateStr: string, minutes: number): string {

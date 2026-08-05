@@ -2,7 +2,7 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { groupIdea, leisureActivity, task, weeklyPlan, weeklyPlanChain } from "../db/schema";
-import { dayOfWeek, todayLocal } from "../lib/time";
+import { mondayOf, todayLocal } from "../lib/time";
 import { createScheduledEvents, pushPendingEvents } from "./calendarWriter";
 import { ChainInputSchema, chainHead, chainLibrary, createChain, getChainByVersionId, reviseChain, setChainStatus } from "./chains";
 import { emit } from "./events";
@@ -200,12 +200,6 @@ export function currentWeeklyPlanV2(date?: string) {
     .limit(1)
     .get();
   return row ? weeklyPlanV2View(row.id) : null;
-}
-
-function mondayOf(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((dayOfWeek(dateStr) + 6) % 7));
-  return d.toISOString().slice(0, 10);
 }
 
 function weeksBetween(from: string, to: string): number {

@@ -13,6 +13,7 @@ import { WeeklyPlanV2InputSchema, createWeeklyPlanV2, weeklyPlanContextV2 } from
 import { DailyPlanV2InputSchema, createDailyPlanV2, currentTaskContext, dailyPlanContextV2 } from "../services/dailyPlanV2";
 import { AddWinsSchema, addWins } from "../services/wins";
 import { appendPlanDoc, getPlanDoc } from "../services/planDocs";
+import { getPlanningContext } from "../services/planningOracle";
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. PLANNING IS THE CORE (PLANNING_REVAMP_SPEC):
@@ -248,6 +249,31 @@ export function createDreamMcpServer(): McpServer {
     async ({ conversation_id, slice_end_idx }) => {
       const slice = readConversationSlice(conversation_id, slice_end_idx ?? null);
       return slice ? resultText(slice) : errorText("conversation not found or not yet imported");
+    },
+  );
+
+  server.registerTool(
+    "get_planning_context",
+    {
+      title: "The planning oracle: state, likely flow, opening move",
+      description:
+        "Call FIRST in any planning conversation — including a bare greeting. Returns a short Markdown briefing: current date (with an energy note when it's late), what exists per horizon (facts), the likely flow (marked inference), and the exact opening move to speak — a menu or a single-question offer. Speak it naturally in your own voice; never mention tools or show the markdown raw. When a parent plan is missing the briefing routes forward (no era → make the monthly first); when a parent is thin the child flow proceeds and goes deeper.",
+      inputSchema: {
+        user_request: z.string().trim().max(2_000).optional(),
+        reference_date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ user_request, reference_date }) => {
+      try {
+        const { markdown, structured } = getPlanningContext({ user_request, reference_date });
+        return { content: [{ type: "text", text: markdown }], structuredContent: structured };
+      } catch (error) {
+        return errorText(error instanceof Error ? error.message : "get_planning_context failed");
+      }
     },
   );
 
