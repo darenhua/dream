@@ -31,23 +31,23 @@ describe("dream MCP surface", () => {
     const client = await connect(host);
     const tools = await client.listTools();
     const names = tools.tools.map(t => t.name).sort();
+    // The consolidated surface (WO-6): the 3 planning tools + doing mode +
+    // plan docs + the unadvertised wins ledger + the 7 membrane tools.
     expect(names).toEqual([
       "append_plan_doc",
+      "begin_planning_flow",
       "check_review_status",
-      "create_daily_plan",
-      "create_weekly_plan",
       "current_task_context",
-      "daily_plan_context",
+      "get_planning_context",
       "get_survey",
       "list_records",
-      "prioritize_context",
       "read_conversation_slice",
       "read_plan_doc",
       "read_record",
       "record_create",
       "record_wins",
       "revise_record_create",
-      "weekly_plan_context",
+      "save_plan",
     ]);
     const survey = await client.callTool({ name: "get_survey", arguments: { model: "organized_goal" } });
     expect(text(survey)).toContain("Satellite sweep");

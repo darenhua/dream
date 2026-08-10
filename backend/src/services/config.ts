@@ -129,7 +129,7 @@ export const CONFIG_DEFAULTS: Record<string, unknown> = {
   // the user's own pace, page by page.
   AUTO_DETECT: true,
   LAST_VISIT_AT: null,
-  TIMEZONE: "America/New_York",
+  TIMEZONE: "America/Los_Angeles",
   SLEEP_WINDOW: { start: "23:30", end: "07:30" },
   WORK_WINDOW: { start: "09:30", end: "18:00", days: [1, 2, 3, 4, 5] },
   DINNER_WINDOW: null, // e.g. { start: "19:00", end: "20:00" }

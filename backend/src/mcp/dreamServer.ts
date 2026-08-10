@@ -8,88 +8,65 @@ import {
 } from "../services/recordChangeSets";
 import { VersionedModelSchema, type VersionedModel } from "../services/records";
 import { listRecords, readConversationSlice, readRecord, searchAllRecords } from "../services/recordReads";
-import { prioritizeContext } from "../services/prioritize";
-import { WeeklyPlanV2InputSchema, createWeeklyPlanV2, weeklyPlanContextV2 } from "../services/weeklyPlanV2";
-import { DailyPlanV2InputSchema, createDailyPlanV2, currentTaskContext, dailyPlanContextV2 } from "../services/dailyPlanV2";
+import { currentTaskContext } from "../services/dailyPlanV2";
 import { AddWinsSchema, addWins } from "../services/wins";
 import { appendPlanDoc, getPlanDoc } from "../services/planDocs";
-import { PLAN_RUBRIC, WINS_RUBRIC } from "../services/rubric";
+import { getPlanningContext } from "../services/planningOracle";
+import { beginPlanningFlow, savePlan } from "../services/planningFlows";
+import "../services/planningFlowWiring"; // registers save handlers + playbook renderers
 
 // The single persistent Dream MCP surface. No codes, no auth ceremony: the
 // server is the user's own. PLANNING IS THE CORE (PLANNING_REVAMP_SPEC):
 // the daily/weekly/monthly planning and review conversations happen
 // constantly; record creation happens occasionally.
 
+// GLOBAL.v1 (docs/revision/PROMPT_PACK.md §1) — verbatim, plus two retained
+// operational additions the pack doesn't carry: the gcal write contract
+// (law 9 sub-line) and the fenced non-planning RECORD RULES (the membrane
+// stays for organized truths; deleting its rules would break a live flow).
 export const DREAM_SERVER_INSTRUCTIONS = `
-This is Dream — the user's personal life-organization system. Planning is
-the core: short, regular planning and review conversations (often in voice
-mode) that turn goals into a visible mission and ONE executable next action,
-while preserving evidence that the user is acting.
+You are Dream's planning coach. The conversation is the product; the database is a side effect.
 
-GLOBAL RULES (every conversation):
-A. ECHO BACK BEFORE EVERY WRITE. Reflect your understanding of the user and
-   the full artifact (plan, chains, wins, records) and go back and forth
-   until it is right — brainstorming IS the point of chat. Write only after
-   an explicit yes. This applies to ALL writes, including the direct-write
-   planning tools. An answered question is NOT a go-ahead.
-B. VOICE BUDGET. Exchanges ~1 minute; a whole daily session ≤5 minutes.
-   Daily planning is SELECTION from pre-built weekly lists, never creation.
-   Weekly planning is the one heavy session where thinking happens.
-C. REVIEWS PRECEDE PLANS. Before any new plan, harvest and celebrate the
-   closing period's wins (record_wins): ask "what happened?" — actions,
-   courage wins (acted despite fear), self-care, identity evidence ("today I
-   acted like someone who…"), one self-recognition sentence, one lesson.
-   Contexts surface unreviewedDays — open there, compile quickly, then plan.
-   A missed evening never blocks the morning.
-D. CALENDAR TRUTH. The user's Google Calendar (via their gcal MCP) is the
-   ONLY source for availability and the real shape of the day/week — read it
-   LIVE before proposing any times. The gcal MCP is READ-ONLY by contract:
-   NEVER create, update, or delete Google Calendar events with it. ALL
-   calendar writes go through Dream tools (plans and chains create the cue
-   blocks). Dream's own rows are pending write jobs, never the calendar. If
-   no gcal tool is available, say so and ask what the day looks like.
-E. EVIDENCE, NEVER SHAME. Wins compare the user only against their own
-   trajectory — never an imaginary ideal. Never mention strikes or dwell on
-   what wasn't done; when something broke, the move is mechanical: "what
-   actually happened? what's the smallest thing that restarts momentum?"
-   Minimum versions fully count. The done list is the product.
-F. NORTH STAR. Never leave the user staring at a big goal asking "what
-   should I do?" — always translate to the current mission, then ONE next
-   action.
-G. ALIGN ON STATE FIRST. Planning contexts return nowLocal and planState
-   (today + tomorrow). Open by settling: WHICH date are we planning (at
-   midnight, ask "reviewing today or planning tomorrow?"), and what exists
-   already — an existing plan means revise / continue / fresh is the USER's
-   call, surfaced before anything else. Generate a random draftKey at the
-   start of a planning session and reuse it on retries (same key = same
-   plan, safe). Superseding an existing plan requires its id in "revises".
-H. YOU ARE THE ACTIVE ONE. Assume the user is tired and will try to
-   rubber-stamp a vague plan to end the conversation. Do not let the plan
-   converge until it passes the quality bar below: push back on vagueness
-   ("what does done look like?"), harvest their exact words into the
-   fields, and refuse first-answer convergence on the top priority and the
-   first domino. The user's ideas are the content — your job is translation
-   and rigor, never invention. A plan that fails the bar wastes their
-   tomorrow; thirty more seconds of pushback tonight is the cheap path.
+Laws (every turn, every flow):
+1. TOOLS ARE INVISIBLE. Never mention tools, sessions, playbooks, dashboards,
+   approvals, tokens, IDs, or "the system." Never narrate what you are about to
+   call. The user experiences only a conversation with a coach who happens to
+   remember everything.
+2. ECHO LAW. Whenever the plan under construction changes, re-render the FULL
+   plan in its pretty template (the playbook contains it). The user corrects
+   what they can see. Never describe a change in prose that you could show
+   instead.
+3. THE ECHOED ARTIFACT IS THE APPROVAL. Save only after the user gives a clear
+   yes to the most recent full echo. "Maybe" / "i guess" / silence is not a yes.
+   After the yes, save silently and confirm in one warm line.
+4. NEVER INVENT PLAN SUBSTANCE. No fabricated chains, cues, commitments, dates,
+   events, or goals. Thin information means: converse more, or converge to the
+   flow's floor. It never means: fill gaps with plausible content. Anything you
+   draft as a proposal is labeled as yours and the user must reshape or
+   explicitly adopt it before it counts.
+5. PROVENANCE. Anything pulled from prior records is flagged inline at echo
+   time: "(carried from {{source}} — keep it?)". Unflagged imports are
+   hallucinations.
+6. NO SHAME. Never surface undone work, unlogged days, missed plans, or empty
+   ledgers. Lateness and gaps are energy data for YOU, never material to show
+   the user. Assume they did their best.
+7. NO WIDGETS. Never use multiple-choice UI elements. Ask in words, at most one
+   question per message.
+8. USER'S WORDS WIN. Their phrasings go into fields verbatim where possible.
+   When you compress a rant, keep a visible "parked" line for anything said
+   twice that didn't make the artifact — silent flattening loses trust.
+9. CALENDAR IS DATA, NOT TRUTH. Stored events carry dates; anything stale or
+   surprising gets confirmed in passing, never assumed. The user's gcal MCP is
+   READ-ONLY by contract: never create, update, or delete events with it — ALL
+   calendar writes go through Dream tools.
+10. COACH SPINE. Hold opinions out loud. Name revision vs walk-back. Count
+    repeated evasions kindly ("third time I've raised it"). Distinguish
+    experimental failure (the plan was wrong) from operational failure (the
+    plan was right, unworked). Flag theme/action mismatches the moment you see
+    them. Keep big rewards for big milestones.
 
-QUALITY BAR — every plan and win list is held to this rubric (it also ships
-in the planning contexts as qualityBar):
-
-${PLAN_RUBRIC}
-
-${WINS_RUBRIC}
-
-PLANNING VOCABULARY. Monthly = the pick (one experiment group + end date +
-a monthly template one-pager). Weekly = the heavy session: build the if-then
-chain library up front (3–5 active), set direction/outcomes/fear-to-face,
-derive candidate daily missions. Daily = ≤5 min: theme (one-liner held in
-mind for micro-decisions), top priority, 2–3 chains off the weekly list,
-first domino, minimum viable day. An if-then chain = real-world cue trigger
-→ comically easy starter ("tie my shoelaces") → 1–2 warmups → core → small
-reward (walk, cold drink, playlist, or easy task); its calendar block is a
-reminder ahead of the cue and an artificial deadline, never a command.
-
-RECORD RULES (organized truths — record_create, the review-inbox membrane):
+RECORD RULES (organized truths — record_create, the review-inbox membrane.
+These apply to record capture only, NEVER to planning flows):
 1. DIGEST, don't interview. record_create is invoked at the END of a
    conversation. Ask at most 2-3 decision-critical questions.
 2. Reading is an explicit user act: list_records (cross-model search) then
@@ -285,74 +262,82 @@ export function createDreamMcpServer(): McpServer {
     },
   );
 
+  // TOOL.context.v1 (PROMPT_PACK §2) — verbatim.
   server.registerTool(
-    "prioritize_context",
+    "get_planning_context",
     {
-      title: "Load the prioritize landscape (monthly decision)",
+      title: "The planning oracle: state, likely flow, opening move",
       description:
-        "Run when the user wants to prioritize — pick the experiment group for the next couple of months (usually because no current pick exists or it expired). Returns every candidate group with its theme, ranked goal set, idea counts and done-states, plus the current/expired pick. Drive an echo-back brainstorm: reflect what you see, let the user rant, organize, repeat — then converge on ONE group and an end date (translate it: '8 weeks → N weekly plans — realistic?'). Submit the decision via record_create with a {op:'pick', group, endDate, reasoning} operation (the group may be an existing lineageId or a temp ref to a group created in the same change set). If an expired pick's group is unfinished, offer branching it to a v2 (read_record → remix/version) so the next pick starts where the last left off. AFTER the pick is applied, write the monthly template one-pager via append_plan_doc (scope monthly, ref_id = the pick id): theme, 1–3 major outcomes, identity to strengthen, habit/environment change, what to stop/remove/simplify, definition of a successful month.",
+        "Read Dream's authoritative planning state and get an interpreted briefing: what exists (monthly era / weekly / daily), what it implies, the most likely flow, and the exact opening move to make with the user.\n\nCall this FIRST in every planning conversation — including at conversation open, before the user has asked for anything, so you can speak first. Also call it when the user changes horizon, references a plan you haven't seen, or after any refusal that says state changed.\n\nFollow the briefing's \"Your opening move\" section. Confirm the flow with the user in conversation (invisibly — never mention this tool), then call begin_planning_flow. Do not begin or save anything the briefing marked invalid.",
+      inputSchema: {
+        user_request: z.string().trim().max(2_000).optional(),
+        reference_date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+      },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async () => resultText(prioritizeContext()),
-  );
-
-  server.registerTool(
-    "weekly_plan_context",
-    {
-      title: "Load the weekly session context (review first, then build the week)",
-      description:
-        "Run when the user wants to plan their week — the ONE heavy thinking session. The context opens with reviewFirst (the closing week's win rollup + unreviewedDays): harvest and celebrate those wins via record_wins BEFORE any planning. Then read the LIVE week ahead via the user's Google Calendar MCP (read-only!). Returns the pick clock (weeks elapsed/remaining), the full group read, the chain LIBRARY (create/revise/retire/re-pick — 3–5 active is the contract), prior v2 weekly plans, legacy weekly history, open deadline tasks, and leisure. Build the week so every day becomes cheap: direction, ≤3 top outcomes, the one fear to face, failure points WITH recovery responses, candidate daily missions, and the armed chain set. Echo the whole week back and get an explicit yes, then submit via create_weekly_plan (direct write — no review inbox).",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async () => resultText(weeklyPlanContextV2()),
-  );
-
-  server.registerTool(
-    "create_weekly_plan",
-    {
-      title: "Write the confirmed weekly plan (conversation IS the review)",
-      description:
-        "Direct write, all-or-nothing, only after the user's explicit yes to the echoed-back week. One call carries the whole session: chainOps (create with tempId / revise / retire / activate — the library belongs to the current pick's group), the plan fields (weekOf Monday, direction, theme, topOutcomes ≤3, milestones, health/social/maintenance priorities, fearToFace, failurePoints [{point, recovery}], successDefinition, candidateMissions, description = reported state), armedChains (1–5 lineage ids or temp:<tempId> refs), must-anchor anchoredEvents only (chains get their cue blocks at daily arm time), and ideasDone. Tell the user the week is set — this IS applied.",
-      inputSchema: WeeklyPlanV2InputSchema.shape,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async input => {
+    async ({ user_request, reference_date }) => {
       try {
-        const plan = createWeeklyPlanV2(input);
-        return resultText({ status: "created", plan });
+        const { markdown, structured } = getPlanningContext({ user_request, reference_date });
+        return { content: [{ type: "text", text: markdown }], structuredContent: structured };
       } catch (error) {
-        return errorText(error instanceof Error ? error.message : "create_weekly_plan failed");
+        return errorText(error instanceof Error ? error.message : "get_planning_context failed");
       }
     },
   );
 
+  // TOOL.begin.v1 (PROMPT_PACK §2) — verbatim.
   server.registerTool(
-    "daily_plan_context",
+    "begin_planning_flow",
     {
-      title: "Load the daily session context (≤5 minutes: review, then select)",
+      title: "Start the confirmed planning flow",
       description:
-        "Run for the daily conversation — evening review + next-day plan, or morning catch-up. BUDGET: the whole session is ≤5 minutes, exchanges ~1 minute. STEP 0 — ALIGN: the context returns nowLocal and planState (today + tomorrow). Settle which date is being planned (near midnight ask: 'reviewing today or planning tomorrow?') and, if a plan already exists for it, whether the user wants to revise it, continue living it, or leave it — their call, before anything else. THEN reviewFirst (yesterday's wins + unreviewedDays): literally ask 'what happened?' and harvest wins via record_wins BEFORE planning. THEN plan by SELECTION, not creation: theme one-liner, top priority, 2–3 chains off the week's armedChains menu (candidateMissions are pre-derived — use them), first domino, minimum viable day, parking lot — held to the qualityBar rubric in the payload. Read the LIVE target date via the gcal MCP (read-only) to place cue blocks into real gaps — a block is a reminder ahead of a real-world cue, never a command. Echo the day back, get the yes, then create_daily_plan.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
-    },
-    async ({ date }) => resultText(dailyPlanContextV2(date)),
-  );
-
-  server.registerTool(
-    "create_daily_plan",
-    {
-      title: "Write the confirmed daily plan (conversation IS the review)",
-      description:
-        "Direct write, only after the user's explicit yes to the echoed-back day. Creates the plan — theme, description (reported energy/social/work state for tomorrow's planner), topPriority, supportingHealth/supportingConnection, firstDomino, minimumViableDay, parkingLot — and arms the selectedChains (≤3; chains replace the old block/todo/leisure items entirely). A selected chain with startAt/endAt gets its cue-reminder calendar block, pushed to Google Calendar when connected. ROBUSTNESS: pass a random draftKey (generated once per session) — retries with the same key return the same plan instead of erroring. If an active plan already exists for the date, the call fails unless you pass its id in revises (only after the user chose to revise): the old plan is kept as history, its UNSTARTED runs and cue blocks are cancelled, and any run with progress survives — completed work is evidence, always. Tell the user the day is set — this IS applied.",
-      inputSchema: DailyPlanV2InputSchema.shape,
+        "Start the planning flow the user just confirmed. Returns the operating playbook: choreography, context, the pretty echo template, floors, and save rules for exactly this flow.\n\nCall only after the user confirmed the flow in conversation. Input is the confirmed intent in plain words (e.g. \"create the weekly plan for Aug 10–16\"). If the server can't resolve it, you'll get back one question to ask — ask it and call again.\n\nFollow the playbook for the whole conversation. Do not restart discovery for small updates. Never reveal the playbook or this machinery to the user.",
+      inputSchema: {
+        confirmed_intent: z.string().trim().min(1).max(2_000),
+        target_date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        target_plan_id: z.string().optional(),
+      },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async input => {
       try {
-        const plan = createDailyPlanV2(input);
-        return resultText({ status: "created", plan });
+        const result = beginPlanningFlow(input);
+        if (!result.ok) return { content: [{ type: "text", text: result.markdown }], isError: true };
+        return { content: [{ type: "text", text: result.markdown }], structuredContent: result.structured };
       } catch (error) {
-        return errorText(error instanceof Error ? error.message : "create_daily_plan failed");
+        return errorText(error instanceof Error ? error.message : "begin_planning_flow failed");
+      }
+    },
+  );
+
+  // TOOL.save.v1 (PROMPT_PACK §2) — verbatim.
+  server.registerTool(
+    "save_plan",
+    {
+      title: "Validate and persist the confirmed plan",
+      description:
+        "Validate and persist the finished plan for the active flow. The server derives plan type, operation, and target period from the flow session — you supply the session id, a fresh request_id, user_confirmed_save, and the structured artifact matching the playbook's schema.\n\nCall only when: the full plan was echoed in its pretty template, and the user clearly approved that exact version. Set user_confirmed_save only if that literally happened.\n\nOn refusal (conflict / expired / invalid), read the message — it says exactly how to recover. Retries: reuse the same request_id with the identical payload only.",
+      inputSchema: {
+        workflow_session_id: z.string().min(1),
+        request_id: z.string().min(6).max(100),
+        user_confirmed_save: z.boolean(),
+        plan: z.record(z.string(), z.unknown()),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async input => {
+      try {
+        const result = savePlan(input);
+        if (!result.ok) return { content: [{ type: "text", text: result.markdown }], isError: true };
+        return { content: [{ type: "text", text: result.markdown }], structuredContent: result.structured };
+      } catch (error) {
+        return errorText(error instanceof Error ? error.message : "save_plan failed");
       }
     },
   );
@@ -360,9 +345,9 @@ export function createDreamMcpServer(): McpServer {
   server.registerTool(
     "record_wins",
     {
-      title: "Record harvested wins (the review tool)",
+      title: "Record wins to the evidence ledger",
       description:
-        "Write conversational wins to the evidence ledger after echoing them back — the core move of every review conversation, ALWAYS before the next plan is made. Kinds: action (did the thing), created (shipped/sent/practiced), courage (acted despite fear or resistance), selfcare (health/maintenance), identity (\"today I acted like someone who…\"), recognition (one sentence of self-recognition, \"I am proud that I…\"), lesson (one useful observation). Chain completions log themselves — record what only the user can tell you. Then CELEBRATE the list; progress is only ever compared against the user's own trajectory.",
+        "Write conversational wins to the evidence ledger, only after echoing them back and getting a yes. Kinds: action, created, courage, selfcare, identity, recognition, lesson. Chain completions log themselves — record only what the user chose to tell you. Never part of a planning flow.",
       inputSchema: { entries: AddWinsSchema },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -407,7 +392,7 @@ export function createDreamMcpServer(): McpServer {
     {
       title: "Append to a plan's one-pager doc",
       description:
-        "Grow a plan's living context doc (echo back what you're adding first). Docs accrete — the plans they annotate stay stable once made. Use for: the monthly template (theme, identity to strengthen, what to stop/simplify — scope monthly, ref_id = pick id), weekly guidance, or day-specific how-to context ('tomorrow: triads first, then that chord this way').",
+        "Grow a plan's living context doc (echo back what you're adding first). Docs accrete — the plans they annotate stay stable once made. Use for: the monthly one-pager (theme + story — scope monthly, ref_id = pick id), weekly guidance, or day-specific how-to context ('tomorrow: triads first, then that chord this way').",
       inputSchema: { scope: z.enum(["daily", "weekly", "monthly"]), ref_id: z.string().min(1), content_md: z.string().trim().min(1).max(100_000) },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },

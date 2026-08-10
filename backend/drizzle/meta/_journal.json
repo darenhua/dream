@@ -162,6 +162,34 @@
       "when": 1785509497355,
       "tag": "0022_chemical_vindicator",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1785907245425,
+      "tag": "0023_short_omega_red",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1785907733614,
+      "tag": "0024_perpetual_violations",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1785908257199,
+      "tag": "0025_burly_manta",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1785908472224,
+      "tag": "0026_quick_shriek",
+      "breakpoints": true
     }
   ]
 }

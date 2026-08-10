@@ -168,7 +168,10 @@ export function reviseChain(lineageId: string, raw: unknown) {
 export function setChainStatus(lineageId: string, status: "draft" | "active" | "retired") {
   const head = chainHead(lineageId);
   if (!head) throw new Error(`no chain with lineage ${lineageId}`);
-  if (status === "active" && head.status !== "active") assertActiveCap(head.experimentGroupLineageId, lineageId);
+  // The global cap is a legacy-library rule; era chains answer to the
+  // per-zone ≤3 rule at the weekly save boundary instead (C9).
+  if (status === "active" && head.status !== "active" && head.experimentGroupLineageId)
+    assertActiveCap(head.experimentGroupLineageId, lineageId);
   db.update(ifThenChain).set({ status }).where(eq(ifThenChain.id, head.id)).run();
   emit("if_then_chain", head.id, "chain_status", { lineageId, status });
   return getChainByVersionId(head.id)!;
@@ -179,6 +182,106 @@ export function chainLibrary(groupLineageId: string) {
   return libraryHeads(groupLineageId)
     .sort((a, b) => order[a.status] - order[b.status] || (a.createdAt < b.createdAt ? -1 : 1))
     .map(head => ({ ...head, steps: chainSteps(head.id) }));
+}
+
+// ── Era chains (planning MCP migration WO-4) ───────────────────────────────
+// New-format chains hang off a monthly_plan era instead of a picked group.
+// Shape per TARGET §8: cueText (trigger) + friendlyCueTitle + zone + 1–4
+// links + reward + kind (+ sharedCueWith). Storage reuses the step table so
+// runs, the NowBoard, cue blocks, and auto-wins keep working unchanged:
+// links map to steps (first = starter — the absurdly small opener — rest
+// core), reward is the final reward step. The v2 canonical-shape assert and
+// the global ACTIVE_CAP do not apply here — the per-zone ≤3 rule is enforced
+// at the weekly save boundary instead (C9), never silently.
+
+/** Lineage heads of an era's chain library (newest version per lineage). */
+export function eraChainHeads(monthlyPlanId: string): ChainRow[] {
+  const rows = db.select().from(ifThenChain).where(eq(ifThenChain.monthlyPlanId, monthlyPlanId)).all();
+  const heads = new Map<string, ChainRow>();
+  for (const row of rows) {
+    const key = row.lineageId ?? row.id;
+    const prev = heads.get(key);
+    if (!prev || (row.version ?? 1) > (prev.version ?? 1)) heads.set(key, row);
+  }
+  return [...heads.values()];
+}
+
+export function eraChainLibrary(monthlyPlanId: string) {
+  const order = { active: 0, draft: 1, retired: 2 } as const;
+  return eraChainHeads(monthlyPlanId)
+    .sort((a, b) => order[a.status] - order[b.status] || (a.createdAt < b.createdAt ? -1 : 1))
+    .map(head => ({ ...head, steps: chainSteps(head.id) }));
+}
+
+export type EraChainSpec = {
+  cueText: string;
+  friendlyCueTitle: string;
+  zone: "before_work" | "during_work" | "after_work";
+  links: string[]; // 1–4, Todoist-title length
+  reward: string; // the `:D` line
+  kind: "habit" | "one_off";
+  sharedCueWithLineageId?: string;
+};
+
+function writeEraChainSteps(chainVersionId: string, spec: EraChainSpec) {
+  spec.links.forEach((link, i) => {
+    db.insert(ifThenChainStep)
+      .values({ chainId: chainVersionId, position: i, kind: i === 0 ? "starter" : "core", text: link })
+      .run();
+  });
+  db.insert(ifThenChainStep)
+    .values({ chainId: chainVersionId, position: spec.links.length, kind: "reward", text: spec.reward })
+    .run();
+}
+
+/** Create a new era chain (version 1). */
+export function createEraChain(monthlyPlanId: string, spec: EraChainSpec) {
+  const id = crypto.randomUUID();
+  db.insert(ifThenChain)
+    .values({
+      id,
+      lineageId: id,
+      version: 1,
+      monthlyPlanId,
+      trigger: spec.cueText,
+      friendlyCueTitle: spec.friendlyCueTitle,
+      zone: spec.zone,
+      kind: spec.kind,
+      sharedCueWithLineageId: spec.sharedCueWithLineageId ?? null,
+      rewardText: spec.reward,
+      status: "active",
+    })
+    .run();
+  writeEraChainSteps(id, spec);
+  emit("if_then_chain", id, "era_chain_created", { monthlyPlanId, trigger: spec.cueText });
+  return getChainByVersionId(id)!;
+}
+
+/** Version-bump an era chain with a complete new shape (extend/reshape). */
+export function reviseEraChain(lineageId: string, spec: EraChainSpec) {
+  const head = chainHead(lineageId);
+  if (!head) throw new Error(`no chain with lineage ${lineageId}`);
+  const id = crypto.randomUUID();
+  db.insert(ifThenChain)
+    .values({
+      id,
+      lineageId,
+      version: (head.version ?? 1) + 1,
+      prevVersionId: head.id,
+      monthlyPlanId: head.monthlyPlanId,
+      experimentGroupLineageId: head.experimentGroupLineageId,
+      trigger: spec.cueText,
+      friendlyCueTitle: spec.friendlyCueTitle,
+      zone: spec.zone,
+      kind: spec.kind,
+      sharedCueWithLineageId: spec.sharedCueWithLineageId ?? null,
+      rewardText: spec.reward,
+      status: head.status === "retired" ? "active" : head.status, // reviving by revision is explicit intent
+    })
+    .run();
+  writeEraChainSteps(id, spec);
+  emit("if_then_chain", id, "era_chain_revised", { lineageId, version: (head.version ?? 1) + 1 });
+  return getChainByVersionId(id)!;
 }
 
 // ── Runs ────────────────────────────────────────────────────────────────────
